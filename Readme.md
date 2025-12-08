@@ -1,106 +1,135 @@
-# 📊 Git Repository Analyzer  
-A powerful, single-file, menu-driven tool to analyze any Git repository — with automatic reports, charts, commit statistics, file modification history, stale branch detection, and more.
+# Git Repository Analyzer
 
-`analyze4.sh` works on **any local Git repository** and requires **zero configuration**.  
-Just drop the script into a repo and run it.
+A powerful, single-file, menu-driven tool to analyze any Git repository with automatic reports, charts, commit statistics, file modification history, stale branch detection, and more.
+
+`analyze4.sh` works on any local Git repository and requires zero configuration.  
+Simply place the script inside a repository and run it.
+
+A Windows-compatible script, `analyzer_win.sh`, is also included for Windows users.
 
 ---
 
-## 🚀 Features
+## Features
 
-### ✅ **Interactive Menu**
-Choose what you want to run:
+### Interactive Menu
 
-1)Run Full Analysis
+Choose from the following options:
 
-2)Generate Charts Only
+1. Run Full Analysis  
+2. Generate Charts Only  
+3. Show Commit Summary  
+4. Exit  
 
-3)Show Commit Summary
+---
 
-4)Exit
+## Full Analysis Includes
 
-### ✅ **Full Analysis Includes**
 - Total commits  
-- Commits in last 7 days  
-- Commits in last 30 days  
+- Commits in the last 7 days  
+- Commits in the last 30 days  
 - Commits per author  
-- Lines added / removed  
+- Lines added and removed  
 - Most modified files  
-- Stale branches (no activity for 30 days)  
+- Stale branches (no activity for 30+ days)  
 - Automatically generated Markdown report  
-- Embedded charts (PNG)
+- Embedded charts (PNG format)
 
-### ✅ **Charts (Matplotlib)**
-The tool generates beautiful charts:
+---
 
-- **Commits per Author bar chart**  
-- **Daily Commit Activity line chart**
+## Charts (Matplotlib)
 
-Saved in:
+The tool generates:
+
+- **Commits per Author** (bar chart)  
+- **Daily Commit Activity** (line chart)
+
+Charts are stored in:
+
 reports/charts/
+---
 
+## Markdown Report
 
-### ✅ **Markdown Report**
-All analysis results go into:
+All results are compiled into:
+
 reports/summary.md
-
-
 Charts are embedded directly inside the report.
 
-### ✅ **Safe for NEW repos (0 commits)**
-The script gracefully handles:
+---
 
-- Repositories with *zero commits*  
+## Zero-Commit Repository Support
+
+The script safely handles:
+
+- Empty repositories  
 - Missing authors  
 - No branches  
 - No file changes  
 
-No more fatal errors like:
-fatal: ambiguous argument 'HEAD'
+This prevents Git errors such as:
 
+fatal: ambiguous argument 'HEAD'
 ---
 
-## 📥 Installation
+## Installation
 
-Clone this repo:
+Clone the project:
 
 ```bash
 git clone https://github.com/Aditya2274/git-repo-analyzer.git
 cd git-repo-analyzer
 
-Make the script executable:
+Make both scripts executable:
+
 chmod +x analyze4.sh
+chmod +x analyzer_win.sh
 
-🧪 Usage
+Usage:
+Linux / macOS
 
-1)Copy analyze4.sh into any Git repository:
+1)Copy the script into a Git repository:
+   cp analyze4.sh /path/to/your/repo
+   cd /path/to/your/repo
+2)Run the tool:
+   bash analyze4.sh
 
-cp analyze4.sh /path/to/your/repo
-cd /path/to/your/repo
+Windows
 
-2)Run the analyzer:
-bash analyze4.sh
+For Windows users, use the dedicated script:
 
-3)Choose an option from the menu.
+1)Copy analyzer_win.sh into your repository.
+2)Run using Git Bash or WSL:
+   bash analyzer_win.sh
 
-📄 Output Structure
-
+Output Structure
 reports/
 │
-├── summary.md          # Main Markdown Report
+├── summary.md
 └── charts/
     ├── commits_per_author.png
     └── daily_commit_activity.png
 
-🛠 Requirements
+Requirements:
+->Git
+->Python 3
+->Matplotlib
+->If Matplotlib is missing, the script installs it automatically using:
+     pip3 install --user matplotlib
+  Or on Ubuntu:
+     sudo apt install python3-matplotlib
 
-Git
+License
+This project is open-source and free to use.
 
-Python 3
+Contributions
+Feel free to submit pull requests or open issues for improvements or bug fixes.
 
-Matplotlib
-If missing, the script installs it automatically using:
-   pip3 install --user matplotlib
+---
 
-or on Ubuntu:
-   sudo apt install python3-matplotlib
+If you want, I can also:
+
+✔ Add badges (build status, license, stars, forks, etc.)  
+✔ Make a more stylish GitHub README with images and banners  
+✔ Generate release notes or documentation  
+
+Just tell me!
