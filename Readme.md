@@ -78,48 +78,65 @@ Clone the project:
 ```bash
 git clone https://github.com/Aditya2274/git-repo-analyzer.git
 cd git-repo-analyzer
+```
 
 Make both scripts executable:
 
+```bash
 chmod +x analyze4.sh
 chmod +x analyzer_win.sh
+```
 
 Usage:
-Linux / macOS
 
-1)Copy the script into a Git repository:
+### Linux / macOS
+
+1) Copy the script into a Git repository:
+   ```bash
    cp analyze4.sh /path/to/your/repo
    cd /path/to/your/repo
-2)Run the tool:
+   ```
+2) Run the tool:
+   ```bash
    bash analyze4.sh
+   ```
 
-Windows
+### Windows
 
 For Windows users, use the dedicated script:
 
-1)Copy analyzer_win.sh into your repository.
-2)Run using Git Bash or WSL:
+1) Copy `analyzer_win.sh` into your repository.
+2) Run using Git Bash or WSL:
+   ```bash
    bash analyzer_win.sh
+   ```
 
-Output Structure
+### Output Structure
+
+```
 reports/
 │
 ├── summary.md
 └── charts/
     ├── commits_per_author.png
     └── daily_commit_activity.png
+```
 
-Requirements:
-->Git
-->Python 3
-->Matplotlib
-->If Matplotlib is missing, the script installs it automatically using:
-     pip3 install --user matplotlib
-  Or on Ubuntu:
-     sudo apt install python3-matplotlib
+### Requirements:
 
-License
-This project is open-source and free to use.
+- Git
+- Python 3
+- Matplotlib
+
+If Matplotlib is missing, the script installs it automatically using:
+
+```bash
+pip3 install --user matplotlib
+# Or on Ubuntu:
+sudo apt install python3-matplotlib
+```
+
+---
 
 Contributions
 Feel free to submit pull requests or open issues for improvements or bug fixes.
@@ -133,3 +150,7 @@ If you want, I can also:
 ✔ Generate release notes or documentation  
 
 Just tell me!
+
+
+License
+This project is open-source and free to use.
