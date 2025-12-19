@@ -154,3 +154,5 @@ Just tell me!
 
 License
 This project is open-source and free to use.
+
+-> Maven is used to execute and build the script
