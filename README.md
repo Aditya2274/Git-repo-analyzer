@@ -61,26 +61,29 @@ This prevents common Git errors such as:fatal: ambiguous argument 'HEAD'
 ## Usage Options
 
 ### 1. Native (Linux / macOS)
+
+```bash
 chmod +x analyze2.sh
 bash analyze2.sh
-
+```
 2. Windows
 
 Use the Windows-compatible script with Git Bash or WSL:
-
+```
 bash analyzer-win.sh
-
+```
 3. Docker (Recommended for Cross-Platform Use)
 
 No dependencies required except Docker.
-
+```
 docker pull adityaashok2274/git-repo-analyzer:1.0.0
-
+```
+```
 docker run -it \
   --user $(id -u):$(id -g) \
   -v "$(pwd)":/repo \
   adityaashok2274/git-repo-analyzer:1.0.0
-
+```
 
 This runs the analyzer safely as a non-root user and avoids permission issues.
 
