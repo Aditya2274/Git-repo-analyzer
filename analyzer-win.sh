@@ -10,10 +10,19 @@ info() { echo "$*"; }
 ###############################################################################
 # Ensure Git repo
 ###############################################################################
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+# Ensure we are inside a Git repo and move to repo root
+# Move to mounted repo if running in Docker
+if [ -d "/repo/.git" ]; then
+  cd /repo
+fi
+
+# Resolve git repository root and move there
+if ! git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   err "Not inside a git repository."
   exit 1
 fi
+
+cd "$git_root"
 
 ###############################################################################
 # Detect Python (python3 or python), with optional override
