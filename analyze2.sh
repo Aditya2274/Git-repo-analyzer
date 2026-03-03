@@ -37,6 +37,12 @@ fi
 ###############################################################################
 # MENU
 ###############################################################################
+# 🔥 Non-interactive mode (CI/CD support)
+if [ ! -t 0 ]; then
+  echo "Non-interactive mode detected. Running full analysis..."
+  run_full_analysis
+  exit 0
+fi
 show_menu() {
   echo
   echo "======================================="

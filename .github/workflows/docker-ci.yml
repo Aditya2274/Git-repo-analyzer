@@ -51,6 +51,6 @@ jobs:
 
       - name: Run Analyzer in CI
         run: |
-          printf "1\n" | docker run --rm \
-          -v "$PWD":/repo \
-          adityaashok2274/git-repo-analyzer:latest
+          docker run --rm \
+            -v "$PWD":/repo \
+            adityaashok2274/git-repo-analyzer:latest
