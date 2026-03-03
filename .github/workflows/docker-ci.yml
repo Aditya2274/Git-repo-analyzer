@@ -41,7 +41,7 @@ jobs:
   validate-image:
     needs: build-and-push
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10  # This will auto-kill the job if it exceeds 10 mins
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
