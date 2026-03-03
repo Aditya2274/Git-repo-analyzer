@@ -25,9 +25,6 @@ RUN chmod +x /tool/analyze2.sh
 # Add /tool to PATH
 ENV PATH="/tool:${PATH}"
 
-# Switch to non-root user
-USER analyzer
-
 # Default working directory (mounted repo)
 WORKDIR /repo
 
