@@ -72,31 +72,47 @@ Use the Windows-compatible script with Git Bash or WSL:
 ```
 bash analyzer-win.sh
 ```
-3. Docker (Recommended for Cross-Platform Use)
+### 3. Docker (Recommended for Cross-Platform Use)
 
 No dependencies required except Docker.
+
+```bash
+docker pull adityaashok2274/git-repo-analyzer:latest
 ```
-docker pull adityaashok2274/git-repo-analyzer:1.0.0
-```
-```
+
+```bash
 docker run -it \
   --user $(id -u):$(id -g) \
   -v "$(pwd)":/repo \
-  adityaashok2274/git-repo-analyzer:1.0.0
+  adityaashok2274/git-repo-analyzer:latest
 ```
 
 This runs the analyzer safely as a non-root user and avoids permission issues.
 
-CI/CD Usage Example (Optional)
+---
+
+## Automated CI/CD Pipeline (GitHub Actions)
+
+This project features a fully automated CI/CD pipeline using **GitHub Actions**. Upon every push to the repository, the pipeline automatically:
+1. Validates the code/environment.
+2. Builds the latest Docker image.
+3. Pushes the Docker image directly to **Docker Hub** (`adityaashok2274/git-repo-analyzer:latest`).
+
+*Note: This project relies solely on Bash and Python. No Java or Maven is used for the build process.*
+
+### Using the Analyzer in Your Own CI/CD
 
 In real-world DevOps pipelines, this tool can be used as a reporting step:
 
-docker run --rm -v "$PWD":/repo adityaashok2274/git-repo-analyzer:1.0.0
-
+```bash
+docker run --rm -v "$PWD":/repo adityaashok2274/git-repo-analyzer:latest
+```
 
 Generated reports can be stored as pipeline artifacts.
 
-Requirements (Non-Docker)
+---
+
+## Requirements (Non-Docker)
 
 Git
 
