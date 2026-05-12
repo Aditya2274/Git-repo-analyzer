@@ -37,12 +37,6 @@ fi
 ###############################################################################
 # MENU
 ###############################################################################
-# 🔥 Non-interactive mode (CI/CD support)
-if [ ! -t 0 ]; then
-  echo "Non-interactive mode detected. Running full analysis..."
-  run_full_analysis
-  exit 0
-fi
 show_menu() {
   echo
   echo "======================================="
@@ -331,6 +325,12 @@ echo "Report written to $REPORT_FILE"
 ###############################################################################
 # MAIN MENU
 ###############################################################################
+# 🔥 Non-interactive mode (CI/CD support)
+if [ ! -t 0 ]; then
+  echo "Non-interactive mode detected. Running full analysis..."
+  run_full_analysis
+  exit 0
+fi
 while true; do
   show_menu
   case $choice in

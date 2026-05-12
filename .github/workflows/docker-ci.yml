@@ -49,6 +49,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Pull Latest Image
         run: docker pull adityaashok2274/git-repo-analyzer:latest
@@ -56,6 +58,8 @@ jobs:
       - name: Run Analyzer in CI
         shell: bash
         run: |
+          # Use MSYS_NO_PATHCONV=1 to prevent Git Bash from aggressively rewriting paths
+          export MSYS_NO_PATHCONV=1
           docker run --rm \
-            -v "${{ github.workspace }}":/repo \
+            -v "$PWD":/repo \
             adityaashok2274/git-repo-analyzer:latest
