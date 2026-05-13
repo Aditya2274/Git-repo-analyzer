@@ -1,3 +1,4 @@
+[![Docker CI/CD](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml)
 # Git Repository Analyzer
 
 A cross-platform, menu-driven CLI tool to analyze Git repositories and generate
