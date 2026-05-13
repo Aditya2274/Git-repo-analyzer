@@ -66,8 +66,13 @@ This prevents common Git errors such as:fatal: ambiguous argument 'HEAD'
 chmod +x analyze2.sh
 bash analyze2.sh
 ```
+2. Windows
 
-### 2. Docker (Recommended for Cross-Platform Use)
+Use the Windows-compatible script with Git Bash or WSL:
+```
+bash analyzer-win.sh
+```
+### 3. Docker (Recommended for Cross-Platform Use)
 
 No dependencies required except Docker.
 
