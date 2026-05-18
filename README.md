@@ -87,24 +87,96 @@ This runs the analyzer safely as a non-root user and avoids permission issues.
 
 ---
 
-## Automated CI/CD Pipeline (GitHub Actions)
+## Automated CI/CD Architecture (GitHub Actions & Jenkins)
 
-This project features a fully automated CI/CD pipeline using **GitHub Actions**. Upon every push to the repository, the pipeline automatically:
-1. Validates the code/environment.
+This project features a complete, decoupled CI/CD architecture using **GitHub Actions** for Continuous Integration (CI) and **Jenkins** for Continuous Delivery/Deployment (CD).
+
+### 🚀 Continuous Integration (GitHub Actions)
+
+**Focus: Validate the analyzer itself**
+
+Upon every push to the repository, the GitHub Actions pipeline automatically:
+1. Triggers on code push.
 2. Builds the latest Docker image.
-3. Pushes the Docker image directly to **Docker Hub** (`adityaashok2274/git-repo-analyzer:latest`).
+3. Validates analyzer execution on the current repository.
+4. Pushes the Docker image directly to **Docker Hub** (`adityaashok2274/git-repo-analyzer:latest`).
+5. Uploads validation artifacts.
 
-*Note: This project relies solely on Bash and Python. No Java or Maven is used for the build process.*
+*The CI pipeline ensures the analyzer image is valid, tested, and deployable.*
 
-### Using the Analyzer in Your Own CI/CD
+### 🧠 Continuous Delivery / Operational Automation (Jenkins)
 
-In real-world DevOps pipelines, this tool can be used as a reporting step:
+**Focus: Operationally USE the analyzer on arbitrary repositories**
 
-```bash
-docker run --rm -v "$PWD":/repo adityaashok2274/git-repo-analyzer:latest
+Jenkins acts as the operational automation layer, consuming the validated Docker image to perform dynamic remote repository analysis.
+
+**Key CD Features:**
+- **Dynamic Repository Analysis:** Uses parameterized builds to analyze *any* arbitrary GitHub repository dynamically.
+- **Proper CI/CD Separation:** Pulls the validated artifact (`adityaashok2274/git-repo-analyzer:latest`) directly from Docker Hub.
+- **Container Orchestration:** Executes the Dockerized analyzer operationally, running real deployment workloads.
+- **Artifact Management:** Archives generated execution reports (`summary.md`, charts, etc.) as downloadable delivery artifacts.
+
+**Jenkins Pipeline Implementation:**
+
+```groovy
+pipeline {
+    agent any
+    parameters {
+        string(
+            name: 'REPO_URL',
+            defaultValue: 'https://github.com/octocat/Hello-World.git',
+            description: 'GitHub Repository URL'
+        )
+    }
+    stages {
+        stage('Pull Latest Analyzer Image') {
+            steps {
+                sh 'docker pull adityaashok2274/git-repo-analyzer:latest'
+            }
+        }
+        stage('Clone Target Repository') {
+            steps {
+                sh '''
+                rm -rf target-repo || true
+                git clone ${REPO_URL} target-repo
+                '''
+            }
+        }
+        stage('Run Git Repository Analyzer') {
+            steps {
+                sh '''
+                docker run --rm \\
+                  --user $(id -u):$(id -g) \\
+                  -v $WORKSPACE/target-repo:/repo \\
+                  adityaashok2274/git-repo-analyzer:latest
+                '''
+            }
+        }
+        stage('Archive Reports') {
+            steps {
+                archiveArtifacts artifacts: 'target-repo/reports/**/*', fingerprint: true
+            }
+        }
+    }
+}
 ```
 
-Generated reports can be stored as pipeline artifacts.
+### 🎯 Architecture Flow
+
+```text
+[ GitHub Actions (CI) ]  -->  Build + Validate Analyzer
+           |
+           v
+[ Docker Hub ]           <--  Push Docker Image
+           |
+           v
+[ Jenkins (CD) ]         -->  Pull Latest Image
+                         -->  Clone Parameterized Target Repository (REPO_URL)
+                         -->  Run Analyzer Container
+                         -->  Generate & Archive Reports
+```
+
+*Resume-level summary:* Implemented a Jenkins-based CD pipeline to operationally consume validated Docker images, dynamically clone target repositories, execute containerized repository analysis workflows, and archive generated reports as delivery artifacts.
 
 ---
 
