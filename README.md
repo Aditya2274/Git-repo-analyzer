@@ -176,7 +176,7 @@ pipeline {
                          -->  Generate & Archive Reports
 ```
 
-*Resume-level summary:* Implemented a Jenkins-based CD pipeline to operationally consume validated Docker images, dynamically clone target repositories, execute containerized repository analysis workflows, and archive generated reports as delivery artifacts.
+*Summary:* Implemented a Jenkins-based CD pipeline to operationally consume validated Docker images, dynamically clone target repositories, execute containerized repository analysis workflows, and archive generated reports as delivery artifacts.
 
 ---
 
