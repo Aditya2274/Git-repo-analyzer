@@ -89,6 +89,8 @@ This runs the analyzer safely as a non-root user and avoids permission issues.
 
 ## Automated CI/CD Architecture (GitHub Actions & Jenkins)
 
+![CI/CD Architecture Flow](./Git-repo-analyzer.png)
+
 This project features a complete, decoupled CI/CD architecture using **GitHub Actions** for Continuous Integration (CI) and **Jenkins** for Continuous Delivery/Deployment (CD).
 
 ### 🚀 Continuous Integration (GitHub Actions)
