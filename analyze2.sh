@@ -206,11 +206,19 @@ const { execSync } = require('child_process');
 
     // 2. Ensure LangChain & dotenv are installed
     try {
-        require.resolve('@langchain/groq');
-        require.resolve('dotenv');
-    } catch (e) {
-        console.log("📦 Installing @langchain/groq and dotenv for AI analysis...");
-        execSync("npm install --no-save @langchain/groq @langchain/core dotenv", { stdio: 'inherit', cwd: "/tool" });
+    require.resolve("@langchain/groq");
+    require.resolve("@langchain/core");
+    require.resolve("dotenv");
+    } 
+    catch (e) {
+        console.log("📦 Installing AI dependencies...");
+    
+        execSync(
+            "npm install --no-save @langchain/groq @langchain/core dotenv",
+            {
+                stdio: "inherit"
+            }
+        );
     }
 
     // 3. Invoke Groq LLM
