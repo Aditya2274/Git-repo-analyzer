@@ -211,9 +211,10 @@ console.log(require.resolve("@langchain/groq"));
     try {
         require('dotenv').config();
         const { ChatGroq } = require("@langchain/groq");
-
+        console.log("Model:", process.env.GROQ_MODEL || "llama3-8b-8192");
         const model = new ChatGroq({
-            modelName: process.env.GROQ_MODEL || "llama3-8b-8192",
+            apiKey: process.env.GROQ_API_KEY,
+            model: process.env.GROQ_MODEL || "llama3-8b-8192",
             temperature: 0.5,
         });
 
