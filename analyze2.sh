@@ -295,3 +295,22 @@ echo "Full analysis complete!"
 echo "Report written to $REPORT_FILE"
 
 } # end full analysis
+###############################################################################
+# MAIN MENU
+###############################################################################
+# 🔥 Non-interactive mode (CI/CD support)
+if [ ! -t 0 ]; then
+  echo "Non-interactive mode detected. Running full analysis..."
+  run_full_analysis
+  exit 0
+fi
+while true; do
+  show_menu
+  case $choice in
+    1) run_full_analysis ;;
+    2) generate_charts_only ;;
+    3) show_commit_summary ;;
+    4) echo "Goodbye!"; exit 0 ;;
+    *) echo "Invalid choice. Enter 1–4." ;;
+  esac
+done
