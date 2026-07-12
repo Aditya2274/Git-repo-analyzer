@@ -165,6 +165,8 @@ node - <<'JS_LLM_REPORT'
 const fs = require('fs');
 const { execSync } = require('child_process');
 require("dotenv").config();
+console.log(process.version);
+console.log(require.resolve("@langchain/groq"));
 (async () => {
     const reportPath = process.env.REPORT_PATH || "reports/summary.md";
     const isZero = process.env.ZERO === "true";
