@@ -216,7 +216,7 @@ const { execSync } = require('child_process');
     // 3. Invoke Groq LLM
     try {
         require('dotenv').config();
-        const { ChatGroq } = require('@langchain/groq/dist/index.cjs');
+        const { ChatGroq } = await import('@langchain/groq');
 
         const model = new ChatGroq({
             modelName: process.env.GROQ_MODEL || "llama3-8b-8192",
