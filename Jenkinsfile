@@ -23,12 +23,16 @@ pipeline {
         }
         stage('Run Git Repository Analyzer') {
             steps {
-                sh '''
-                docker run --rm \\
-                  --user $(id -u):$(id -g) \\
-                  -v $WORKSPACE/target-repo:/repo \\
-                  adityaashok2274/git-repo-analyzer:latest
-                '''
+                // This block securely fetches the key and maps it to the GROQ_API_KEY variable
+                withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_API_KEY')]) {
+                    sh '''
+                    docker run --rm \
+                      --user $(id -u):$(id -g) \
+                      -e GROQ_API_KEY="$GROQ_API_KEY" \
+                      -v $WORKSPACE/target-repo:/repo \
+                      adityaashok2274/git-repo-analyzer:latest
+                    '''
+                }
             }
         }
         stage('Archive Reports') {
