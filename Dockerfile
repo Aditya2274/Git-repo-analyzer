@@ -41,4 +41,4 @@ ENV NODE_PATH="/tool/node_modules"
 WORKDIR /repo
 
 # Entrypoint
-ENTRYPOINT ["/tool/analyze2.sh"]
+ENTRYPOINT ["bash", "/tool/analyze2.sh"]
