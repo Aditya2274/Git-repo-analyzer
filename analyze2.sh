@@ -164,7 +164,7 @@ MODIFIED="$most_modified" STALE="$stale_branches" REPORT_PATH="$REPORT_FILE" ZER
 node - <<'JS_LLM_REPORT'
 const fs = require('fs');
 const { execSync } = require('child_process');
-
+require("dotenv").config();
 (async () => {
     const reportPath = process.env.REPORT_PATH || "reports/summary.md";
     const isZero = process.env.ZERO === "true";
@@ -204,27 +204,11 @@ const { execSync } = require('child_process');
 
     console.log("🤖 GROQ_API_KEY detected! Performing AI architectural analysis via LangChain...");
 
-    // 2. Ensure LangChain & dotenv are installed
-    try {
-    require.resolve("@langchain/groq");
-    require.resolve("@langchain/core");
-    require.resolve("dotenv");
-    } 
-    catch (e) {
-        console.log("📦 Installing AI dependencies...");
-    
-        execSync(
-            "npm install --no-save @langchain/groq @langchain/core dotenv",
-            {
-                stdio: "inherit"
-            }
-        );
-    }
 
     // 3. Invoke Groq LLM
     try {
         require('dotenv').config();
-        const { ChatGroq } = await import('@langchain/groq');
+        const { ChatGroq } = require("@langchain/groq");
 
         const model = new ChatGroq({
             modelName: process.env.GROQ_MODEL || "llama3-8b-8192",
