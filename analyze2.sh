@@ -1,47 +1,34 @@
 ###############################################################################
-# FULL Analysis
+# CHART HELPERS
 ###############################################################################
-run_full_analysis() {
+ensure_chart_dependencies() {
+  if node -e 'require.resolve("chartjs-node-canvas")' >/dev/null 2>&1; then
+    return 0
+  fi
 
-REPORT_DIR="reports"
-REPORT_FILE="$REPORT_DIR/summary.md"
-CHART_DIR="$REPORT_DIR/charts"
-mkdir -p "$CHART_DIR"
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to generate charts outside Docker, but it is not installed."
+    return 1
+  fi
 
-# -------------------------- STATS --------------------------
-if [ "$ZERO_COMMITS" = true ]; then
-  total_commits=0
-  commits_last7=0
-  commits_last30=0
-  commits_per_author_raw="No commits"
-  insertions=0
-  deletions=0
-  most_modified="No file changes"
-  stale_branches="No stale branches"
-else
-  total_commits=$(git rev-list --count HEAD 2>/dev/null || echo 0)
-  commits_last7=$(git rev-list --count --since='7 days ago' HEAD 2>/dev/null || echo 0)
-  commits_last30=$(git rev-list --count --since='30 days ago' HEAD 2>/dev/null || echo 0)
-  commits_per_author_raw=$(GIT_EDITOR=true git shortlog -s -n --all 2>/dev/null)
+  echo "Chart dependencies are missing; installing local Node packages..."
+  npm install --no-save chartjs-node-canvas chart.js dotenv @langchain/groq @langchain/core >/dev/null 2>&1 || {
+    echo "Unable to install chart rendering dependencies."
+    return 1
+  }
+}
 
-  insertions=$(git log --pretty=tformat: --numstat 2>/dev/null |
-      awk 'BEGIN{n=0} $1~/^[0-9]+$/ {n+=$1} END{print n}')
+generate_charts() {
+  if [ "$ZERO_COMMITS" = true ]; then
+    echo "No commits found; skipping chart generation."
+    return 0
+  fi
 
-  deletions=$(git log --pretty=tformat: --numstat 2>/dev/null |
-      awk 'BEGIN{n=0} $2~/^[0-9]+$/ {n+=$2} END{print n}')
+  if ! ensure_chart_dependencies; then
+    return 1
+  fi
 
-  most_modified=$(git log --name-only --pretty=format: 2>/dev/null |
-      grep -v '^$' | sort | uniq -c | sort -nr | head -10)
-
-  now=$(date +%s)
-  threshold=$((30*24*60*60))
-  stale_branches=$(git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/heads/ 2>/dev/null |
-      awk -v now="$now" -v th="$threshold" '{ if(now-$2>th) print "  "$1 }')
-fi
-
-# ------------------------- NODE (CHARTS) -------------------------
-if [ "$ZERO_COMMITS" = false ]; then
-node - <<'JS_GENERATOR'
+  node - <<'JS_GENERATOR'
 const fs = require('fs');
 const { execSync } = require('child_process');
 
@@ -175,7 +162,222 @@ const createCanvas = (w, h) => new ChartJSNodeCanvas({ width: w, height: h, back
     }
 })();
 JS_GENERATOR
+}
+
+generate_charts_only() {
+  generate_charts
+}
+
+###############################################################################
+# FULL Analysis
+###############################################################################
+run_full_analysis() {
+
+REPORT_DIR="reports"
+REPORT_FILE="$REPORT_DIR/summary.md"
+CHART_DIR="$REPORT_DIR/charts"
+mkdir -p "$CHART_DIR"
+
+ensure_chart_dependencies() {
+  if node -e 'require.resolve("chartjs-node-canvas")' >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to generate charts outside Docker, but it is not installed."
+    return 1
+  fi
+
+  echo "Chart dependencies are missing; installing local Node packages..."
+  npm install --no-save chartjs-node-canvas chart.js dotenv @langchain/groq @langchain/core >/dev/null 2>&1 || {
+    echo "Unable to install chart rendering dependencies."
+    return 1
+  }
+}
+
+generate_charts() {
+  if [ "$ZERO_COMMITS" = true ]; then
+    echo "No commits found; skipping chart generation."
+    return 0
+  fi
+
+  if ! ensure_chart_dependencies; then
+    return 1
+  fi
+
+  node - <<'JS_GENERATOR'
+const fs = require('fs');
+const { execSync } = require('child_process');
+
+function run(cmd) {
+    try {
+        return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    } catch {
+        return "";
+    }
+}
+
+const CHART_DIR = "reports/charts";
+fs.mkdirSync(CHART_DIR, { recursive: true });
+console.log("Chart directory:", CHART_DIR);
+
+const { ChartJSNodeCanvas } = require("chartjs-node-canvas");
+console.log("✓ ChartJS loaded");
+
+const createCanvas = (w, h) => new ChartJSNodeCanvas({ width: w, height: h, backgroundColour: 'white' });
+
+(async () => {
+    try {
+        console.log("===== CHART GENERATION STARTED =====");
+    // Author chart
+    const authorDataRaw = run("GIT_EDITOR=true git shortlog -s -n --all");
+    console.log("Author data:");
+    console.log(authorDataRaw);
+    if (authorDataRaw) {
+        const authors = [];
+        const commits = [];
+        authorDataRaw.split('\n').forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+            const parts = trimmed.split(/\s+/);
+            const count = parseInt(parts[0], 10);
+            const name = parts.slice(1).join(' ');
+            if (!isNaN(count) && name) {
+                commits.push(count);
+                authors.push(name);
+            }
+        });
+
+        const barConfig = {
+            type: 'bar',
+            data: {
+                labels: authors,
+                datasets: [{
+                    label: 'Commits per Author',
+                    data: commits,
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                    borderColor: 'rgb(54, 162, 235)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                plugins: {
+                    title: { display: true, text: 'Commits Per Author', font: { size: 16 } },
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { ticks: { maxRotation: 30, minRotation: 30 } },
+                    y: { beginAtZero: true, ticks: { stepSize: 1 } }
+                }
+            }
+        };
+
+        const canvasAuthor = createCanvas(800, 400);
+        const imageBuffer = await canvasAuthor.renderToBuffer(barConfig);
+        fs.writeFileSync(`${CHART_DIR}/commits_per_author.png`, imageBuffer);
+        console.log("✓ commits_per_author.png created");
+    }
+
+    // Daily activity
+    const datesRaw = run("git log --date=short --pretty=format:%ad");
+    console.log("Dates:");
+    console.log(datesRaw);
+    if (datesRaw) {
+        const dates = datesRaw.split('\n').map(d => d.trim()).filter(Boolean);
+        const counts = {};
+        dates.forEach(d => {
+            counts[d] = (counts[d] || 0) + 1;
+        });
+        const sortedDays = Object.keys(counts).sort();
+        const y = sortedDays.map(d => counts[d]);
+
+        const lineConfig = {
+            type: 'line',
+            data: {
+                labels: sortedDays,
+                datasets: [{
+                    label: 'Daily Commit Activity',
+                    data: y,
+                    borderColor: 'rgb(54, 162, 235)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    tension: 0.1,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                plugins: {
+                    title: { display: true, text: 'Daily Commit Activity', font: { size: 16 } },
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { ticks: { maxRotation: 30, minRotation: 30 } },
+                    y: { beginAtZero: true, ticks: { stepSize: 1 } }
+                }
+            }
+        };
+
+        const canvasDaily = createCanvas(1000, 400);
+        const imageBuffer = await canvasDaily.renderToBuffer(lineConfig);
+        fs.writeFileSync(`${CHART_DIR}/daily_commit_activity.png`, imageBuffer);
+        console.log("✓ daily_commit_activity.png created");
+    }
+        console.log("Files inside charts:");
+        console.log(fs.readdirSync(CHART_DIR));
+        console.log("Author chart exists:",
+                    fs.existsSync(`${CHART_DIR}/commits_per_author.png`)
+                    );
+
+    console.log(
+        "Daily chart exists:",
+        fs.existsSync(`${CHART_DIR}/daily_commit_activity.png`)
+    );
+        console.log("===== CHART GENERATION COMPLETED =====");
+    } catch (err) {
+        console.error("CHART ERROR:");
+        console.error(err.stack || err);
+        process.exit(1);
+    }
+})();
+JS_GENERATOR
+}
+
+generate_charts_only() {
+  generate_charts
+}
+
+# -------------------------- STATS --------------------------
+if [ "$ZERO_COMMITS" = true ]; then
+  total_commits=0
+  commits_last7=0
+  commits_last30=0
+  commits_per_author_raw="No commits"
+  insertions=0
+  deletions=0
+  most_modified="No file changes"
+  stale_branches="No stale branches"
+else
+  total_commits=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+  commits_last7=$(git rev-list --count --since='7 days ago' HEAD 2>/dev/null || echo 0)
+  commits_last30=$(git rev-list --count --since='30 days ago' HEAD 2>/dev/null || echo 0)
+  commits_per_author_raw=$(GIT_EDITOR=true git shortlog -s -n --all 2>/dev/null)
+
+  insertions=$(git log --pretty=tformat: --numstat 2>/dev/null |
+      awk 'BEGIN{n=0} $1~/^[0-9]+$/ {n+=$1} END{print n}')
+
+  deletions=$(git log --pretty=tformat: --numstat 2>/dev/null |
+      awk 'BEGIN{n=0} $2~/^[0-9]+$/ {n+=$2} END{print n}')
+
+  most_modified=$(git log --name-only --pretty=format: 2>/dev/null |
+      grep -v '^$' | sort | uniq -c | sort -nr | head -10)
+
+  now=$(date +%s)
+  threshold=$((30*24*60*60))
+  stale_branches=$(git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/heads/ 2>/dev/null |
+      awk -v now="$now" -v th="$threshold" '{ if(now-$2>th) print "  "$1 }')
 fi
+
+# ------------------------- NODE (CHARTS) -------------------------
+generate_charts
 
 # ----------------------- LLM INTELLIGENT REPORT GENERATOR -----------------------
 TOTAL_COMMITS="$total_commits" COMMITS_7="$commits_last7" COMMITS_30="$commits_last30" \
