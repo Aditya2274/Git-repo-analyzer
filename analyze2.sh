@@ -55,20 +55,20 @@ function run(cmd) {
 
 const CHART_DIR = "reports/charts";
 fs.mkdirSync(CHART_DIR, { recursive: true });
+console.log("Chart directory:", CHART_DIR);
 
-let ChartJSNodeCanvas;
-try {
-    ChartJSNodeCanvas = require('chartjs-node-canvas').ChartJSNodeCanvas;
-} catch (e) {
-    execSync("npm install --no-save chartjs-node-canvas chart.js", { stdio: 'inherit' });
-    ChartJSNodeCanvas = require('chartjs-node-canvas').ChartJSNodeCanvas;
-}
+const { ChartJSNodeCanvas } = require("chartjs-node-canvas");
+console.log("✓ ChartJS loaded");
 
 const createCanvas = (w, h) => new ChartJSNodeCanvas({ width: w, height: h, backgroundColour: 'white' });
 
 (async () => {
+    try {
+        console.log("===== CHART GENERATION STARTED =====");
     // Author chart
     const authorDataRaw = run("GIT_EDITOR=true git shortlog -s -n --all");
+    console.log("Author data:");
+    console.log(authorDataRaw);
     if (authorDataRaw) {
         const authors = [];
         const commits = [];
@@ -111,10 +111,13 @@ const createCanvas = (w, h) => new ChartJSNodeCanvas({ width: w, height: h, back
         const canvasAuthor = createCanvas(800, 400);
         const imageBuffer = await canvasAuthor.renderToBuffer(barConfig);
         fs.writeFileSync(`${CHART_DIR}/commits_per_author.png`, imageBuffer);
+        console.log("✓ commits_per_author.png created");
     }
 
     // Daily activity
     const datesRaw = run("git log --date=short --pretty=format:%ad");
+    console.log("Dates:");
+    console.log(datesRaw);
     if (datesRaw) {
         const dates = datesRaw.split('\n').map(d => d.trim()).filter(Boolean);
         const counts = {};
@@ -152,6 +155,23 @@ const createCanvas = (w, h) => new ChartJSNodeCanvas({ width: w, height: h, back
         const canvasDaily = createCanvas(1000, 400);
         const imageBuffer = await canvasDaily.renderToBuffer(lineConfig);
         fs.writeFileSync(`${CHART_DIR}/daily_commit_activity.png`, imageBuffer);
+        console.log("✓ daily_commit_activity.png created");
+    }
+        console.log("Files inside charts:");
+        console.log(fs.readdirSync(CHART_DIR));
+        console.log("Author chart exists:",
+                    fs.existsSync(`${CHART_DIR}/commits_per_author.png`)
+                    );
+
+    console.log(
+        "Daily chart exists:",
+        fs.existsSync(`${CHART_DIR}/daily_commit_activity.png`)
+    );
+        console.log("===== CHART GENERATION COMPLETED =====");
+    } catch (err) {
+        console.error("CHART ERROR:");
+        console.error(err.stack || err);
+        process.exit(1);
     }
 })();
 JS_GENERATOR
