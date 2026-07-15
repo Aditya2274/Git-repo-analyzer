@@ -1,11 +1,9 @@
 [![Docker CI/CD](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml)
-# Git Repository Analyzer
+# AI-Powered Git Repository Analyzer
 
-A cross-platform, menu-driven CLI tool to analyze Git repositories and generate
-detailed reports with charts and commit statistics.
+An AI-powered Dockerized Git Repository Analyzer that extracts repository metrics, generates contributor and commit visualizations, and produces LLM-assisted architectural insights.
 
-The tool works natively on Linux/macOS, supports Windows users, and also provides
-a fully Dockerized option for OS-independent execution.
+ The project integrates GitHub Actions for CI, Docker Hub for image distribution, and Jenkins for automated remote repository analysis.
 
 ---
 
@@ -17,7 +15,16 @@ a fully Dockerized option for OS-independent execution.
 - Show Commit Summary
 - Exit
 
-### Full Analysis Includes
+### AI Analysis Includes
+- LLM-powered repository insights
+- Development velocity
+- ontributor concentration (Bus Factor)
+- Repository health
+- Code hotspot observations
+- Architectural recommendations
+- Graceful fallback if AI service is unavailable which would be static report
+
+### Static report (fallback service to AI)
 - Total commits
 - Commits in the last 7 and 30 days
 - Commits per author
@@ -89,7 +96,7 @@ This runs the analyzer safely as a non-root user and avoids permission issues.
 
 ## Automated CI/CD Architecture (GitHub Actions & Jenkins)
 
-![CI/CD Architecture Flow](./Git-repo-analyzer.png)
+![CI/CD Architecture Flow](./git-repo-analyzer-updated.png)
 
 This project features a complete, decoupled CI/CD architecture using **GitHub Actions** for Continuous Integration (CI) and **Jenkins** for Continuous Delivery/Deployment (CD).
 
@@ -162,7 +169,23 @@ pipeline {
     }
 }
 ```
-
+### AI Workflow
+    Git Metrics
+          │
+          ▼
+    Node.js Runtime
+          │
+          ▼
+    LangChain
+          │
+          ▼
+    Groq LLM
+          │
+          ▼
+    AI Repository Analysis
+          │
+          ▼
+    summary.md
 ### 🎯 Architecture Flow
 
 ```text
