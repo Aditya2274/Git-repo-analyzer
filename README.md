@@ -27,7 +27,7 @@ a fully Dockerized option for OS-independent execution.
 - Auto-generated Markdown report
 - Embedded charts (PNG)
 
-### Charts (Matplotlib)
+### Charts (Node.js / Chart.js)
 - Commits per Author (bar chart)
 - Daily Commit Activity (line chart)
 
@@ -186,11 +186,12 @@ pipeline {
 
 Git
 
-Python 3
+Node.js 20+
 
-Matplotlib
+Optional: npm, if you want to run the analyzer natively outside Docker.
 
-If Matplotlib is missing, the script installs it automatically.
+The Docker image already includes the chart rendering dependencies. Native runs will
+install the required Node packages on demand if they are missing.
 
 License:
 Open-source and free to use.
