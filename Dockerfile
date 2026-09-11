@@ -31,6 +31,7 @@ RUN npm init -y && \
 
 # Copy script into the image
 COPY analyze2.sh /tool/analyze2.sh
+COPY ai /tool/ai
 RUN chmod +x /tool/analyze2.sh
 
 # 3. Add /tool to PATH and tell Node.js where to find the pre-installed modules
