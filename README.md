@@ -143,7 +143,7 @@ The final analysis is generated at:
 
 reports/summary.md
 
-The report contains repository metrics, analysis, recommendations, and embedded visualizations.
+The report contains repository metrics, AI analysis, recommendations, and embedded visualizations.
 
 Zero-Commit Repository Support
 
@@ -171,7 +171,7 @@ Requirements:
 Git
 Node.js 20+
 Bash
-npm (used when Node.js dependencies need to be installed)
+npm
 
 Run:
 
@@ -222,7 +222,7 @@ Analyzer Container
       └── AI Analysis
               │
               ▼
-          Reports
+           Reports
 Continuous Integration — GitHub Actions
 
 GitHub Actions is responsible for validating and publishing the analyzer itself.
@@ -497,8 +497,8 @@ GitHub Actions
             └── Archive Reports
                     │
                     ▼
-             summary.md
-             charts/*.png
+                summary.md
+                charts/*.png
 Requirements
 Native Execution
 Git
