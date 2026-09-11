@@ -4,7 +4,8 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Install Git, Bash, Node.js 20 LTS, and required Linux graphics libraries for Chart.js Canvas
-RUN apt-get update && apt-get install -y \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirrors.edge.kernel.org/ubuntu|g' /etc/apt/sources.list && \
+    apt-get update && apt-get install -y \
     git \
     bash \
     curl \
