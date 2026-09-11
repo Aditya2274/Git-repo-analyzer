@@ -1,135 +1,301 @@
 [![Docker CI/CD](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml)
 # AI-Powered Git Repository Analyzer
 
-An AI-powered Dockerized Git Repository Analyzer that extracts repository metrics, generates contributor and commit visualizations, and produces LLM-assisted architectural insights.
+[![Docker CI/CD](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml/badge.svg)](https://github.com/Aditya2274/Git-repo-analyzer/actions/workflows/docker-ci.yml)
 
- The project integrates GitHub Actions for CI, Docker Hub for image distribution, and Jenkins for automated remote repository analysis.
+An AI-powered, Dockerized Git Repository Analyzer that extracts repository health metrics, generates contributor and commit visualizations, and produces LLM-assisted architectural insights.
+
+The project combines Git, Bash, Node.js, Chart.js, LangChain, Groq, Docker, GitHub Actions, Docker Hub, and Jenkins into an automated repository-analysis workflow.
 
 ---
 
-## Features
+## Architecture
 
-### Interactive Menu
-- Run Full Analysis
-- Generate Charts Only
-- Show Commit Summary
-- Exit
+![CI/CD Architecture Flow](./git-repo-analyzer-updated.png)
 
-### AI Analysis Includes
-- LLM-powered repository insights
-- Development velocity
-- ontributor concentration (Bus Factor)
-- Repository health
-- Code hotspot observations
-- Architectural recommendations
-- Graceful fallback if AI service is unavailable which would be static report
+The system is divided into two major automation layers:
 
-### Static report (fallback service to AI)
+- **GitHub Actions** — Continuous Integration (CI) for building, validating, and publishing the analyzer image.
+- **Jenkins** — Operational automation for consuming the validated Docker image and analyzing arbitrary remote Git repositories.
+
+---
+
+# Features
+
+## Interactive Menu
+
+The analyzer provides an interactive command-line menu:
+
+1. Run Full Analysis
+2. Generate Charts Only
+3. Show Commit Summary
+4. Exit
+
+---
+
+## Repository Analysis
+
+The analyzer extracts:
+
 - Total commits
-- Commits in the last 7 and 30 days
+- Commits in the last 7 days
+- Commits in the last 30 days
 - Commits per author
-- Lines added and removed
+- Lines added
+- Lines removed
 - Most modified files
-- Stale branch detection (30+ days inactivity)
-- Auto-generated Markdown report
-- Embedded charts (PNG)
+- Stale branches
+- Repository activity information
 
-### Charts (Node.js / Chart.js)
-- Commits per Author (bar chart)
-- Daily Commit Activity (line chart)
+---
+
+## AI-Powered Architectural Analysis
+
+When a Groq API key is available, the analyzer generates an AI-assisted architectural report using LangChain and Groq.
+
+The AI analysis interprets repository metrics rather than simply displaying raw numbers.
+
+It analyzes:
+
+- Development velocity
+- Contributor concentration
+- Bus factor
+- Code churn
+- Repository hotspots
+- Repository hygiene
+- Branch activity
+- Potential refactoring areas
+- Architectural recommendations
+
+The generated report is written as Markdown.
+
+---
+
+## Modular AI Reporting Architecture
+
+The AI reporting functionality is separated into independent modules:
+
+```text
+ai/
+├── chartGenerator.js
+├── prompt.js
+├── reportGenerator.js
+└── providers/
+    └── groqProvider.js
+Responsibilities
+
+chartGenerator.js
+
+Generates repository activity charts using Node.js and Chart.js.
+
+prompt.js
+
+Constructs the architectural-analysis prompt from Git metrics.
+
+providers/groqProvider.js
+
+Handles communication with the Groq LLM through LangChain.
+
+reportGenerator.js
+
+Orchestrates report generation and provides a static Markdown fallback when AI generation is unavailable or fails.
+
+This separation keeps the AI pipeline modular and makes individual components easier to modify or replace.
+
+Static Report Fallback
+
+The analyzer does not depend entirely on the AI service.
+
+If GROQ_API_KEY is unavailable, or the AI request fails, the analyzer automatically generates a standard Markdown report.
+
+The fallback report contains:
+
+Total commits
+Recent commit activity
+Commits per author
+Lines added and removed
+Most modified files
+Stale branches
+Repository charts
+
+This allows the analyzer to continue producing useful output even when the external AI service is unavailable.
+
+Visualization
+
+Charts are generated using Node.js and Chart.js.
+
+Currently generated charts:
+
+Commits per Author — bar chart
+Daily Commit Activity — line chart
 
 Charts are stored in:
+
 reports/charts/
 
+Generated files:
 
-### Markdown Report
-All results are compiled into:
+reports/charts/commits_per_author.png
+reports/charts/daily_commit_activity.png
+Markdown Report
 
+The final analysis is generated at:
 
 reports/summary.md
 
+The report contains repository metrics, analysis, recommendations, and embedded visualizations.
 
-Charts are embedded directly in the report.
+Zero-Commit Repository Support
 
----
+The analyzer safely handles repositories that contain no commits.
 
-## Zero-Commit Repository Support
+It handles:
 
-The analyzer safely handles:
-- Empty repositories
-- No commits
-- Missing authors
-- No file changes
+Empty repositories
+No commits
+Missing authors
+No file changes
+No commit history
 
-This prevents common Git errors such as:fatal: ambiguous argument 'HEAD'
+This prevents common Git failures such as:
 
+fatal: ambiguous argument 'HEAD'
 
----
+Charts are skipped when there is no commit history.
 
-## Usage Options
+Usage
+1. Native Execution
 
-### 1. Native (Linux / macOS)
+Requirements:
 
-```bash
+Git
+Node.js 20+
+Bash
+npm (used when Node.js dependencies need to be installed)
+
+Run:
+
 chmod +x analyze2.sh
 bash analyze2.sh
-```
 
-### 2. Docker (Recommended for Cross-Platform Use)
+When chart dependencies are missing, the analyzer can install the required Node.js packages automatically.
 
-No dependencies required except Docker.
+2. Docker Execution
 
-```bash
+Docker is the recommended execution method because the analyzer and its required runtime dependencies are packaged into a container.
+
+Pull the latest image:
+
 docker pull adityaashok2274/git-repo-analyzer:latest
-```
 
-```bash
+Run the analyzer against the current repository:
+
 docker run -it \
   --user $(id -u):$(id -g) \
   -v "$(pwd)":/repo \
   adityaashok2274/git-repo-analyzer:latest
-```
 
-This runs the analyzer safely as a non-root user and avoids permission issues.
+The target repository is mounted into /repo.
 
----
+Running the container with the host user's UID/GID helps prevent generated reports from becoming owned by root.
 
-## Automated CI/CD Architecture (GitHub Actions & Jenkins)
+CI/CD Architecture
 
-![CI/CD Architecture Flow](./git-repo-analyzer-updated.png)
+The project uses a decoupled automation architecture:
 
-This project features a complete, decoupled CI/CD architecture using **GitHub Actions** for Continuous Integration (CI) and **Jenkins** for Continuous Delivery/Deployment (CD).
+GitHub Actions
+      │
+      │ Build + Validate + Publish
+      ▼
+Docker Hub
+      │
+      │ Pull validated image
+      ▼
+Jenkins
+      │
+      │ Clone target repository
+      ▼
+Analyzer Container
+      │
+      ├── Git Analysis
+      ├── Chart Generation
+      └── AI Analysis
+              │
+              ▼
+          Reports
+Continuous Integration — GitHub Actions
 
-### 🚀 Continuous Integration (GitHub Actions)
+GitHub Actions is responsible for validating and publishing the analyzer itself.
 
-**Focus: Validate the analyzer itself**
+The workflow is triggered by pushes to the main branch or manually through workflow_dispatch.
 
-Upon every push to the repository, the GitHub Actions pipeline automatically:
-1. Triggers on code push.
-2. Builds the latest Docker image.
-3. Validates analyzer execution on the current repository.
-4. Pushes the Docker image directly to **Docker Hub** (`adityaashok2274/git-repo-analyzer:latest`).
-5. Uploads validation artifacts.
+The CI pipeline performs the following operations:
 
-*The CI pipeline ensures the analyzer image is valid, tested, and deployable.*
+1. Checkout
 
-### 🧠 Continuous Delivery / Operational Automation (Jenkins)
+Checks out the analyzer source code.
 
-**Focus: Operationally USE the analyzer on arbitrary repositories**
+2. Build Docker Image
 
-Jenkins acts as the operational automation layer, consuming the validated Docker image to perform dynamic remote repository analysis.
+Builds the Docker image containing:
 
-**Key CD Features:**
-- **Dynamic Repository Analysis:** Uses parameterized builds to analyze *any* arbitrary GitHub repository dynamically.
-- **Proper CI/CD Separation:** Pulls the validated artifact (`adityaashok2274/git-repo-analyzer:latest`) directly from Docker Hub.
-- **Container Orchestration:** Executes the Dockerized analyzer operationally, running real deployment workloads.
-- **Artifact Management:** Archives generated execution reports (`summary.md`, charts, etc.) as downloadable delivery artifacts.
+Bash analyzer
+Git
+Node.js
+Chart.js dependencies
+LangChain
+Groq integration
+AI reporting modules
+3. Push Image to Docker Hub
 
-**Jenkins Pipeline Implementation:**
+The validated build artifact is published as:
 
-```groovy
+adityaashok2274/git-repo-analyzer:latest
+
+Versioned images are also generated using the GitHub Actions run number.
+
+4. Validate Image
+
+A separate validation job pulls the newly published image and executes the analyzer against the repository checked out by GitHub Actions.
+
+5. Upload Validation Artifacts
+
+Generated reports are uploaded as GitHub Actions artifacts.
+
+This ensures that the Docker image is tested before being consumed operationally by Jenkins.
+
+Jenkins Operational Automation
+
+Jenkins consumes the Docker image published by GitHub Actions.
+
+Its purpose is to operationally execute the analyzer against arbitrary Git repositories.
+
+The Jenkins pipeline accepts a repository URL as a build parameter:
+
+REPO_URL
+
+The workflow is:
+
+1. Pull Latest Analyzer Image
+            ↓
+2. Clone Target Repository
+            ↓
+3. Run Analyzer Container
+            ↓
+4. Generate Reports
+            ↓
+5. Archive Reports
+
+This allows the same analyzer image to be reused against different repositories without modifying the analyzer itself.
+
+Jenkins Pipeline
+
+The Jenkins pipeline follows this structure:
+
 pipeline {
+
     agent any
+
     parameters {
         string(
             name: 'REPO_URL',
@@ -137,84 +303,213 @@ pipeline {
             description: 'GitHub Repository URL'
         )
     }
+
     stages {
+
         stage('Pull Latest Analyzer Image') {
             steps {
                 sh 'docker pull adityaashok2274/git-repo-analyzer:latest'
             }
         }
+
         stage('Clone Target Repository') {
             steps {
                 sh '''
-                rm -rf target-repo || true
-                git clone ${REPO_URL} target-repo
+                    rm -rf target-repo || true
+                    git clone ${REPO_URL} target-repo
                 '''
             }
         }
+
         stage('Run Git Repository Analyzer') {
             steps {
-                sh '''
-                docker run --rm \\
-                  --user $(id -u):$(id -g) \\
-                  -v $WORKSPACE/target-repo:/repo \\
-                  adityaashok2274/git-repo-analyzer:latest
-                '''
+                withCredentials([string(
+                    credentialsId: 'groq-api-key',
+                    variable: 'GROQ_API_KEY'
+                )]) {
+                    sh '''
+                        docker run --rm \
+                          --user $(id -u):$(id -g) \
+                          -e GROQ_API_KEY="$GROQ_API_KEY" \
+                          -v "$WORKSPACE/target-repo:/repo" \
+                          adityaashok2274/git-repo-analyzer:latest
+                    '''
+                }
             }
         }
+
         stage('Archive Reports') {
             steps {
-                archiveArtifacts artifacts: 'target-repo/reports/**/*', fingerprint: true
+                archiveArtifacts artifacts: 'target-repo/reports/**/*',
+                                 fingerprint: true
             }
         }
     }
 }
-```
-### AI Workflow
-    Git Metrics
-          │
-          ▼
-    Node.js Runtime
-          │
-          ▼
-    LangChain
-          │
-          ▼
-    Groq LLM
-          │
-          ▼
-    AI Repository Analysis
-          │
-          ▼
-    summary.md
-### 🎯 Architecture Flow
 
-```text
-[ GitHub Actions (CI) ]  -->  Build + Validate Analyzer
-           |
-           v
-[ Docker Hub ]           <--  Push Docker Image
-           |
-           v
-[ Jenkins (CD) ]         -->  Pull Latest Image
-                         -->  Clone Parameterized Target Repository (REPO_URL)
-                         -->  Run Analyzer Container
-                         -->  Generate & Archive Reports
-```
+The Groq API key is injected at runtime through Jenkins credentials rather than being stored in the Docker image.
 
-*Summary:* Implemented a Jenkins-based CD pipeline to operationally consume validated Docker images, dynamically clone target repositories, execute containerized repository analysis workflows, and archive generated reports as delivery artifacts.
+AI Workflow
+Git Metrics
+     │
+     ▼
+Node.js Runtime
+     │
+     ▼
+Prompt Builder
+     │
+     ▼
+LangChain
+     │
+     ▼
+Groq LLM
+     │
+     ▼
+AI Architectural Analysis
+     │
+     ▼
+Markdown Report
+     │
+     ▼
+summary.md
 
----
+If AI generation is unavailable:
 
-## Requirements (Non-Docker)
+Git Metrics
+     │
+     ▼
+Static Report Generator
+     │
+     ▼
+summary.md
+Project Structure
+git-repo-analyzer/
+│
+├── analyze2.sh
+├── Dockerfile
+├── Jenkinsfile
+├── package.json
+├── package-lock.json
+│
+├── ai/
+│   ├── chartGenerator.js
+│   ├── prompt.js
+│   ├── reportGenerator.js
+│   │
+│   └── providers/
+│       └── groqProvider.js
+│
+├── reports/
+│   └── charts/
+│
+└── .github/
+    └── workflows/
+        └── docker-ci.yml
+Technology Stack
+Technology	Purpose
+Bash	Repository analysis and orchestration
+Git CLI	Repository metrics and history
+Node.js	Chart and AI processing
+Chart.js	Repository visualizations
+LangChain	LLM integration
+Groq	AI inference
+Docker	Containerization
+GitHub Actions	Continuous Integration
+Docker Hub	Container image distribution
+Jenkins	Operational automation and report generation
+Linux	Runtime environment
+Security
 
+The Groq API key is not stored inside the Docker image.
+
+For CI/CD execution, the key is supplied at runtime through the automation platform's secret/credential mechanism.
+
+GitHub/Jenkins Secret
+        │
+        ▼
+Runtime Environment
+        │
+        ▼
+GROQ_API_KEY
+        │
+        ▼
+LangChain / Groq Provider
+Key Engineering Characteristics
+Modular Architecture
+
+AI reporting responsibilities are separated into dedicated modules.
+
+Containerized Execution
+
+The analyzer and its runtime dependencies are packaged into a Docker image.
+
+CI Validation
+
+Every change can be automatically built and validated using GitHub Actions.
+
+Reusable Artifact
+
+The Docker image published to Docker Hub can be consumed by Jenkins without rebuilding the analyzer.
+
+Parameterized Automation
+
+Jenkins can analyze different Git repositories using the REPO_URL parameter.
+
+Fault Tolerance
+
+The analyzer can generate a static report when AI generation is unavailable.
+
+Cross-Platform Execution
+
+Docker provides a consistent runtime environment across supported host systems.
+
+Zero-Commit Handling
+
+Repositories without commit history are handled gracefully instead of causing Git analysis failures.
+
+End-to-End Workflow
+Developer
+    │
+    │ git push
+    ▼
+GitHub Repository
+    │
+    ▼
+GitHub Actions
+    │
+    ├── Checkout
+    ├── Build Docker Image
+    ├── Push Image
+    ├── Pull Image
+    ├── Validate Analyzer
+    └── Upload Artifacts
+            │
+            ▼
+        Docker Hub
+            │
+            ▼
+          Jenkins
+            │
+            ├── Accept REPO_URL
+            ├── Clone Repository
+            ├── Pull Analyzer Image
+            ├── Run Container
+            └── Archive Reports
+                    │
+                    ▼
+             summary.md
+             charts/*.png
+Requirements
+Native Execution
 Git
-
+Bash
 Node.js 20+
+npm
+Docker Execution
+Docker
 
-Optional: npm, if you want to run the analyzer natively outside Docker.
+The Docker image contains the required runtime dependencies.
 
-The Docker image already includes the chart rendering dependencies. Native runs will
-install the required Node packages on demand if they are missing.
+License
 
-License:
 Open-source and free to use.
