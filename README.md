@@ -385,23 +385,27 @@ summary.md
 
 ```text
 git-repo-analyzer/
+│
 ├── analyze2.sh
 ├── Dockerfile
 ├── Jenkinsfile
-├── package.json
-├── package-lock.json
+├── README.md
+├── git-repo-analyzer-updated.png
+│
 ├── ai/
 │   ├── chartGenerator.js
 │   ├── prompt.js
 │   ├── reportGenerator.js
+│   │
 │   └── providers/
 │       └── groqProvider.js
+│
 ├── reports/
 │   └── charts/
-├── .github/
-│   └── workflows/
-│       └── docker-ci.yml
-└── git-repo-analyzer-updated.png
+│
+└── .github/
+    └── workflows/
+        └── docker-ci.yml
 ```
 
 ---

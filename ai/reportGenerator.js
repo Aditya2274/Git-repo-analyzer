@@ -1,9 +1,34 @@
 const fs = require('fs');
+const path = require('path');
 require("dotenv").config();
 const { buildPrompt } = require("./prompt");
+
+function loadMetrics(reportPath) {
+    const metricsPath = path.join(path.dirname(reportPath), 'metrics.json');
+    try {
+        return JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+    } catch {
+        return {
+            repository: {},
+            busFactor: { criticalFiles: [], highRiskFiles: [], authorSummary: [] },
+            hotspots: { topHotspots: [] },
+            branchDrift: { staleBranches: [] },
+        };
+    }
+}
+
+function formatItems(items, formatter) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return '- None detected';
+    }
+
+    return items.map((item) => `- ${formatter(item)}`).join('\n');
+}
+
 (async () => {
     const reportPath = process.env.REPORT_PATH || "reports/summary.md";
     const isZero = process.env.ZERO === "true";
+    const metrics = loadMetrics(reportPath);
 
     // Helper to write the standard static report (Used as our CI/CD fallback)
     const writeStaticReport = (note = "") => {
@@ -11,6 +36,28 @@ const { buildPrompt } = require("./prompt");
         content += `Generated on: ${new Date().toUTCString()}\n\n`;
         if (note) content += `> **Note:** ${note}\n\n`;
         if (isZero) content += `**No commits found — charts will be skipped.**\n\n`;
+        content += `## Deterministic Metric Summary\n`;
+        content += `- Main branch: ${metrics.repository?.mainBranch || metrics.branchDrift?.mainBranch || 'unknown'}\n`;
+        content += `- Tracked files analyzed: ${metrics.repository?.trackedFiles || 0}\n`;
+        content += `- Bus factor formula: ${metrics.busFactor?.formula || 'DOA(e,f)=3.293+1.098(FA)+0.164(DL)-0.321ln(1+AC)'}\n`;
+        content += `- Bus factor critical threshold: ${metrics.busFactor?.threshold ?? 'n/a'}\n`;
+        content += `- Churn window: ${metrics.hotspots?.windowDays || 30} days\n`;
+        content += `- Churn decay lambda: ${metrics.hotspots?.decayLambda ?? 0.05}\n\n`;
+
+        content += `## Bus Factor / Degree of Authorship\n`;
+        content += formatItems(metrics.busFactor?.criticalFiles, (item) => `${item.file} -> ${item.topAuthor} (DOA ${item.doa}, share ${(item.share * 100).toFixed(1)}%, risk ${item.riskLevel})`);
+        content += `\n\n`;
+
+        content += `## Code Churn / Hotspot Volatility\n`;
+        content += `- Repository totals: ${metrics.hotspots?.totalInsertions || 0} insertions, ${metrics.hotspots?.totalDeletions || 0} deletions, ${metrics.hotspots?.totalLoc || 0} LOC\n`;
+        content += formatItems(metrics.hotspots?.topHotspots, (item) => `${item.file} -> score ${item.hotspotScore}, churn ${item.churn}%, commits ${item.commitCount}, days since change ${item.daysSinceChange}`);
+        content += `\n\n`;
+
+        content += `## Branch Staleness / Feature Drift\n`;
+        content += `- Branches analyzed: ${metrics.branchDrift?.branchesAnalyzed || 0}\n`;
+        content += formatItems(metrics.branchDrift?.staleBranches, (item) => `${item.branch} -> drift ${item.drift}, days since divergence ${item.daysSinceDivergence}, main commits since split ${item.mainCommitsSince}, sync merges ${item.syncCommits}, risk ${item.riskLevel}`);
+        content += `\n\n`;
+
         content += `## Summary\n`;
         content += `- Total Commits: ${process.env.TOTAL_COMMITS}\n`;
         content += `- Commits last 7 days: ${process.env.COMMITS_7}\n`;
@@ -44,7 +91,7 @@ const { buildPrompt } = require("./prompt");
     // 3. Invoke Groq LLM
     try {
         const { generateGroqReport } =require("./providers/groqProvider");
-        const prompt = buildPrompt();
+        const prompt = buildPrompt(metrics);
 
         console.log("⏳ Analyzing metrics with Groq LLM...");
         

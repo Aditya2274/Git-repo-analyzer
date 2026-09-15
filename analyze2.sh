@@ -76,6 +76,9 @@ else
       awk -v now="$now" -v th="$threshold" '{ if(now-$2>th) print "  "$1 }')
 fi
 
+# ---------------------- DETERMINISTIC METRICS ----------------------
+node /tool/ai/metrics.js
+
 # ------------------------- NODE (CHARTS) -------------------------
 generate_charts
 
