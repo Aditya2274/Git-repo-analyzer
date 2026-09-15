@@ -4,6 +4,7 @@ const { execSync } = require('child_process');
 
 const REPORT_DIR = path.join(process.cwd(), 'reports');
 const METRICS_PATH = path.join(REPORT_DIR, 'metrics.json');
+const CHARTS_DIR = path.join(REPORT_DIR, 'charts');
 const SECONDS_PER_DAY = 24 * 60 * 60;
 const CHURN_WINDOW_DAYS = 30;
 const CHURN_DECAY_LAMBDA = 0.05;
