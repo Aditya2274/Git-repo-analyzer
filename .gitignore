@@ -1,0 +1,14 @@
+# AWS private keys
+*.pem
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+
+# Terraform saved plans
+tfplan
+*.tfplan

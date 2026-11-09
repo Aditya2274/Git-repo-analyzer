@@ -209,26 +209,41 @@ Running the container with the host user's UID/GID helps prevent generated repor
 
 ## CI/CD Architecture
 
-The project uses a decoupled automation architecture:
+The project uses a decoupled automation architecture with two distinct repositories:
+
+- **Analyzer Source Repository** — the GitHub repository that contains this analyzer's source code, Dockerfile, CI workflow, and automation scripts.
+- **Target Repository** — the user-provided Git repository that is cloned and analyzed by the analyzer.
 
 ```text
-GitHub Actions
+GitHub Actions (CI)
       │
-      │ Build + Validate + Publish
+      │ Checkout analyzer source
+      │ Build Docker image
+      │ Run Tests & Validate Analyzer
+      │ Push validated image to Docker Hub
       ▼
 Docker Hub
       │
-      │ Pull validated image
+      │ Pull validated analyzer image
       ▼
-Jenkins
+Jenkins (CD / execution)
       │
-      │ Clone target repository
-      ▼
+      │ REPO_URL — Target repository to analyze
+      │
+      ├── Accept REPO_URL input
+      ├── Clone User-Provided Target Repository
+      ├── Mount cloned repository into analyzer container
+      │      -v <cloned-repo-path>:/workspace/repo
+      ├── Pull analyzer image
+      ├── Run analyzer container against mounted repository
+      └── Archive generated reports
+
 Analyzer Container
       │
-      ├── Git Analysis
-      ├── Chart Generation
-      └── AI Analysis
+      ├── Git analysis of target repository
+      ├── Chart generation
+      ├── Repository metrics extraction
+      └── AI-assisted architectural analysis
               │
               ▼
            Reports
@@ -236,13 +251,13 @@ Analyzer Container
 
 ### Continuous Integration — GitHub Actions
 
-GitHub Actions is responsible for validating and publishing the analyzer itself.
+GitHub Actions is responsible for validating and publishing the analyzer itself, not for analyzing arbitrary target repositories.
 
 The workflow is triggered by pushes to the `main` branch or manually through `workflow_dispatch`.
 
 The CI pipeline performs the following operations:
 
-1. **Checkout** — Checks out the analyzer source code.
+1. **Checkout Analyzer Source** — Checks out the analyzer source repository.
 2. **Build Docker Image** — Builds the Docker image containing:
    - Bash analyzer
    - Git
@@ -251,31 +266,32 @@ The CI pipeline performs the following operations:
    - LangChain
    - Groq integration
    - AI reporting modules
-3. **Push Image to Docker Hub** — The validated build artifact is published as `adityaashok2274/git-repo-analyzer:latest`.
-4. **Validate Image** — A separate validation job pulls the newly published image and executes the analyzer against the repository checked out by GitHub Actions.
-5. **Upload Validation Artifacts** — Generated reports are uploaded as GitHub Actions artifacts.
+3. **Run Tests & Validate Analyzer** — Executes validation checks against the analyzer image and source repository.
+4. **Push Image to Docker Hub** — The validated build artifact is published as `adityaashok2274/git-repo-analyzer:latest`.
+5. **Upload Validation Artifacts** — Generated reports or test artifacts are uploaded as GitHub Actions artifacts, if applicable.
 
-This ensures that the Docker image is tested before being consumed operationally by Jenkins.
+This ensures that the analyzer image is tested before it is consumed operationally by Jenkins.
 
 ### Jenkins Operational Automation
 
-Jenkins consumes the Docker image published by GitHub Actions.
+Jenkins consumes the Docker image published by GitHub Actions and executes the analyzer against a user-supplied target repository.
 
-Its purpose is to operationally execute the analyzer against arbitrary Git repositories.
+Its purpose is operational analysis, not analyzer-source CI.
 
 The Jenkins pipeline accepts a repository URL as a build parameter:
 
 ```text
-REPO_URL
+REPO_URL — Target repository to analyze
 ```
 
 The workflow is:
 
 1. Pull Latest Analyzer Image
-2. Clone Target Repository
-3. Run Analyzer Container
-4. Generate Reports
-5. Archive Reports
+2. Clone User-Provided Target Repository
+3. Mount cloned repository into analyzer container
+4. Run Analyzer Container
+5. Generate Reports
+6. Archive Reports
 
 This allows the same analyzer image to be reused against different repositories without modifying the analyzer itself.
 
@@ -290,7 +306,7 @@ pipeline {
         string(
             name: 'REPO_URL',
             defaultValue: 'https://github.com/octocat/Hello-World.git',
-            description: 'GitHub Repository URL'
+            description: 'REPO_URL — Target repository to analyze'
         )
     }
 
@@ -302,11 +318,19 @@ pipeline {
             }
         }
 
-        stage('Clone Target Repository') {
+        stage('Clone User-Provided Target Repository') {
             steps {
                 sh '''
                     rm -rf target-repo || true
                     git clone ${REPO_URL} target-repo
+                '''
+            }
+        }
+
+        stage('Mount Cloned Repository into Analyzer Container') {
+            steps {
+                sh '''
+                    echo "Mounting target repo into analyzer container: $WORKSPACE/target-repo:/workspace/repo"
                 '''
             }
         }
@@ -321,7 +345,7 @@ pipeline {
                         docker run --rm \
                           --user $(id -u):$(id -g) \
                           -e GROQ_API_KEY="$GROQ_API_KEY" \
-                          -v "$WORKSPACE/target-repo:/repo" \
+                          -v "$WORKSPACE/target-repo:/workspace/repo" \
                           adityaashok2274/git-repo-analyzer:latest
                     '''
                 }
@@ -342,6 +366,10 @@ The Groq API key is injected at runtime through Jenkins credentials rather than 
 
 ### AI Workflow
 
+The analyzer's AI layer uses LangChain to integrate with the Groq LLM API and generate repository-specific recommendations.
+
+The workflow is:
+
 ```text
 Git Metrics
      │
@@ -352,13 +380,10 @@ Node.js Runtime
 Prompt Builder
      │
      ▼
-LangChain
+LangChain + Groq LLM API integration
      │
      ▼
-Groq LLM
-     │
-     ▼
-AI Architectural Analysis
+Structured analysis and recommendations
      │
      ▼
 Markdown Report
@@ -366,6 +391,14 @@ Markdown Report
      ▼
 summary.md
 ```
+
+This flow includes:
+
+- **LLM API integration** — LangChain-based calls to the Groq API for repository analysis.
+- **Prompt construction** — Repository metrics are transformed into an architectural-analysis prompt.
+- **Structured output handling** — The analyzer prepares a report-oriented response and writes Markdown output.
+- **Error handling** — If the AI request fails or the API key is unavailable, the analyzer falls back to a static report.
+- **AI-generated recommendations** — The generated analysis includes architectural recommendations, hotspots, and repository-health guidance based on the measured metrics.
 
 If AI generation is unavailable:
 
@@ -469,17 +502,16 @@ Developer
     │
     │ git push
     ▼
-GitHub Repository
+Analyzer Source Repository
     │
     ▼
 GitHub Actions
     │
-    ├── Checkout
-    ├── Build Docker Image
-    ├── Push Image
-    ├── Pull Image
-    ├── Validate Analyzer
-    └── Upload Artifacts
+    ├── Checkout analyzer source
+    ├── Build Docker image
+    ├── Run Tests & Validate Analyzer
+    ├── Push validated image
+    └── Upload CI artifacts
             │
             ▼
         Docker Hub
@@ -487,11 +519,13 @@ GitHub Actions
             ▼
           Jenkins
             │
-            ├── Accept REPO_URL
-            ├── Clone Repository
-            ├── Pull Analyzer Image
-            ├── Run Container
-            └── Archive Reports
+            ├── Accept REPO_URL — Target repository to analyze
+            ├── Clone User-Provided Target Repository
+            ├── Mount cloned repository into analyzer container
+            │      -v <cloned-repo-path>:/workspace/repo
+            ├── Pull analyzer image
+            ├── Run analyzer against mounted repository
+            └── Archive reports
                     │
                     ▼
                 summary.md
