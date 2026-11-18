@@ -1,0 +1,6 @@
+---
+- name: Test Docker role
+  hosts: local
+  become: true
+  roles:
+    - docker

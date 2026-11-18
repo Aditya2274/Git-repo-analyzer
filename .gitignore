@@ -12,3 +12,13 @@ crash.log
 # Terraform saved plans
 tfplan
 *.tfplan
+
+# Ansible learning exercises
+ansible/playbooks/system-info.yml
+ansible/playbooks/install-packages.yml
+ansible/playbooks/conditions.yml
+ansible/playbooks/handler-demo.yml
+ansible/playbooks/template-demo.yml
+
+ansible/templates/app.conf.j2
+ansible/files/demo.txt

@@ -1,3 +1,73 @@
+#!/usr/bin/env bash
+set -u
+
+###############################################################################
+# Helper print functions
+###############################################################################
+err() { echo "ERROR: $*" >&2; }
+
+###############################################################################
+# Ensure Git repo
+###############################################################################
+# Move to mounted repo if running in Docker
+if [ -d "/repo/.git" ]; then
+  cd /repo
+fi
+
+# Resolve git repository root and move there
+if ! git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  err "Not inside a git repository."
+  exit 1
+fi
+
+cd "$git_root"
+
+###############################################################################
+# Detect ZERO commits
+###############################################################################
+if git rev-parse HEAD >/dev/null 2>&1; then
+  ZERO_COMMITS=false
+else
+  ZERO_COMMITS=true
+fi
+
+###############################################################################
+# MENU
+###############################################################################
+show_menu() {
+  echo
+  echo "======================================="
+  echo "      Git Repository Analyzer Menu"
+  echo "======================================="
+  echo "1) Run Full Analysis"
+  echo "2) Generate Charts Only"
+  echo "3) Show Commit Summary"
+  echo "4) Exit"
+  echo "---------------------------------------"
+  read -rp "Enter your choice: " choice
+}
+
+###############################################################################
+# COMMIT SUMMARY
+###############################################################################
+show_commit_summary() {
+  echo
+  echo "Commit Summary"
+  echo "---------------------------------------"
+
+  if [ "$ZERO_COMMITS" = true ]; then
+    echo "No commits found."
+    return
+  fi
+
+  echo "Total commits: $(git rev-list --count HEAD 2>/dev/null)"
+  echo "Commits last 7 days: $(git rev-list --count --since='7 days ago' HEAD 2>/dev/null)"
+  echo "Commits last 30 days: $(git rev-list --count --since='30 days ago' HEAD 2>/dev/null)"
+  echo
+
+  GIT_EDITOR=true git shortlog -s -n --all 2>/dev/null
+}
+
 ###############################################################################
 # CHART HELPERS
 ###############################################################################

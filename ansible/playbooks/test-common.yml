@@ -1,0 +1,6 @@
+---
+- name: Test common role
+  hosts: local
+  become: true
+  roles:
+    - common
