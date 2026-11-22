@@ -22,6 +22,12 @@ provider "aws" {
 module "ec2" {
   source = "./modules/ec2"
 
-  instance_type    = var.instance_type
-  allowed_ssh_cidr = var.allowed_ssh_cidr
+  allowed_ssh_cidr     = var.allowed_ssh_cidr
+  key_name             = var.key_name
+  puppet_instance_type = var.puppet_instance_type
+  puppet_volume_size   = var.puppet_volume_size
+  app_instance_type    = var.app_instance_type
+  app_volume_size      = var.app_volume_size
+  cicd_instance_type   = var.cicd_instance_type
+  cicd_volume_size     = var.cicd_volume_size
 }
