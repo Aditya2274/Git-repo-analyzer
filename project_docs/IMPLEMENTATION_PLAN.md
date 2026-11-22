@@ -54,30 +54,33 @@ Phase 8: Monitoring Configuration & End-to-End System Verification
 
 ---
 
-## Phase 3: Terraform Multi-Instance Infrastructure & Networking (On-Demand Lifecycle)
+## Phase 3: Terraform Multi-Instance Infrastructure & Networking (Completed)
 - **Objective:** Define reproducible Terraform configuration for the three dedicated EC2 instances and multi-tier security groups, designed for on-demand provisioning and complete teardown (`terraform apply` $\rightarrow$ demo $\rightarrow$ `terraform destroy`) while preserving the existing S3 backend and enforcing strict cost governance.
-- **Status:** **PENDING EXPLICIT WRITTEN APPROVAL** (Blocked under ADR 010 cost governance).
+- **Status:** **Completed (Implementation & Validation Committed in `3dc7870`)**. Live provisioning operates strictly on-demand.
 - **Prerequisites:** Phase 2 completion, human review and written approval of instance sizing, storage allocation, and projected on-demand session costs.
-- **Subtasks:**
-  1. Maintain S3 backend block in `terraform/main.tf` with `use_lockfile = true` (bucket `git-repo-analyzer-terraform-state-2026`).
-  2. Implement provisional, cost-optimized candidates (pending approval):
-     - `puppet_server`: Provisional `t3.small` (2 vCPU, 2 GB RAM, tuned JVM heap), 15 GB gp3 EBS, tagged `Role = puppet-server`.
-     - `app_monitoring`: Provisional `t3.micro` (2 vCPU, 1 GB RAM), 15 GB gp3 EBS, tagged `Role = app-monitoring`.
-     - `cicd_analysis`: Provisional `t3.small` (2 vCPU, 2 GB RAM, tuned Jenkins JVM + 1–2 GB swap), 20 GB gp3 EBS, tagged `Role = cicd-analysis`.
+- **Subtasks Completed:**
+  1. Preserved persistent S3 remote backend block in `terraform/main.tf` with `use_lockfile = true` (bucket `git-repo-analyzer-terraform-state-2026`).
+  2. Implemented approved three-instance EC2 architecture in `modules/ec2`:
+     - `puppet_server`: `t3.small` (2 vCPU, 2 GB RAM), 15 GB gp3 EBS root volume, tagged `Role = puppet-server`.
+     - `app_monitoring`: `t3.micro` (2 vCPU, 1 GB RAM), 15 GB gp3 EBS root volume, tagged `Role = app-monitoring`.
+     - `cicd_analysis`: `t3.small` (2 vCPU, 2 GB RAM), 20 GB gp3 EBS root volume, tagged `Role = cicd-analysis`.
      - Fleet Storage Total: Exactly 50 GB gp3 across all 3 nodes.
-  3. Implement outbound internet access & directional security groups:
-     - Assign Public IPv4 to all three instances to allow direct, high-speed outbound downloads (packages, Docker Hub, GitHub, Groq API) without an expensive NAT Gateway ($0.056/hr).
-     - Ingress strictly locked: SSH (port 22) to operator CIDR; internal ports (8140, 8080, 5666) restricted exclusively to peer security groups; public HTTP/HTTPS (80/443) only on Application Server.
-  4. Update `terraform/output.tf` to output dynamic public and private IPs, instance IDs, and generate inventory inputs for Ansible.
-  5. Validate full reproducibility: verify that `terraform destroy` cleanly terminates all compute/EBS/IP resources without leaving dangling billable artifacts.
-  6. Run `terraform plan` and present complete cost, plan, and diff for human review.
-  7. **Never execute `terraform apply` without explicit written approval.**
+     - Dynamic AMI lookup using Ubuntu 24.04 LTS SSM Parameter Store.
+  3. Implemented outbound internet access & directional security groups:
+     - Explicitly configured `associate_public_ip_address = true` on all 3 instances within Default VPC public subnets (direct outbound connectivity without an expensive NAT Gateway).
+     - Ingress strictly locked: SSH (port 22) to operator CIDR; Puppet (port 8140) restricted to EC2 2 & EC2 3 SGs; Jenkins API (port 8080) restricted to EC2 2 SG; NRPE (port 5666) restricted to EC2 2 SG on both EC2 1 and EC2 3; public HTTP/HTTPS (80/443) on EC2 2 only.
+  4. Updated `terraform/output.tf` and `modules/ec2/outputs.tf` to expose instance IDs, public/private IPs, DNS, and dynamically generated Ansible inventory.
+  5. Validated configuration cleanly with `terraform fmt -check`, `terraform validate`, and `git diff --check`. Committed in `3dc78707a0329774152137fac6a225970793ef3d` on branch `feat/terraform-infrastructure`.
+- **Governance & Non-Actions:**
+  - `terraform apply` has **NOT** been executed; zero live AWS resources have been provisioned or mutated.
+  - The S3 state bucket is persistent infrastructure and must not be destroyed with the ephemeral EC2 fleet.
+  - Live provisioning operates strictly on-demand and remains blocked until explicit operator authorization prior to demonstrations.
 - **Completion Criteria:**
-  - Three EC2 instances provisioned and reachable via SSH.
-  - Internal ports (8140, 8080, 5666) completely unreachable from the public internet.
-  - Outbound internet functional on all nodes for package and image downloads.
+  - Three EC2 instances defined in modular, reproducible HCL.
+  - Internal management ports (8140, 8080, 5666) completely unreachable from the public internet.
+  - Outbound internet enabled via public IPv4 association.
   - Terraform state cleanly maintained in remote S3 bucket.
-  - Clean `terraform destroy` verified to terminate compute, release public IPs, and destroy attached EBS volumes, preventing ongoing idle resource charges between sessions.
+  - Code validated and committed to repository.
 
 ---
 

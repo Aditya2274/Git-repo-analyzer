@@ -186,3 +186,46 @@
     - Confirmed Phase 3 remains strictly blocked pending operator written authorization.
   - Zero AWS resources created, modified, or destroyed.
 - **Outcome:** Project documentation fully audited, consistent, and ready for clean session handoff.
+
+---
+
+### Phase 3: Terraform Multi-Instance Infrastructure & Networking Implementation: 2026-11-22
+- **Objective:** Author reproducible Terraform configuration for the three dedicated EC2 instances and multi-tier security groups, designed for on-demand provisioning and complete teardown (`terraform apply` $\rightarrow$ demo $\rightarrow$ `terraform destroy`) while preserving the existing S3 backend and enforcing strict cost governance.
+- **Actions Completed:**
+  - Completed documentation cleanup and alignment:
+    - Updated `.gitignore` to organize Ansible demo files and retain `questions.md` under `# Operator notes & discussions`.
+    - Aligned `AGENTS.md` section numbering, roadmap phases, and restored approved architecture details.
+    - Updated `PROJECT_STATUS.md` to reflect Phase 1 and Phase 2 completion.
+    - Verified via `git diff --check` and committed in `dd0150645dbe73c2137a5267217cf8a1af0823bf`. Fast-forward merged into branch `feat/terraform-infrastructure`.
+  - Authored Terraform Multi-Instance Infrastructure in `terraform/`:
+    - `terraform/main.tf`: Preserved persistent S3 backend configuration (`git-repo-analyzer-terraform-state-2026`, `ap-south-1`, `encrypt = true`, `use_lockfile = true`) exactly; passed fleet sizing and storage variables to `modules/ec2`.
+    - `terraform/variables.tf`: Defined region, operator SSH CIDR, key pair, instance types, and storage variables with approved defaults.
+    - `terraform/output.tf`: Exposed individual IDs, public/private IPs, DNS, and dynamic Ansible inventory output.
+    - `terraform/modules/ec2/variables.tf`: Declared variables for instance types, storage, key pair, and SSH CIDR.
+    - `terraform/modules/ec2/outputs.tf`: Formatted outputs and dynamic Ansible inventory block (`ansible_inventory_template`).
+    - `terraform/modules/ec2/main.tf`:
+      - Defined three dedicated EC2 instances: `puppet_server` (`t3.small`, 15 GB gp3), `app_monitoring` (`t3.micro`, 15 GB gp3), `cicd_analysis` (`t3.small`, 20 GB gp3) with encrypted root volumes. Fleet total storage: exactly 50 GB gp3.
+      - Dynamic AMI lookup using Ubuntu 24.04 LTS SSM Parameter Store (`/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id`).
+      - Explicitly configured `associate_public_ip_address = true` on all 3 instances.
+      - Security Groups & Directional Ingress:
+        - `app_monitoring_sg`: Port 22 from operator CIDR; Ports 80 & 443 from `0.0.0.0/0`; all egress to `0.0.0.0/0`.
+        - `cicd_analysis_sg`: Port 22 from operator CIDR; Port 8080 (Jenkins API) strictly from `app_monitoring_sg.id`; Port 5666 (NRPE) strictly from `app_monitoring_sg.id`; all egress to `0.0.0.0/0`.
+        - `puppet_server_sg`: Port 22 from operator CIDR; Port 8140 (Puppet) strictly from `app_monitoring_sg.id` and `cicd_analysis_sg.id`; Port 5666 (NRPE) strictly from `app_monitoring_sg.id`; all egress to `0.0.0.0/0`.
+  - Public Networking Audit:
+    - Queried live AWS state in `ap-south-1`: verified default VPC `vpc-03c7cd4e69db107ba` and subnets have an active default route `0.0.0.0/0` via Internet Gateway `igw-09303a1be1ad67bf3`. Confirmed direct outbound connectivity without an expensive NAT Gateway.
+  - Nagios Architecture Clarification:
+    - Confirmed Nagios Core Apache web interface will bind strictly to loopback `127.0.0.1:8080` with HTTP Basic Authentication (`.htpasswd`), completely decoupled from NGINX on `0.0.0.0:80/443`.
+    - Documented administrative access via encrypted SSH tunnel (`ssh -L 8080:127.0.0.1:8080`).
+    - Formally documented distinction: Terraform SG rules for TCP 5666 are implemented and validated; Nagios Core, NRPE daemons, and Apache loopback configurations are planned for Phases 5 and 8 and not currently running.
+  - Cost Recalculation:
+    - Compute: $0.0560/hr + Public IPv4 (3 IPs): $0.0150/hr + Storage (50 GB gp3): $0.00625/hr = **~$0.0773 / running hour** (~$0.31 per 4-hour demonstration session; ~$1.24/month for weekly demos).
+  - Validation:
+    - Executed `terraform fmt -check`, `terraform validate`, and `git diff --check`. All passed with exit code 0.
+  - Committed to Git:
+    - Staged all 6 Terraform files and committed to branch `feat/terraform-infrastructure` in commit `3dc78707a0329774152137fac6a225970793ef3d` (`feat(terraform): implement three-node EC2 architecture and directional security groups`).
+  - Governance & Non-Actions:
+    - `terraform apply` and `terraform destroy` were **NOT** executed.
+    - Zero AWS resources were created, modified, or deleted.
+    - Live provisioning operates strictly on demand under ADR 010 and ADR 011.
+    - Phase 4 implementation has not started.
+- **Outcome:** Phase 3 Terraform authoring, validation, and documentation complete. Ready for Phase 4 planning or operator deployment authorization.

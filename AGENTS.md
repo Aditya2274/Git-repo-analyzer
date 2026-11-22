@@ -570,60 +570,89 @@ Do not assume that a dedicated instance automatically eliminates every resource 
 
 Nagios Core runs exclusively on EC2 2.
 
-NRPE runs exclusively on EC2 3.
+NRPE runs on EC2 1 and EC2 3.
 
 ## Application monitoring
 
-Nagios should monitor:
+Nagios Core on EC2 2 will monitor itself locally through monitoring plugins:
 
 - Host availability.
 - CPU load.
 - Memory.
 - Disk.
-- NGINX.
+- NGINX process.
 - Backend health endpoint.
 - Frontend HTTP response.
 - Nagios service.
 
-## CI/CD monitoring
+## Remote infrastructure monitoring (NRPE)
 
-Through NRPE, Nagios should monitor:
+Through NRPE over TCP 5666, Nagios Core on EC2 2 will monitor:
 
-- Host availability.
-- CPU load.
-- Memory.
-- Disk.
-- Jenkins.
-- Docker.
-- NRPE.
+- **EC2 1 (Puppet Server):**
+  - Host availability.
+  - CPU load.
+  - Memory.
+  - Disk space.
+  - `puppetserver` service status.
+  - Port 8140 responsiveness.
+- **EC2 3 (CI/CD Server):**
+  - Host availability.
+  - CPU load.
+  - Memory.
+  - Disk space.
+  - Jenkins service status.
+  - Docker daemon status.
+  - NRPE daemon status.
 
-## NRPE communication
+## NRPE communication flow
 
 ```text
-EC2 2
-Nagios Core
-    |
-    | check_nrpe
-    |
-    | TCP 5666
-    v
-EC2 3
-NRPE
-    |
-    | Monitoring Plugins
-    |
-    v
-Local checks
-    |
-    v
-Results returned to Nagios
+                           ┌──────────────────────────────┐
+                           │    Application & Nagios      │
+                           │           (EC2 2)            │
+                           └──────────────┬───────────────┘
+                                          │
+                  ┌───────────────────────┴───────────────────────┐
+                  │ check_nrpe (TCP 5666)                         │ check_nrpe (TCP 5666)
+                  ▼                                               ▼
+   ┌──────────────────────────────┐                ┌──────────────────────────────┐
+   │        Puppet Server         │                │     CI/CD & Analysis         │
+   │           (EC2 1)            │                │           (EC2 3)            │
+   │                              │                │                              │
+   │ • Host ping & SSH            │                │ • Host ping & SSH            │
+   │ • NRPE: CPU load, RAM, disk  │                │ • NRPE: CPU load, RAM, disk  │
+   │ • NRPE: Puppetserver service │                │ • NRPE: Docker & Jenkins     │
+   └──────────────────────────────┘                └──────────────────────────────┘
 ```
 
-Only EC2 2 should be able to connect to NRPE on EC2 3.
+Only EC2 2 is permitted to connect to NRPE on EC2 1 and EC2 3.
 
-Install and configure compatible Nagios plugins.
+## Nagios Web Architecture & Administrative Access
 
-Do not assume a `check_cpu` plugin exists by default. Verify the actual installed plugins and commands.
+- **Web Server:** Nagios Core uses an Apache (`apache2`) virtual host / CGI module.
+- **Port Binding:** Apache will bind strictly to loopback: `127.0.0.1:8080`.
+- **Authentication:** Enforces HTTP Basic Authentication via `.htpasswd` (e.g. for `nagiosadmin`).
+- **Reverse Proxy Separation:** NGINX runs on `0.0.0.0:80` and `443` for public application traffic. NGINX will **not** expose or proxy `/nagios`.
+- **Encrypted SSH Tunneling:** Administrators access the dashboard via an encrypted SSH tunnel:
+  ```bash
+  ssh -i ~/.ssh/git-repo-analyzer.pem -L 8080:127.0.0.1:8080 ubuntu@<app-server-public-ip>
+  ```
+- **Browser Endpoint:** `http://localhost:8080/nagios`
+- **Zero Public Access:** The Nagios interface is completely inaccessible from the public internet.
+
+## Implementation Status Distinction
+
+Important: Nagios and NRPE are approved designs scheduled for subsequent deployment, not currently running services.
+
+| Component | Current Status |
+|---|---|
+| Terraform SG rules for NRPE (TCP 5666) | Implemented and validated |
+| Nagios Core | Planned; not installed |
+| NRPE daemon and plugins | Planned; not installed |
+| Apache loopback configuration (`127.0.0.1:8080`) | Planned; not installed |
+| HTTP Basic Authentication | Planned; not configured |
+| SSH tunnel access | Design documented; not tested |
 
 ## Accepted limitation
 
@@ -693,9 +722,7 @@ Provision three EC2 instances:
 2. Application Server.
 3. CI/CD Server.
 
-Use reusable modules where appropriate.
-
-Review the existing Terraform module before modifying it.
+Implementation Status: Complete and validated in commit `3dc78707a0329774152137fac6a225970793ef3d` on branch `feat/terraform-infrastructure`. Live deployment operates strictly on demand; `terraform apply` has **NOT** been run.
 
 ## Instance sizing & Lifecycle Strategy
 
@@ -704,31 +731,44 @@ Provisional sizing candidates (ADR 005 & ADR 010):
 - Application + Monitoring: `t3.micro` (2 vCPU, 1 GB RAM, 15 GB gp3 EBS).
 - CI/CD + Analysis: `t3.small` (2 vCPU, 2 GB RAM, 20 GB gp3 EBS).
 
+Fleet Storage Total: Exactly 50 GB gp3 across all 3 nodes (15 GB + 15 GB + 20 GB).
+
 On-Demand Ephemeral Lifecycle (ADR 011):
 - Provision on-demand via `terraform apply`.
 - Conduct demonstration or assessment.
 - Completely tear down via `terraform destroy` when done.
-- Instances do not run continuously 24/7. Fleet running rate is ~$0.0773/hour across compute, 50 GB gp3 storage, and 3 public IPv4 addresses (~$0.31 per 4-hour demonstration session).
+- Instances do NOT run continuously 24/7. Fleet running rate is ~$0.0773/hour across compute, 50 GB gp3 storage, and 3 public IPv4 addresses (~$0.31 per 4-hour demonstration session).
 
-## Storage
+## Networking and Security Groups
 
-Fleet Storage Total: Exactly 50 GB gp3 across all 3 nodes (15 GB + 15 GB + 20 GB).
+- **Public IPv4 Allocation:** All three instances explicitly configure `associate_public_ip_address = true` within the Default VPC public subnets, routing to the active Internet Gateway without an expensive NAT Gateway.
+- **Inbound Security Boundaries:** Public IPv4 allocation does not grant unrestricted public inbound access; security groups strictly enforce least-privilege boundaries:
 
-Consider Docker images, Jenkins workspaces, artifacts, logs, and application files.
+| Destination | Port | Allowed Source | Security Rationale |
+|---|---:|---|---|
+| EC2 2 — Application | 80, 443 | Public internet (`0.0.0.0/0`) | Public web app delivery (React UI / NGINX) |
+| All three EC2 instances | 22 | Operator CIDR (`var.allowed_ssh_cidr`) | Administrative SSH access |
+| EC2 1 — Puppet | 8140 | EC2 2 and EC2 3 security groups | Internal Puppet agent-to-master communication |
+| EC2 3 — Jenkins | 8080 | EC2 2 security group | Internal backend API to Jenkins pipeline |
+| EC2 1 — Puppet | 5666 | EC2 2 security group | Internal Nagios NRPE monitoring checks |
+| EC2 3 — CI/CD | 5666 | EC2 2 security group | Internal Nagios NRPE monitoring checks |
+
+- **Outbound Egress:** Enabled to `0.0.0.0/0` across all instances for apt, Docker Hub, GitHub, and Groq API calls.
+
+## Persistent Remote State Backend
+
+The S3 state bucket (`git-repo-analyzer-terraform-state-2026`) is permanent, independent infrastructure and must **never** be destroyed as part of the ephemeral EC2 fleet lifecycle.
 
 ## Outputs
 
 Expose appropriate outputs:
 
-- Puppet Server private address.
-- Application public address.
-- Application private address.
-- CI/CD private address.
-- CI/CD public address, if required.
+- Puppet Server public/private IP, DNS, and ID.
+- Application public/private IP, DNS, and ID.
+- CI/CD public/private IP, DNS, and ID.
+- Dynamically formatted Ansible inventory template (`ansible_inventory_template`).
 
-Use outputs to configure Ansible inventory.
-
-Never invent IP addresses.
+Use outputs to configure Ansible inventory. Never invent IP addresses.
 
 ## Sensitive information
 
@@ -759,12 +799,13 @@ Do not attempt to implement the entire project in one operation.
 - Repaired `analyze2.sh`: restored `show_menu`, `show_commit_summary`, and `ZERO_COMMITS` initialization.
 - Validated container execution in Docker locally for active and zero-commit repositories with exit code 0.
 
-## Phase 3 — Terraform Multi-Instance Infrastructure & Networking (Pending Written Approval)
-- Author reproducible Terraform definitions for the three dedicated EC2 instances and directional security groups under the on-demand lifecycle model (ADR 011).
+## Phase 3 — Terraform Multi-Instance Infrastructure & Networking (Completed)
+- Defined three dedicated EC2 instances and directional security groups under the on-demand lifecycle model (ADR 011).
 - Outbound internet access via Public IPv4; ingress strictly locked (ports 8140, 8080, 5666 restricted to peer security groups; SSH port 22 to operator CIDR; public 80/443 on Application Server only).
-- Strictly blocked under ADR 010: Never execute `terraform apply` without explicit written approval.
+- Verified and validated with `terraform fmt -check`, `terraform validate`, and `git diff --check`. Committed in `3dc78707a0329774152137fac6a225970793ef3d` on branch `feat/terraform-infrastructure`.
+- `terraform apply` has **NOT** been executed; zero live AWS resources have been provisioned or mutated. Live provisioning operates strictly on demand under ADR 010.
 
-## Phase 4 — Ansible Bootstrap & Puppet Master/Agent Setup
+## Phase 4 — Ansible Bootstrap & Puppet Master/Agent Setup (Next Phase)
 - Configure inventory groups in `ansible/inventory/hosts.ini`: `[puppet_server]`, `[application]`, `[cicd]`, `[puppet_agents:children]`.
 - Apply `roles/common` across all nodes.
 - Author `roles/puppet_server`: install Puppet Server 8, tune JVM heap to `-Xms1g -Xmx1g`, start service.
@@ -806,7 +847,7 @@ Do not attempt to implement the entire project in one operation.
 5. Never introduce a fourth EC2 instance without approval.
 6. Never install Puppet Server on EC2 2 or EC2 3.
 7. Never install Nagios Core outside EC2 2.
-8. Never install NRPE outside EC2 3.
+8. Never install NRPE outside EC2 1 or EC2 3 (never on EC2 2).
 9. Never expose Jenkins publicly.
 10. Never expose Puppet publicly.
 11. Never expose NRPE publicly.

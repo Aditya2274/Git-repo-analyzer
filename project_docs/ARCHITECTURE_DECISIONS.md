@@ -26,40 +26,55 @@ This Architecture Decision Record (ADR) logs all approved architectural, infrast
 ---
 
 ## ADR 003: Strict Directional Security Group Rules & Zero Public Exposure for Internal Services
-- **Date:** 2026-11-18
-- **Status:** Approved
+- **Date:** 2026-11-18 (Updated 2026-11-22)
+- **Status:** Approved & Implemented in Terraform Code (Commit `3dc7870`)
 - **Context:** Exposing internal orchestration, configuration management, or CI/CD services (Puppet on 8140, Jenkins on 8080, NRPE on 5666) to the public internet (`0.0.0.0/0`) or broad operator CIDRs creates critical attack vectors for unauthorized code execution and configuration tampering.
 - **Decision:** Enforce strict directional security group ingress using AWS security group cross-references:
-  - **Jenkins (Port 8080):** Ingress restricted strictly to `sg_app_monitoring` (allowing Express backend API calls only). No public or operator-CIDR ingress.
-  - **Puppet Master (Port 8140):** Ingress restricted strictly to `sg_app_monitoring` and `sg_cicd_analysis`.
-  - **NRPE Daemon (Port 5666):** Ingress restricted strictly to `sg_app_monitoring` (allowing Nagios monitoring queries only).
-  - **SSH (Port 22):** Restricted strictly to the operator CIDR (`var.allowed_ssh_cidr`).
-  - **Public Ingress (Ports 80/443):** Restricted to `sg_app_monitoring` for user application delivery.
+  - **Jenkins (Port 8080):** Ingress restricted strictly to `app_monitoring_sg` (allowing Express backend API calls only). No public or operator-CIDR ingress.
+  - **Puppet Master (Port 8140):** Ingress restricted strictly to `app_monitoring_sg` and `cicd_analysis_sg`.
+  - **NRPE Daemon (Port 5666):** Ingress restricted strictly to `app_monitoring_sg` on both EC2 1 (Puppet Server) and EC2 3 (CI/CD Server), allowing Nagios monitoring queries only.
+  - **SSH (Port 22):** Restricted strictly to the operator CIDR (`var.allowed_ssh_cidr`) across all three instances.
+  - **Public Ingress (Ports 80/443):** Restricted exclusively to `app_monitoring_sg` for user application delivery.
+  - **Outbound Egress:** Enabled to `0.0.0.0/0` across all instances for package updates and API requests. Public IPv4 allocation does not bypass these ingress boundaries.
 - **Consequences:** Internal services are completely shielded from public discovery and scanning.
 
 ---
 
 ## ADR 004: Nagios Administrative Access via Restricted SSH Tunneling
-- **Date:** 2026-11-18
-- **Status:** Approved
+- **Date:** 2026-11-18 (Updated 2026-11-22)
+- **Status:** Approved Architecture (Design Finalized; Planned for Phase 5/8)
 - **Context:** Nagios Core web administration provides system process details, network topology, and administrative commands. Exposing the Nagios web interface over the public HTTP/HTTPS virtual host exposes administrative attack surfaces.
-- **Decision:** Public HTTP/HTTPS on the Application Server shall serve the user application only. Nagios administration is strictly barred from public routing. Operators must access the Nagios web console via an encrypted SSH tunnel (e.g. `ssh -L 8080:localhost:80 ...` or local loopback binding).
+- **Decision:** Public HTTP/HTTPS on the Application Server shall serve the user application only. Nagios administration is strictly barred from public routing.
+  - **Web Server & Port:** Nagios Apache web interface binds strictly to loopback: `127.0.0.1:8080`.
+  - **Authentication:** Enforces HTTP Basic Authentication (`.htpasswd` for `nagiosadmin`).
+  - **Reverse Proxy Separation:** NGINX serves the React frontend and reverse-proxies `/api/` to Express. NGINX will **not** expose or proxy `/nagios`.
+  - **Encrypted SSH Tunnel:** Operators access the Nagios web console via an encrypted SSH tunnel:
+    `ssh -i ~/.ssh/git-repo-analyzer.pem -L 8080:127.0.0.1:8080 ubuntu@<app-server-public-ip>`
+  - **Browser Endpoint:** `http://localhost:8080/nagios`
+  - **Implementation Status Distinction:**
+    | Component | Current Status |
+    |---|---|
+    | Terraform SG rules for NRPE (TCP 5666) | Implemented and validated |
+    | Nagios Core | Planned; not installed |
+    | NRPE daemon and plugins | Planned; not installed |
+    | Apache loopback configuration | Planned; not installed |
+    | HTTP Basic Authentication | Planned; not configured |
+    | SSH tunnel access | Design documented; not tested |
 - **Consequences:** Eliminates brute-force attacks and vulnerability exploitation against Nagios web scripts, ensuring operational dashboards remain private.
 
 ---
 
-## ADR 005: Provisional Compute & Storage Sizing Under Post-July 2025 Free Plan Model
-- **Date:** 2026-11-18
-- **Status:** Strictly Provisional (Under Cost Reassessment — NOT Approved)
-- **Context:** AWS updated its Free Tier model on July 15, 2025. For accounts created under this model, initial credits ($100 issued, up to $200 with activity credits) apply over a 6-month validity window (ending March 12, 2027 for this account, with 115 days remaining and $107.98 in verified available credits as of the November 18, 2026 snapshot). Eligible EC2 families include `t3.micro`, `t3.small`, `t4g.micro`, `t4g.small`, etc. Compute is not "automatically free"; usage draws against available credits or incurs on-demand rates ($0.0112/hr for `t3.micro`, $0.0224/hr for `t3.small` in `ap-south-1`).
-- **Evaluated Sizing Options:**
-  - **Puppet Server (Instance 1):** Provisional candidate: `t3.small` (2 vCPU, 2 GB RAM, 15 GB gp3 EBS). Default JVM heap (`-Xms2g -Xmx2g`) must be tuned down to `-Xms1g -Xmx1g` in `/etc/default/puppetserver`. For a 2-agent fleet, catalog compilation completes in < 5 seconds. `t3.micro` is technically non-viable because JVM heap (512MB) + OS + Metaspace + Agent exceeds 1,024 MB and triggers JVM crashes.
-  - **Application + Monitoring Server (Instance 2):** Provisional candidate: `t3.micro` (2 vCPU, 1 GB RAM, 15 GB gp3 EBS). Steady-state memory footprint (NGINX + Node.js Express + Nagios Core C-daemon + periodic Puppet Agent) is ~420 MB, leaving ~580 MB free RAM. Completely reliable for production serving and demonstration.
-  - **CI/CD + Analysis Server (Instance 3):** Provisional candidate: `t3.small` (2 vCPU, 2 GB RAM, 20 GB gp3 EBS). Sequential pipeline execution (Jenkins controller JVM tuned to `-Xms384m -Xmx512m` + Docker daemon + analyzer container) peaks at ~1,232 MB RAM, leaving ~816 MB headroom on 2 GB RAM. A 1–2 GB swapfile provides an auxiliary safety cushion. 20 GB gp3 storage accommodates Docker image layers (`git-repo-analyzer`), Jenkins home, cloned target workspaces, and build artifacts. Saves 50% compute cost compared to `t3.medium` ($0.0224/hr vs $0.0448/hr).
+## ADR 005: Compute & Storage Sizing Under Post-July 2025 Free Plan Model
+- **Date:** 2026-11-18 (Updated 2026-11-22)
+- **Status:** Approved & Implemented in Terraform Code (Commit `3dc7870`; Provisioning On-Demand)
+- **Context:** AWS updated its Free Tier model on July 15, 2025. For accounts created under this model, initial credits ($100 issued, up to $200 with activity credits) apply over a 6-month validity window (ending March 12, 2027 for this account, with 115 days remaining and $107.98 in verified available credits as of the November 18, 2026 snapshot). Eligible EC2 families include `t3.micro`, `t3.small`, `t4g.micro`, `t4g.small`, etc. Compute draws against available credits or incurs on-demand rates ($0.0112/hr for `t3.micro`, $0.0224/hr for `t3.small` in `ap-south-1`).
+- **Implemented Sizing & Storage Configuration:**
+  - **Puppet Server (Instance 1):** `t3.small` (2 vCPU, 2 GB RAM, 15 GB gp3 EBS). Default JVM heap (`-Xms2g -Xmx2g`) tuned down to `-Xms1g -Xmx1g` in `/etc/default/puppetserver`. For a 2-agent fleet, catalog compilation completes in < 5 seconds.
+  - **Application + Monitoring Server (Instance 2):** `t3.micro` (2 vCPU, 1 GB RAM, 15 GB gp3 EBS). Steady-state memory footprint (NGINX + Node.js Express + Nagios Core C-daemon + periodic Puppet Agent) is ~420 MB, leaving ~580 MB free RAM.
+  - **CI/CD + Analysis Server (Instance 3):** `t3.small` (2 vCPU, 2 GB RAM, 20 GB gp3 EBS). Sequential pipeline execution (Jenkins controller JVM tuned to `-Xms384m -Xmx512m` + Docker daemon + analyzer container) peaks at ~1,232 MB RAM, leaving ~816 MB headroom on 2 GB RAM. A 1–2 GB swapfile provides an auxiliary safety cushion. 20 GB gp3 storage accommodates Docker image layers (`git-repo-analyzer`), Jenkins home, cloned target workspaces, and build artifacts.
   - **Fleet Storage Total:** Exactly 50 GB gp3 across the fleet (15 GB + 15 GB + 20 GB).
-- **Outbound Internet Access Strategy:** All three instances are provisioned with Public IPv4 addresses in the public subnet, but internal management ports (8140, 8080, 5666) are strictly closed to the public internet via security group references, and SSH (port 22) is restricted to the operator CIDR. This allows direct, high-speed outbound downloads (apt packages, Docker Hub images, GitHub repos, Jenkins plugins, Groq API) during active sessions without incurring the continuous overhead of an AWS NAT Gateway ($0.056/hr = ~$40.88/mo) or the fragility of a custom NAT instance.
-- **Explicit Condition:** All sizing decisions remain strictly provisional and unapproved until explicitly authorized by the project owner under ADR 010.
-- **Consequences:** Limits estimated project expenditure during on-demand demonstration sessions to ~$0.0773 per running hour across the entire three-node fleet (Compute $0.0560 + IPv4 $0.0150 + 50 GB EBS $0.00625). Actual costs are estimates subject to account-level spend, credit eligibility rules, and additional usage charges.
+- **Outbound Internet Access Strategy:** All three instances are explicitly configured with `associate_public_ip_address = true` within the Default VPC public subnets, routing through the attached Internet Gateway. Internal management ports (8140, 8080, 5666) are strictly closed to the public internet via security group references, and SSH (port 22) is restricted to the operator CIDR. This allows direct, high-speed outbound downloads without the continuous overhead of an AWS NAT Gateway ($0.056/hr = ~$40.88/mo).
+- **Operating Cost & Ephemeral Lifecycle:** Limits estimated project expenditure during on-demand demonstration sessions to ~$0.0773 per running hour across the entire three-node fleet (Compute $0.0560 + IPv4 $0.0150 + 50 GB EBS $0.00625). Actual costs are estimates subject to account-level spend, credit eligibility rules, and additional usage charges. Live provisioning is governed under ADR 010 and ADR 011.
 
 ---
 
