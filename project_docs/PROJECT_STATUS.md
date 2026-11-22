@@ -1,9 +1,9 @@
 # Project Status: Git Repository Analyzer
 
-**Current Phase:** Infrastructure Cost & On-Demand Lifecycle Strategy Revision (Phase 2 COMPLETED; Phase 3 PENDING APPROVAL)  
-**Next Phase:** Phase 3 (Terraform Multi-Instance Infrastructure & Networking — BLOCKED under ADR 010)  
-**Last Updated:** 2026-11-18  
-**Repository Branch:** `feat/terraform-infrastructure`
+**Current Phase:** Infrastructure Cost & On-Demand Lifecycle Strategy Revision (Phase 2 COMPLETED; Phase 3 PENDING APPROVAL)
+**Next Phase:** Phase 3 (Terraform Multi-Instance Infrastructure & Networking — BLOCKED under ADR 010)
+**Last Updated:** 2026-11-22
+**Repository Branch:** `main`
 
 ---
 
@@ -11,7 +11,7 @@
 
 The project has completed Stage 1 (inspection & verification), Stage 2 (documentation & architectural alignment), and Phase 2 (analyzer script repairs & local container validation). The core analyzer script (`analyze2.sh`) is fully restored, tested, and validated in Docker against both active and zero-commit repositories.
 
-The AWS infrastructure cost and deployment strategy has been revised using verified figures from the AWS Billing Console (snapshot as of November 18, 2026):
+The AWS infrastructure cost and deployment strategy has been established using verified figures from the AWS Billing Console (snapshot as of November 18, 2026):
 - Account is on the **AWS Free plan** with **115 days remaining** (display expiry March 12, 2027) and **$107.98 in estimated available promotional credits** ($94.68 AWS Free Tier, $20.00 Launch EC2).
 - The infrastructure deployment model is strictly **on-demand and ephemeral** (`terraform apply` $\rightarrow$ setup/demo $\rightarrow$ `terraform destroy`). The instances will NOT run continuously (24/7).
 - Operating under this on-demand lifecycle limits estimated per-demonstration costs to ~$0.31 (4 hours) or ~$1.24/month for weekly demos (fleet running rate ~$0.0773/hour across 50 GB gp3 storage, 3 public IPs, and 3 EC2 instances). Actual costs remain provisional estimates subject to account-level spend, credit eligibility rules, and additional usage charges.
@@ -24,7 +24,7 @@ The AWS infrastructure cost and deployment strategy has been revised using verif
 | Component | Status | Verified Capabilities / Implementation Details | Gaps & Missing Items |
 | :--- | :---: | :--- | :--- |
 | **Terraform & AWS** | **Foundation Configured (Sizing Pending Approval)** | S3 backend defined (`git-repo-analyzer-terraform-state-2026`), versioning enabled, AES256 encryption, native S3 lockfile locking (`use_lockfile = true`), Ubuntu 24.04 SSM dynamic AMI lookup. On-demand cost model established. | Currently defines only 1 EC2 instance (`t3.micro`). Missing 3-instance definitions, multi-tier security groups with inter-SG references, and updated outputs. Multi-instance sizing unapproved. |
-| **Ansible** | **Partially Implemented** | `roles/common` (system packages), `roles/docker` (official Docker CE repo & engine), `roles/nginx` (reverse proxy structure). | Untracked in git. Missing `puppet_server` and `puppet_agent` bootstrap roles. Docker role lacks group management. Inventory lacks 3-node host groups. |
+| **Ansible** | **Partially Implemented** | `roles/common` (system packages), `roles/docker` (official Docker CE repo & engine), `roles/nginx` (reverse proxy structure) tracked in Git. | Missing `puppet_server`, `puppet_agent`, `nagios`, and `nrpe` bootstrap roles. Inventory lacks 3-node host groups. |
 | **Puppet Configuration** | **Missing** | None. | Completely absent. Needs Puppet Server CA setup, agent manifests, NGINX virtual hosts, Nagios Core configuration, and NRPE daemon manifests. |
 | **CI/CD & Jenkins** | **Configured (Analyzer)** | `Jenkinsfile` operational workflow defined (pulls Docker image, mounts repo, runs analyzer, archives artifacts). GitHub Actions CI (`docker-ci.yml`) builds and publishes image. | Dedicated Jenkins server not yet provisioned. Jenkins job not created on controller. Backend API client for Jenkins triggering not implemented. |
 | **Docker** | **Verified & Working** | `Dockerfile` fully configured with Ubuntu 22.04, Cairo/Pango graphics libraries, Node 20, safe directory permissions, pre-installed npm dependencies. Local test build verified. | No `docker-compose.yml` for multi-container local development. |

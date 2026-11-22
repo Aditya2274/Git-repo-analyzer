@@ -22,3 +22,6 @@ ansible/playbooks/template-demo.yml
 
 ansible/templates/app.conf.j2
 ansible/files/demo.txt
+
+# Operator notes & discussions
+questions.md
