@@ -1,0 +1,7 @@
+---
+# Handlers for puppet_server role
+
+- name: restart puppetserver
+  ansible.builtin.systemd:
+    name: "{{ puppet_service_name | default('puppetserver') }}"
+    state: restarted

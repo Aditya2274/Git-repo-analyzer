@@ -1,0 +1,18 @@
+---
+# Variables specific to the Dedicated Puppet Server (EC2 1 - t3.small)
+
+puppet_role: server
+puppet_service_name: puppetserver
+puppet_server_port: 8140
+
+# Memory tuning per ADR 005 and AGENTS.md
+puppet_jvm_xms: "1g"
+puppet_jvm_xmx: "1g"
+puppet_max_active_jrubies: 1
+
+# Puppet CA configuration
+puppet_ca_cert_ttl: "365d"
+puppet_dns_alt_names: "puppet-server,puppet-server.ec2.internal,puppet"
+
+# Storage & Swap (Swap disabled on EC2 1 to protect 15 GB disk and ensure JVM stability)
+swap_size_mb: 0

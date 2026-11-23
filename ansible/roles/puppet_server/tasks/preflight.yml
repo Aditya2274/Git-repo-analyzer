@@ -1,0 +1,20 @@
+---
+# Preflight validations for Dedicated Puppet Server node
+
+- name: Validate target operating system distribution
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == (puppet_target_distribution | default("Ubuntu"))
+      - ansible_distribution_version is version(puppet_target_release | default("24.04"), "==")
+    fail_msg: >
+      Target node {{ inventory_hostname }} is running {{ ansible_distribution | default('Unknown') }} {{ ansible_distribution_version | default('Unknown') }}.
+      Puppet Server 8 is supported and targeted exclusively on Ubuntu 24.04 LTS (Noble Numbat).
+    success_msg: "Target OS verified as Ubuntu 24.04 LTS (Noble Numbat)."
+
+- name: Validate inventory group and hostname
+  ansible.builtin.assert:
+    that:
+      - "'puppet_server' in group_names"
+      - inventory_hostname == "puppet-server"
+    fail_msg: "This role must only be applied to the 'puppet_server' inventory group (host: puppet-server)."
+    success_msg: "Inventory targeting verified for puppet-server."

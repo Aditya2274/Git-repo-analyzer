@@ -1,0 +1,20 @@
+---
+# Main entry point for puppet_server role (EC2 1 - Dedicated Puppet Server)
+
+- name: Execute preflight checks for Puppet Server
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Configure Puppet 8 repository and install Puppet Server package
+  ansible.builtin.include_tasks: repository.yml
+
+- name: Configure JVM heap and JRuby concurrency limits
+  ansible.builtin.include_tasks: jvm.yml
+
+- name: Configure Puppet Server identity and puppet.conf
+  ansible.builtin.include_tasks: config.yml
+
+- name: Evaluate CA state and manage cryptographic initialization
+  ansible.builtin.include_tasks: ca.yml
+
+- name: Manage Puppet Server service and validate health
+  ansible.builtin.include_tasks: service.yml

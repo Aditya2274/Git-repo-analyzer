@@ -1,0 +1,11 @@
+---
+# Variables shared by all Puppet Agent nodes (application and cicd)
+
+puppet_role: agent
+puppet_server_endpoint: "puppet-server.ec2.internal"
+puppet_server_port: 8140
+
+# Run schedule and splay to avoid catalog compilation spikes
+puppet_agent_runinterval: "30m"
+puppet_agent_splay: true
+puppet_agent_splaylimit: "5m"

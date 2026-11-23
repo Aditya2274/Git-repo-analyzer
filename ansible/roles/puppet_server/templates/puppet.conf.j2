@@ -1,0 +1,13 @@
+# This file is managed by Ansible (puppet_server role).
+# Manual edits will be overwritten on next playbook run.
+
+[main]
+certname = {{ puppet_certname | default('puppet-server') }}
+server = {{ puppet_certname | default('puppet-server') }}
+environment = {{ puppet_environment | default('production') }}
+runinterval = {{ puppet_runinterval | default('30m') }}
+
+[server]
+dns_alt_names = {{ puppet_dns_alt_names | default('puppet-server,puppet-server.ec2.internal,puppet') }}
+autosign = {{ puppet_autosign | default(false) | bool | lower }}
+ca_ttl = {{ puppet_ca_cert_ttl | default('365d') }}

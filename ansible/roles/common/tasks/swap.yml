@@ -1,0 +1,111 @@
+---
+# Safe, idempotent, non-destructive swapfile configuration
+# EC2 1 (Puppet Server): swap_size_mb = 0 (swap disabled)
+# EC2 2 (App Server): swap_size_mb = 1024 (1 GB swap)
+# EC2 3 (CI/CD Server): swap_size_mb = 2048 (2 GB swap)
+
+- name: Check if /swapfile exists on disk
+  ansible.builtin.stat:
+    path: /swapfile
+  register: swapfile_stat
+  when: (swap_size_mb | default(0) | int) > 0
+
+- name: Fail if /swapfile exists as a directory
+  ansible.builtin.fail:
+    msg: "Path /swapfile exists as a directory. Refusing destructive overwrite."
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - swapfile_stat.stat.exists
+    - swapfile_stat.stat.isdir
+
+- name: Fail if /swapfile exists as a symbolic link
+  ansible.builtin.fail:
+    msg: "Path /swapfile exists as a symbolic link. Refusing destructive overwrite."
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - swapfile_stat.stat.exists
+    - swapfile_stat.stat.islnk
+
+- name: Fail if /swapfile exists but is not a regular file
+  ansible.builtin.fail:
+    msg: "Path /swapfile exists but is not a regular file. Refusing destructive overwrite."
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - swapfile_stat.stat.exists
+    - not swapfile_stat.stat.isreg
+
+- name: Verify existing /swapfile size matches configured size
+  vars:
+    expected_swap_bytes: "{{ (swap_size_mb | int) * 1024 * 1024 }}"
+  ansible.builtin.fail:
+    msg: >
+      Existing /swapfile size ({{ swapfile_stat.stat.size }} bytes) does not match
+      configured size ({{ expected_swap_bytes }} bytes / {{ swap_size_mb }} MB).
+      Automatic resizing of an existing swapfile is unsafe and not performed.
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - swapfile_stat.stat.exists
+    - swapfile_stat.stat.size != (expected_swap_bytes | int)
+
+- name: Check swap signature on existing /swapfile
+  ansible.builtin.command:
+    cmd: "blkid -p /swapfile"
+  register: swapfile_blkid
+  changed_when: false
+  failed_when: false
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - swapfile_stat.stat.exists
+
+- name: Fail if existing /swapfile lacks a valid swap filesystem signature
+  ansible.builtin.fail:
+    msg: "Existing /swapfile does not contain a valid swap signature (blkid output: '{{ swapfile_blkid.stdout | default('') }}'). Refusing to activate an incompatible file."
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - swapfile_stat.stat.exists
+    - "'TYPE=\"swap\"' not in (swapfile_blkid.stdout | default(''))"
+
+- name: Allocate /swapfile using dd if missing
+  ansible.builtin.command:
+    cmd: "dd if=/dev/zero of=/swapfile bs=1M count={{ swap_size_mb }} status=none"
+    creates: /swapfile
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - not swapfile_stat.stat.exists
+
+- name: Set secure permissions on /swapfile (0600)
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+  when: (swap_size_mb | default(0) | int) > 0
+
+- name: Format newly allocated /swapfile as swap filesystem
+  ansible.builtin.command:
+    cmd: "mkswap /swapfile"
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - not swapfile_stat.stat.exists
+
+- name: Check currently active swap devices
+  ansible.builtin.command:
+    cmd: "swapon --show=NAME --noheadings"
+  register: active_swap
+  changed_when: false
+  when: (swap_size_mb | default(0) | int) > 0
+
+- name: Activate /swapfile if not currently active
+  ansible.builtin.command:
+    cmd: "swapon /swapfile"
+  when:
+    - (swap_size_mb | default(0) | int) > 0
+    - "'/swapfile' not in (active_swap.stdout | default(''))"
+
+- name: Ensure /swapfile persistence entry exists in /etc/fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^/swapfile\s+'
+    line: '/swapfile none swap sw 0 0'
+    state: present
+  when: (swap_size_mb | default(0) | int) > 0

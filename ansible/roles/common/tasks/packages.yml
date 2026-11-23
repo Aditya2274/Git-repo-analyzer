@@ -1,0 +1,6 @@
+---
+- name: Install essential baseline system utilities
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"

@@ -1,0 +1,10 @@
+---
+# Variables specific to the Application & Monitoring Server (EC2 2 - t3.micro)
+
+node_role: application_monitoring
+
+# Emergency swapfile buffer per ADR 005 (1.0 GB swap on 15 GB EBS)
+swap_size_mb: 1024
+
+# NGINX baseline package defaults
+nginx_enable_service: true

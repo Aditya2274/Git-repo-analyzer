@@ -1,0 +1,22 @@
+---
+# Puppet Server service management and local health validation
+
+- name: Enable and start Puppet Server service
+  ansible.builtin.systemd:
+    name: "{{ puppet_service_name | default('puppetserver') }}"
+    enabled: true
+    state: started
+  register: puppetserver_service_start
+
+- name: Wait for Puppet Server to listen on TCP port 8140 locally
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ puppet_server_port | default(8140) }}"
+    timeout: 180
+    state: started
+
+- name: Validate Puppet CA service health
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca status"
+  register: puppetserver_ca_status
+  changed_when: false

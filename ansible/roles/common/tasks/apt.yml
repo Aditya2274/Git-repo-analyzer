@@ -1,0 +1,69 @@
+---
+- name: Wait for background APT or unattended-upgrades locks to release safely
+  ansible.builtin.shell: |
+    python3 -c '
+    import fcntl, sys, time, subprocess, os
+
+    timeout = int("{{ apt_lock_timeout | default(300) }}")
+    start = time.time()
+    lock_files = ["/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock", "/var/lib/apt/lists/lock"]
+
+    while True:
+        contended_lock = None
+        for lf in lock_files:
+            if not os.path.exists(lf):
+                continue
+            fd = None
+            try:
+                fd = open(lf, "a+")
+                # Test POSIX record lock (F_SETLK F_WRLCK) via lockf without blocking
+                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.lockf(fd, fcntl.LOCK_UN)
+            except (BlockingIOError, PermissionError, OSError):
+                contended_lock = lf
+            finally:
+                if fd is not None:
+                    try:
+                        fd.close()
+                    except Exception:
+                        pass
+            if contended_lock:
+                break
+
+        # Check running processes as supplemental verification without killing
+        running_proc = None
+        try:
+            pgrep = subprocess.run(["pgrep", "-af", "apt|dpkg|unattended-upgrade"], capture_output=True, text=True)
+            if pgrep.returncode == 0 and pgrep.stdout.strip():
+                procs = [p for p in pgrep.stdout.splitlines() if "fcntl" not in p and sys.argv[0] not in p]
+                if procs:
+                    running_proc = procs[0]
+        except Exception:
+            pass
+
+        if not contended_lock and not running_proc:
+            print("All APT/dpkg POSIX locks are clear.")
+            sys.exit(0)
+
+        elapsed = time.time() - start
+        if elapsed >= timeout:
+            msg = f"ERROR: Timed out after {timeout}s waiting for APT POSIX locks to release.\n"
+            if contended_lock:
+                msg += f"Active file lock contention detected on: {contended_lock}\n"
+            if running_proc:
+                msg += f"Active process detected: {running_proc}\n"
+            sys.stderr.write(msg)
+            sys.exit(1)
+
+        print(f"APT lock contention active ({contended_lock or running_proc}); waiting... ({int(elapsed)}s/{timeout}s)")
+        time.sleep(5)
+    '
+  register: apt_lock_wait
+  changed_when: false
+  failed_when: apt_lock_wait.rc != 0
+
+- name: Update APT package cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ apt_cache_valid_time | default(3600) }}"
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"
