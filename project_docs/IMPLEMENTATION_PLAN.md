@@ -226,6 +226,13 @@ flowchart TD
      - Updated test playbook `ansible/playbooks/test-nginx.yml` targeting canonical `hosts: application` with `become: true`.
      - Authored comprehensive fixture test suite `ansible/tests/test_nginx_role.sh` (30/30 PASS), including reversion sensitivity checks confirming detection of defective OR-permitting logic.
      - Full project regression test baseline: 191/191 checks passing across all 8 test suites.
+   8. **Checkpoint 4.8: Phase 4 Local Consolidation & Boundary B Pre-flight Verification**:
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (191/191 Full Suite Regression, 7/7 Production Playbooks Syntax Clean, Terraform Format Clean)**. Ready for separately authorized Boundary B live deployment.
+     - Refactored master fleet orchestration playbook [`ansible/playbooks/site.yml`](file:///home/aditya-2274/Git-repo-analyzer/ansible/playbooks/site.yml) to execute modular roles across canonical inventory groups (`hosts: all` $\to$ `common`, `hosts: puppet_server` $\to$ `puppet_server`, `hosts: puppet_agents` $\to$ `puppet_agent`, `hosts: cicd` $\to$ `docker`, `hosts: application` $\to$ `nginx`), enforcing strict target isolation and eliminating legacy `webservers` warnings.
+     - Cleaned up obsolete untracked learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `app.conf.j2`, `demo.txt`), leaving exactly 7 production playbooks that all pass `ansible-playbook --syntax-check` with zero warnings.
+     - Verified all 8 Phase 4 regression test suites pass with 100% success (191/191 checks).
+     - Verified Terraform configuration formatting with `terraform fmt -check` (clean, exit 0).
+     - Authored comprehensive Boundary B deployment runbook and readiness checklist covering prerequisite verification, Terraform provisioning, dynamic inventory sync, host-key verification, Ansible bootstrap sequence, service verification, and teardown procedures.
 - **Completion Criteria:**
   - All 3 instances respond to Ansible ping with strict host-key verification.
   - Puppet Server active with tuned 1 GB JVM heap.

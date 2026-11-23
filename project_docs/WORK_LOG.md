@@ -863,3 +863,42 @@
     - Zero remote SSH executions or package installations against cloud instances.
     - Checkpoint 4.7 complete at local implementation and fixture validation level. Ready for Checkpoint 4.8.
 - **Outcome**: Checkpoint 4.7 fully implemented, tested, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.8: Phase 4 Local Consolidation & Boundary B Pre-flight Verification
+
+- **Task**: Complete final checkpoint of Phase 4 (Ansible Infrastructure Bootstrap) consolidating Checkpoints 4.1–4.7, establishing the canonical master orchestration sequence, purging obsolete learning exercises, verifying all test and syntax baselines, and preparing the Boundary B deployment runbook and readiness checklist.
+- **Actions Completed**:
+  - **Master Orchestration Playbook (`ansible/playbooks/site.yml`)**:
+    - Refactored `site.yml` from legacy single-instance `webservers` prototype to a canonical master orchestration playbook executing all 5 Phase 4 roles across the approved 3-node fleet:
+      - Play 1: `hosts: all` $\to$ role `common`
+      - Play 2: `hosts: puppet_server` $\to$ role `puppet_server`
+      - Play 3: `hosts: puppet_agents` $\to$ role `puppet_agent`
+      - Play 4: `hosts: cicd` $\to$ role `docker`
+      - Play 5: `hosts: application` $\to$ role `nginx`
+    - Eliminated legacy host-matching warnings (`Could not match supplied host pattern, ignoring: webservers`).
+  - **Repository Hygiene & Cleanup**:
+    - Removed untracked obsolete learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `ansible/templates/app.conf.j2`, `ansible/files/demo.txt`) that targeted `hosts: local` and generated warnings.
+    - Resulting production playbook suite: exactly 7 production playbooks (`site.yml`, `enroll-puppet-agents.yml`, `test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`).
+  - **Static & Syntax Validation**:
+    - All 7 production playbooks verified with `ansible-playbook --syntax-check` with zero warnings and zero errors (exit code 0).
+    - Terraform configuration formatting verified with `terraform fmt -check` (exit code 0).
+    - `bash -n` verified across all test scripts.
+    - `git diff --check` verified clean (0 whitespace or formatting errors).
+  - **Full Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - `test_docker_role.sh`: 30/30 PASS
+    - `test_nginx_role.sh`: 30/30 PASS
+    - Total Phase 4 regression baseline: 191/191 PASS across all 8 suites (100% pass rate).
+  - **Boundary B Deployment Runbook & Pre-flight Readiness**:
+    - Formulated comprehensive 15-step Boundary B deployment runbook and prerequisite checklist covering approval gates, Terraform provisioning, dynamic inventory sync, host-key verification, Ansible bootstrap sequence, service verification, error recovery, and cost-controlled teardown procedures.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made.
+    - All Phase 4 local engineering gates passed. Ready for separately authorized Boundary B live deployment.
+- **Outcome**: Phase 4 successfully consolidated, verified, and ready for deployment authorization.

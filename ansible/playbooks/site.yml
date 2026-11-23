@@ -1,10 +1,43 @@
 ---
-- name: Configure Git Repository Analyzer server
-  hosts: webservers
-  become: true
-  gather_facts: true
+# ==============================================================================
+# Master Site Orchestration Playbook: Git Repository Analyzer Fleet
+# Approved Three-Node Architecture:
+#   - EC2 1 (puppet-server): Dedicated Puppet Server 8 & CA
+#   - EC2 2 (app-server): Application & Monitoring (NGINX, React, Node.js, Nagios)
+#   - EC2 3 (cicd-server): CI/CD & Analysis (Jenkins, Docker, NRPE)
+# ==============================================================================
 
+# Play 1: Common infrastructure baseline across all three EC2 instances
+- name: "Phase 4 - Step 2: Apply common baseline across fleet"
+  hosts: all
+  become: true
   roles:
     - common
+
+# Play 2: Dedicated Puppet Server & CA configuration (EC2 1)
+- name: "Phase 4 - Step 3: Bootstrap dedicated Puppet Server (EC2 1)"
+  hosts: puppet_server
+  become: true
+  roles:
+    - puppet_server
+
+# Play 3: Dedicated Puppet Agent bootstrap on managed nodes (EC2 2 & EC2 3)
+- name: "Phase 4 - Step 4: Bootstrap Puppet Agents on managed nodes (EC2 2 & EC2 3)"
+  hosts: puppet_agents
+  become: true
+  roles:
+    - puppet_agent
+
+# Play 4: Docker Engine & Compose plugin bootstrap on CI/CD server (EC2 3)
+- name: "Phase 4 - Step 6: Bootstrap Docker Engine and Compose plugin (EC2 3)"
+  hosts: cicd
+  become: true
+  roles:
     - docker
+
+# Play 5: NGINX baseline bootstrap on Application server (EC2 2)
+- name: "Phase 4 - Step 7: Bootstrap baseline NGINX web server (EC2 2)"
+  hosts: application
+  become: true
+  roles:
     - nginx
