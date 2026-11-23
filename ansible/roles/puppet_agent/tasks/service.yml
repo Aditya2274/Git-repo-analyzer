@@ -5,5 +5,5 @@
   ansible.builtin.systemd:
     name: "{{ puppet_agent_service_name | default('puppet') }}"
     enabled: "{{ puppet_agent_service_enabled | default(true) }}"
-    state: "{{ puppet_agent_service_state | default('started') }}"
+    state: "{{ puppet_agent_service_state | default('stopped') }}"
   register: puppet_agent_service_status

@@ -552,6 +552,46 @@
 
 ---
 
+## 2026-11-23: Phase 4 — Checkpoint 4.4 Corrective Follow-up: Gating Puppet Agent Startup & Eliminating Misleading CSR Success
+
+- **Task**: Implement the two focused corrections identified in the source-level audit of commit `a6289d8` under Approval Boundary A.
+- **Objective**:
+  1. **Correction A (Gating Puppet Agent Service Startup)**: Ensure the Puppet Agent daemon defaults to `stopped` (while `enabled: true`) in `defaults/main.yml`, ensuring it does not run in the background prior to CA certificate signing, and guarding handlers against starting stopped services.
+  2. **Correction B (Eliminating Misleading CSR Success)**: Ensure `puppet_agent_require_server_reachable: true` defaults to strict enforcement, failing fast on unreachable TCP 8140 in live deployments. In `tasks/csr.yml`, distinguish remote submission (`puppet ssl submit_request`, failing fast on `rc != 0` when server is reachable) from local offline generation (`puppet ssl generate_request` when server is unreachable and offline mode is explicitly requested), eliminating false "pending CA approval" notices.
+- **Actions Completed**:
+  - **Correction A — Service Startup Gating**:
+    - `ansible/roles/puppet_agent/defaults/main.yml`: Updated `puppet_agent_service_state: "stopped"` and kept `puppet_agent_service_enabled: true`.
+    - `ansible/roles/puppet_agent/tasks/service.yml`: Updated default state fallback to `stopped`.
+    - `ansible/roles/puppet_agent/handlers/main.yml`: Guarded `restart puppet agent` with `when: puppet_agent_service_state | default('stopped') == 'started'` so configuration updates never accidentally start a stopped service.
+    - Handover Guarantee: Checkpoint 4.5 will explicitly control initial catalog application via supervised `puppet agent -t --detailed-exitcodes` before starting the daemon.
+  - **Correction B — Eliminating Misleading CSR Success**:
+    - `ansible/roles/puppet_agent/defaults/main.yml`: Updated `puppet_agent_require_server_reachable: true` by default.
+    - `ansible/roles/puppet_agent/tasks/preflight.yml`: Enforced strict port 8140 reachability assertion by default; registered explicit boolean fact `puppet_server_reachable`.
+    - `ansible/roles/puppet_agent/tasks/csr.yml`:
+      - Server reachable branch: Executes `puppet ssl submit_request --server <host>` with `failed_when: puppet_csr_submit_result.rc != 0` (eliminating `failed_when: false`). Real submission errors fail fast.
+      - Offline testing branch: When `puppet_server_reachable` is false and `puppet_agent_require_server_reachable` is explicitly false, executes `puppet ssl generate_request` to produce local keys and CSRs without attempting network connections.
+      - Added defense-in-depth safety assertion halting execution if server is unreachable in strict mode.
+      - Distinct reporting: Remote submission reports "successfully submitted to Puppet Server CA and pending CA approval in Checkpoint 4.5" only on verified `rc == 0`. Offline local generation reports that CSR was generated locally and submission is deferred, never claiming pending CA approval.
+      - Preserved pre-existing CSRs on disk without resubmission or key regeneration.
+  - **Regression Test Suite Extension**:
+    - Extended `ansible/tests/test_puppet_agent_role.sh` from 25 to 35 comprehensive checks: service stopped defaults, service task state enforcement, handler guards, strict preflight reachability, server reachable + successful submission, real failure enforcement (no `failed_when: false`), strict mode CSR safety failure, offline mode `generate_request`, offline report truthfulness, remote report condition gating, pre-existing CSR preservation, valid cert preservation, and playbook syntax validation.
+- **Verification & Regression Results**:
+  - `sync_terraform_inventory.sh`: 5/5 PASS
+  - `verify_ssh_host_keys.sh`: 8/8 PASS
+  - `test_common_role.sh`: 16/16 PASS
+  - `test_puppet_server_role.sh`: 20/20 PASS
+  - `test_puppet_agent_role.sh`: 35/35 PASS
+  - Total regression suite: 84/84 PASS across all 5 test suites.
+  - Ansible syntax checks: `test-puppet-agent.yml` (PASS) and `site.yml` (PASS).
+  - Whitespace check: `git diff --check` exits with 0 errors.
+- **Boundary Compliance**:
+  - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` was not run).
+  - Zero remote Ansible executions or live CA certificate signing performed.
+  - Checkpoint 4.4 complete at local implementation and fixture validation level. Checkpoint 4.5 remains unstarted.
+- **Outcome**: Both corrections implemented, tested, and documented. Ready for operator review and commit.
+
+---
+
 ## 2026-11-23: Phase 4 — Checkpoint 4.4: Puppet Agent Installation and Configuration
 
 - **Task**: Implement Ansible role `ansible/roles/puppet_agent/` for installing and configuring Puppet Agents on EC2 2 (`app-server`) and EC2 3 (`cicd-server`).

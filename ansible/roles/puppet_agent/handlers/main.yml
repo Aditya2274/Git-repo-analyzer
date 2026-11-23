@@ -5,4 +5,4 @@
   ansible.builtin.systemd:
     name: "{{ puppet_agent_service_name | default('puppet') }}"
     state: restarted
-  when: puppet_agent_service_state | default('started') == 'started'
+  when: puppet_agent_service_state | default('stopped') == 'started'

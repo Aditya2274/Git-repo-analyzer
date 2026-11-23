@@ -114,15 +114,50 @@
     - agent_csr_exists
     - existing_csr_subject.stdout | trim != puppet_agent_certname
 
-- name: Submit Puppet Agent certificate signing request (CSR)
-  ansible.builtin.command:
-    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl submit_request --server {{ puppet_server_host | default('puppet-server') }}"
-  register: puppet_csr_submit_result
-  changed_when: true
-  failed_when: false
+- name: Report pre-existing CSR status (preserved without resubmission)
+  ansible.builtin.debug:
+    msg: >
+      Existing Puppet Agent CSR for identity '{{ puppet_agent_certname }}' was verified on disk and preserved intact.
+      CSR was previously generated; no new key or CSR generated.
+  when:
+    - not (agent_cert_valid | default(false))
+    - agent_csr_exists
+
+- name: "Safety Check: Fail if Puppet Server is unreachable in strict live mode"
+  ansible.builtin.fail:
+    msg: >
+      Puppet Server TCP port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host }}' is unreachable.
+      CSR submission cannot proceed in strict mode (puppet_agent_require_server_reachable is true).
   when:
     - not (agent_cert_valid | default(false))
     - not agent_csr_exists
+    - not (puppet_server_reachable | default(false) | bool)
+    - puppet_agent_require_server_reachable | default(true) | bool
+
+# Branch A: Server is reachable -> Submit CSR to Puppet Server CA
+- name: Submit Puppet Agent certificate signing request (CSR) to Puppet Server CA
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl submit_request --server {{ puppet_server_host | default('puppet-server') }}"
+  register: puppet_csr_submit_result
+  changed_when: puppet_csr_submit_result.rc == 0
+  failed_when: puppet_csr_submit_result.rc != 0
+  when:
+    - not (agent_cert_valid | default(false))
+    - not agent_csr_exists
+    - puppet_server_reachable | default(false) | bool
+
+# Branch B: Server is unreachable and offline mode explicitly enabled -> Generate local CSR only
+- name: Generate Puppet Agent CSR locally in offline mode (submission deferred)
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl generate_request"
+  register: puppet_csr_generate_result
+  changed_when: puppet_csr_generate_result.rc == 0
+  failed_when: puppet_csr_generate_result.rc != 0
+  when:
+    - not (agent_cert_valid | default(false))
+    - not agent_csr_exists
+    - not (puppet_server_reachable | default(false) | bool)
+    - not (puppet_agent_require_server_reachable | default(true) | bool)
 
 - name: Verify that local CSR exists
   ansible.builtin.stat:
@@ -139,9 +174,27 @@
   failed_when: (local_csr_subject_verify.stdout | trim) != puppet_agent_certname
   when: not (agent_cert_valid | default(false))
 
-- name: Report CSR pending approval status
+- name: Report successful remote CSR submission
   ansible.builtin.debug:
     msg: >
-      Puppet Agent CSR for identity '{{ puppet_agent_certname }}' is generated and pending CA approval.
-      Certificate approval and signing will be performed on the Puppet Server in Checkpoint 4.5.
-  when: not (agent_cert_valid | default(false))
+      Puppet Agent CSR for identity '{{ puppet_agent_certname }}' was successfully submitted to Puppet Server CA ({{ puppet_server_host }}:{{ puppet_server_port }}).
+      The CSR is now pending CA approval on the Puppet Server in Checkpoint 4.5.
+  when:
+    - not (agent_cert_valid | default(false))
+    - puppet_csr_submit_result is defined
+    - puppet_csr_submit_result is not skipped
+    - puppet_csr_submit_result.rc is defined
+    - puppet_csr_submit_result.rc == 0
+
+- name: Report offline local CSR generation (submission deferred)
+  ansible.builtin.debug:
+    msg: >
+      Puppet Agent CSR for identity '{{ puppet_agent_certname }}' was generated locally on disk in offline mode.
+      The CSR has NOT been submitted to the Puppet Server CA because the server port {{ puppet_server_port }} was unreachable during preflight.
+      Submission must occur after the Puppet Server is provisioned and reachable.
+  when:
+    - not (agent_cert_valid | default(false))
+    - puppet_csr_generate_result is defined
+    - puppet_csr_generate_result is not skipped
+    - puppet_csr_generate_result.rc is defined
+    - puppet_csr_generate_result.rc == 0

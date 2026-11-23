@@ -54,20 +54,24 @@
   register: puppet_server_port_check
   ignore_errors: true
 
+- name: Set Puppet Server reachability fact
+  ansible.builtin.set_fact:
+    puppet_server_reachable: "{{ puppet_server_port_check is succeeded }}"
+
 - name: Enforce Puppet Server port reachability if required
   ansible.builtin.fail:
     msg: >
       Puppet Server TCP port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host }}' is unreachable.
       Verify that EC2 1 security group allows ingress from EC2 2 and EC2 3, and that puppetserver is running.
   when:
-    - puppet_agent_require_server_reachable | default(false)
-    - puppet_server_port_check is failed
+    - puppet_agent_require_server_reachable | default(true) | bool
+    - not (puppet_server_reachable | bool)
 
 - name: Report preflight port status notice
   ansible.builtin.debug:
     msg: >
-      {% if puppet_server_port_check is succeeded %}
+      {% if puppet_server_reachable | bool %}
       Port {{ puppet_server_port }} on {{ puppet_server_host }} is reachable.
       {% else %}
-      NOTICE: Port {{ puppet_server_port }} on {{ puppet_server_host }} is currently unreachable. Live connectivity validation is pending EC2 1 provisioning under Boundary B.
+      NOTICE: Port {{ puppet_server_port }} on {{ puppet_server_host }} is currently unreachable. Continuing role execution in offline mode because puppet_agent_require_server_reachable is false.
       {% endif %}
