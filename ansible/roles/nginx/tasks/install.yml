@@ -1,0 +1,9 @@
+---
+# Package installation for NGINX web server
+
+- name: Install official Ubuntu NGINX web server package
+  ansible.builtin.apt:
+    name: "{{ nginx_packages | default(['nginx']) }}"
+    state: "{{ nginx_packages_state | default('present') }}"
+    update_cache: true
+    cache_valid_time: "{{ nginx_apt_cache_valid_time | default(3600) }}"

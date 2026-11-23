@@ -1,0 +1,29 @@
+---
+# Verification tasks for NGINX web server
+
+- name: Check NGINX binary presence
+  ansible.builtin.stat:
+    path: /usr/sbin/nginx
+  register: nginx_binary
+
+- name: Verify NGINX version
+  ansible.builtin.command:
+    cmd: nginx -v
+  register: nginx_version_output
+  changed_when: false
+  when: nginx_binary.stat.exists | default(false)
+
+- name: Verify NGINX configuration test passes
+  ansible.builtin.command:
+    cmd: nginx -t
+  register: nginx_test_output
+  changed_when: false
+  when: nginx_binary.stat.exists | default(false)
+
+- name: Report NGINX verification summary
+  ansible.builtin.debug:
+    msg:
+      - "NGINX Binary: {{ '/usr/sbin/nginx' if (nginx_binary.stat.exists | default(false)) else 'Not found' }}"
+      - "NGINX Version: {{ nginx_version_output.stderr | default('Not installed') | trim }}"
+      - "NGINX Config Test: {{ 'Passed' if ((nginx_test_output.rc | default(1)) == 0) else 'Failed' }}"
+      - "NGINX Service: {{ nginx_service_name }} ({{ nginx_service_state }}, enabled={{ nginx_service_enabled }})"

@@ -1,34 +1,17 @@
 ---
-- name: Install NGINX
-  ansible.builtin.apt:
-    name: nginx
-    state: present
-    update_cache: true
+# Main orchestrator for nginx role (EC2 2: Application & Monitoring Server)
 
-- name: Deploy NGINX configuration
-  ansible.builtin.template:
-    src: nginx.conf.j2
-    dest: /etc/nginx/sites-available/git-repo-analyzer
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart NGINX
+- name: Execute preflight checks for NGINX installation
+  ansible.builtin.include_tasks: preflight.yml
 
-- name: Enable Git Repository Analyzer site
-  ansible.builtin.file:
-    src: /etc/nginx/sites-available/git-repo-analyzer
-    dest: /etc/nginx/sites-enabled/git-repo-analyzer
-    state: link
-  notify: Restart NGINX
+- name: Install official Ubuntu NGINX web server package
+  ansible.builtin.include_tasks: install.yml
 
-- name: Remove default NGINX site
-  ansible.builtin.file:
-    path: /etc/nginx/sites-enabled/default
-    state: absent
-  notify: Restart NGINX
+- name: Deploy baseline NGINX configuration and security controls
+  ansible.builtin.include_tasks: config.yml
 
-- name: Ensure NGINX is enabled and running
-  ansible.builtin.systemd_service:
-    name: nginx
-    state: started
-    enabled: true
+- name: Manage NGINX systemd service lifecycle
+  ansible.builtin.include_tasks: service.yml
+
+- name: Verify NGINX installation and service status
+  ansible.builtin.include_tasks: verify.yml

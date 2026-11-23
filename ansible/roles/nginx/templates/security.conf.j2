@@ -1,0 +1,7 @@
+# ==============================================================================
+# Baseline NGINX Security Configuration (EC2 2: Application Server)
+# Managed by Ansible - Do not edit manually
+# ==============================================================================
+
+# Disable NGINX version disclosure in Server headers and error pages
+server_tokens {{ nginx_server_tokens | default('off') }};

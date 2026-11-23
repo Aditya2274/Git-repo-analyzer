@@ -1,0 +1,29 @@
+# ==============================================================================
+# Baseline Default Virtual Host Configuration (EC2 2: Application Server)
+# Managed by Ansible - Do not edit manually
+# Note: Production reverse proxy and static builds are owned by Puppet in Phase 5B
+# ==============================================================================
+
+server {
+    listen {{ nginx_http_port | default(80) }} default_server;
+    listen [::]:{{ nginx_http_port | default(80) }} default_server;
+
+    server_name _;
+    root {{ nginx_web_root | default('/var/www/html') }};
+    index index.html index.htm;
+
+    # Security controls
+    server_tokens {{ nginx_server_tokens | default('off') }};
+    autoindex {{ nginx_autoindex | default('off') }};
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Baseline health check endpoint
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "healthy\n";
+    }
+}

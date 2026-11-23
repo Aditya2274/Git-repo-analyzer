@@ -216,8 +216,16 @@ flowchart TD
      - Authored isolated fixture test suite `ansible/tests/test_docker_role.sh` (30/30 PASS).
      - Full project regression test baseline: 161/161 checks passing across all 7 test suites.
   7. **Checkpoint 4.7: NGINX Bootstrap Baseline (EC2 2)**:
-     - Deploy baseline NGINX package on EC2 2.
-     - Confirm service is active and responds on port 80.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (30/30 Tests Passed; 191/191 Full Suite Regression)**. Live host application pending Boundary B.
+     - Implemented modular, idempotent, and secure Ansible role `ansible/roles/nginx/`:
+       - **Targeting & Preflight (`tasks/preflight.yml`)**: Enforces strict dual-condition targeting: requires both canonical inventory hostname (`app-server` / EC2 2) and inventory group (`application`) via disjunctive fail logic (`(inventory_hostname != target_host) or (target_group not in group_names)`), halting immediately if executed against `puppet-server` or `cicd-server`. Validates Ubuntu 24.04 LTS (Noble) target and supported 64-bit CPU architecture (`amd64`/`x86_64`/`arm64`).
+       - **Package Installation (`tasks/install.yml`)**: Declares official Ubuntu distribution package `nginx` with `state: present` and bounded cache validity (`cache_valid_time: 3600`) via `ansible.builtin.apt`. Strictly excludes arbitrary external repositories or version pinning.
+       - **Baseline Configuration & Security Controls (`tasks/config.yml`)**: Ensures `/etc/nginx`, `conf.d`, `sites-available`, and `sites-enabled` directories exist with mode `0755` (`root:root`). Deploys baseline security configuration snippet `/etc/nginx/conf.d/security.conf` (mode `0644`) enforcing `server_tokens off;` to prevent server version disclosure. Deploys baseline default virtual host `/etc/nginx/sites-available/default` (mode `0644`) listening on port 80 default_server, disabling directory listings (`autoindex off;`), and exposing a baseline `/healthz` endpoint returning HTTP 200. Ensures `sites-enabled/default` symlink exists and removes any premature application sites (`sites-enabled/git-repo-analyzer` absent). Pre-validates configuration syntax via `nginx -t` with `changed_when: false` before notifying handlers.
+       - **Service Lifecycle Management (`tasks/service.yml`, `handlers/main.yml`)**: Manages `nginx` systemd service (`state: started`, `enabled: true`). Implements guarded `Reload NGINX` (state: `reloaded`) and `Restart NGINX` (state: `restarted`) handlers guarded on `nginx_service_state == 'started'`.
+       - **Verification Tasks (`tasks/verify.yml`)**: Validates `/usr/sbin/nginx` binary existence, checks `nginx -v` version, executes `nginx -t` syntax test, and outputs summary diagnostics with `changed_when: false`.
+     - Updated test playbook `ansible/playbooks/test-nginx.yml` targeting canonical `hosts: application` with `become: true`.
+     - Authored comprehensive fixture test suite `ansible/tests/test_nginx_role.sh` (30/30 PASS), including reversion sensitivity checks confirming detection of defective OR-permitting logic.
+     - Full project regression test baseline: 191/191 checks passing across all 8 test suites.
 - **Completion Criteria:**
   - All 3 instances respond to Ansible ping with strict host-key verification.
   - Puppet Server active with tuned 1 GB JVM heap.

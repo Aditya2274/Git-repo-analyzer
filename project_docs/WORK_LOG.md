@@ -825,3 +825,41 @@
 - **Operational Boundary Compliance**:
   - Strictly under Approval Boundary A. Zero AWS API calls, zero Terraform executions, zero live SSH or remote executions.
 - **Outcome**: Target-isolation logic corrected and verified. Checkpoint 4.6 ready for commit.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.7: NGINX Bootstrap Baseline (EC2 2)
+
+- **Task**: Implement a modular, idempotent, and secure Ansible role for installing, configuring, securing, and managing NGINX on the dedicated application server (`app-server`, EC2 2).
+- **Objective**: Establish an initial baseline NGINX installation on `app-server` supporting port 80 HTTP web access and baseline health checks, strictly under Approval Boundary A, leaving application virtual host and reverse proxy configuration to Puppet in Phase 5B.
+- **Actions Completed**:
+  - **Modular Role Architecture (`ansible/roles/nginx/`)**:
+    - `defaults/main.yml`: Defined default variables for distribution package `nginx`, state `present`, cache validity `3600`, configuration paths, baseline security (`server_tokens: "off"`, `autoindex: "off"`), port 80, and systemd service defaults (`state: started`, `enabled: true`).
+    - `tasks/preflight.yml`: Enforced strict dual-condition targeting: requires both `inventory_hostname == 'app-server'` AND `'application' in group_names` via disjunctive fail logic (`(inventory_hostname != target_host) or (target_group not in group_names)`), halting immediately if attempted against `puppet-server` or `cicd-server`. Validated target OS (`Ubuntu 24.04 LTS Noble`) and 64-bit architecture.
+    - `tasks/install.yml`: Declared official Ubuntu distribution package `nginx` (`state: present`, `update_cache: true`, `cache_valid_time: 3600`) via `ansible.builtin.apt`. Strictly avoids arbitrary external repositories or version pinning.
+    - `tasks/config.yml`: Ensured `/etc/nginx`, `conf.d`, `sites-available`, and `sites-enabled` directories exist with mode `0755` (`root:root`). Deployed baseline security snippet `/etc/nginx/conf.d/security.conf` (mode `0644`) enforcing `server_tokens off;`. Deployed baseline default virtual host `/etc/nginx/sites-available/default` (mode `0644`) listening on port 80 default_server, disabling directory listings (`autoindex off;`), and serving `/healthz` returning 200 OK. Ensured `sites-enabled/default` symlink exists and cleaned up any premature application sites (`sites-enabled/git-repo-analyzer` absent). Pre-validated configuration syntax via `nginx -t` with `changed_when: false` before notifying handlers.
+    - `tasks/service.yml`: Managed `nginx` systemd unit (`state: started`, `enabled: true`).
+    - `handlers/main.yml`: Implemented guarded `Reload NGINX` (state: `reloaded`) and `Restart NGINX` (state: `restarted`) handlers guarded on `nginx_service_state == 'started'`.
+    - `tasks/verify.yml`: Validated binary `/usr/sbin/nginx`, `nginx -v` version command, and `nginx -t` test with `changed_when: false`.
+    - `templates/security.conf.j2` & `templates/default.conf.j2`: Created baseline configuration templates; removed legacy development template `nginx.conf.j2`.
+  - **Playbook Targeting**:
+    - Updated `ansible/playbooks/test-nginx.yml` targeting canonical `hosts: application` with `become: true` and role `nginx`.
+  - **Fixture Test Suite (`ansible/tests/test_nginx_role.sh`)**:
+    - Implemented comprehensive 30-assertion isolated test suite covering OS validation, architecture checks, strict targeting contract (8 scenarios), reversion sensitivity, package declarations, directory permissions, security config, default virtual host, absence of premature proxy routes, site hygiene, pre-validation check, service lifecycle, guarded handlers, verification commands, and playbook syntax (30/30 PASS).
+  - **Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - `test_docker_role.sh`: 30/30 PASS
+    - `test_nginx_role.sh`: 30/30 PASS
+    - Total test suite: 191/191 PASS across all 8 test suites.
+    - Playbook syntax validation: `ansible-playbook --syntax-check` clean on all 13 playbooks.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+    - Zero remote SSH executions or package installations against cloud instances.
+    - Checkpoint 4.7 complete at local implementation and fixture validation level. Ready for Checkpoint 4.8.
+- **Outcome**: Checkpoint 4.7 fully implemented, tested, and documented.

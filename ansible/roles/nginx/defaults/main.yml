@@ -1,0 +1,32 @@
+---
+# Default variables for nginx role (EC2 2 - Application & Monitoring Server)
+
+nginx_role: nginx
+
+# Target OS and instance constraints
+nginx_target_distribution: "Ubuntu"
+nginx_target_release: "24.04"
+nginx_target_group: "application"
+nginx_target_host: "app-server"
+
+# Package selection (official Ubuntu distribution packages)
+nginx_packages:
+  - nginx
+nginx_packages_state: "present"
+nginx_apt_cache_valid_time: 3600
+
+# Baseline configuration paths and settings
+nginx_conf_dir: "/etc/nginx"
+nginx_conf_d_dir: "/etc/nginx/conf.d"
+nginx_sites_available_dir: "/etc/nginx/sites-available"
+nginx_sites_enabled_dir: "/etc/nginx/sites-enabled"
+nginx_default_site_enabled: true
+nginx_server_tokens: "off"
+nginx_autoindex: "off"
+nginx_http_port: 80
+nginx_web_root: "/var/www/html"
+
+# Service lifecycle management
+nginx_service_name: "nginx"
+nginx_service_state: "started"
+nginx_service_enabled: "{{ nginx_enable_service | default(true) }}"

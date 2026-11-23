@@ -1,0 +1,29 @@
+---
+# Preflight checks for NGINX role (EC2 2 - Application & Monitoring Server)
+
+- name: Validate inventory targeting for NGINX installation
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL SAFETY ERROR: NGINX role targeting violation.
+      NGINX must be installed exclusively on '{{ nginx_target_host | default('app-server') }}' (EC2 2 in group '{{ nginx_target_group | default('application') }}').
+      Attempted execution on '{{ inventory_hostname }}'. Execution halted to protect dedicated instances.
+  when:
+    - (inventory_hostname != (nginx_target_host | default('app-server'))) or
+      ((nginx_target_group | default('application')) not in group_names)
+
+- name: Validate target operating system is Ubuntu 24.04 LTS
+  ansible.builtin.fail:
+    msg: >
+      Unsupported operating system: {{ ansible_distribution | default('Unknown') }} {{ ansible_distribution_version | default('Unknown') }}.
+      NGINX bootstrap requires {{ nginx_target_distribution | default('Ubuntu') }} {{ nginx_target_release | default('24.04') }} (Noble Numbat).
+  when:
+    - ansible_distribution is defined
+    - (ansible_distribution != (nginx_target_distribution | default('Ubuntu'))) or
+      (ansible_distribution_version != (nginx_target_release | default('24.04')))
+
+- name: Validate CPU architecture
+  ansible.builtin.fail:
+    msg: "Unsupported architecture '{{ ansible_architecture }}'. NGINX packages require x86_64 / amd64 or aarch64 / arm64."
+  when:
+    - ansible_architecture is defined
+    - ansible_architecture not in ['x86_64', 'amd64', 'aarch64', 'arm64']

@@ -1,0 +1,53 @@
+---
+# Baseline configuration for NGINX web server
+
+- name: Ensure NGINX configuration directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  loop:
+    - "{{ nginx_conf_dir | default('/etc/nginx') }}"
+    - "{{ nginx_conf_d_dir | default('/etc/nginx/conf.d') }}"
+    - "{{ nginx_sites_available_dir | default('/etc/nginx/sites-available') }}"
+    - "{{ nginx_sites_enabled_dir | default('/etc/nginx/sites-enabled') }}"
+
+- name: Deploy baseline NGINX security configuration (conf.d/security.conf)
+  ansible.builtin.template:
+    src: security.conf.j2
+    dest: "{{ nginx_conf_d_dir | default('/etc/nginx/conf.d') }}/security.conf"
+    mode: "0644"
+    owner: root
+    group: root
+  notify: reload nginx
+
+- name: Deploy baseline default virtual host (sites-available/default)
+  ansible.builtin.template:
+    src: default.conf.j2
+    dest: "{{ nginx_sites_available_dir | default('/etc/nginx/sites-available') }}/default"
+    mode: "0644"
+    owner: root
+    group: root
+  notify: reload nginx
+
+- name: Ensure default virtual host is enabled (sites-enabled/default)
+  ansible.builtin.file:
+    src: "{{ nginx_sites_available_dir | default('/etc/nginx/sites-available') }}/default"
+    dest: "{{ nginx_sites_enabled_dir | default('/etc/nginx/sites-enabled') }}/default"
+    state: link
+    force: true
+  notify: reload nginx
+  when: nginx_default_site_enabled | default(true)
+
+- name: Ensure premature application-specific site is absent in baseline
+  ansible.builtin.file:
+    path: "{{ nginx_sites_enabled_dir | default('/etc/nginx/sites-enabled') }}/git-repo-analyzer"
+    state: absent
+  notify: reload nginx
+
+- name: Validate NGINX configuration syntax before applying
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
