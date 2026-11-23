@@ -1,0 +1,8 @@
+---
+# Install Docker Engine and Compose plugin packages
+
+- name: Install official Docker Engine and Compose plugin packages
+  ansible.builtin.apt:
+    name: "{{ docker_packages | default(['docker-ce', 'docker-ce-cli', 'containerd.io', 'docker-buildx-plugin', 'docker-compose-plugin']) }}"
+    state: "{{ docker_packages_state | default('present') }}"
+    update_cache: false

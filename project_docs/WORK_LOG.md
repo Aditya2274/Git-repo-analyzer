@@ -766,3 +766,40 @@
     - Zero remote SSH executions or live certificate operations against cloud instances.
     - Checkpoint 4.5 complete at local implementation and fixture validation level. Ready for Checkpoint 4.6.
 - **Outcome**: Checkpoint 4.5 fully implemented, orchestrated, tested, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.6: Docker Engine & Docker Compose Plugin Bootstrap
+
+- **Task**: Implement Ansible automation to install and configure Docker Engine and Docker Compose plugin on the dedicated CI/CD & Analysis Server (EC2 3, `cicd-server`).
+- **Objective**: Establish a reliable, modular, idempotent, and secure Docker installation on `cicd-server` supporting future Jenkins pipelines and analyzer container execution, strictly under Approval Boundary A.
+- **Actions Completed**:
+  - **Modular Role Architecture (`ansible/roles/docker/`)**:
+    - `tasks/preflight.yml`: Enforces strict inventory targeting: restricts Docker execution exclusively to `cicd-server` (EC2 3) / `cicd` group, failing fast with a critical safety alert if attempted against `puppet-server` (EC2 1) or `app-server` (EC2 2). Validates target OS (`Ubuntu 24.04 LTS Noble`) and 64-bit architecture (`amd64`/`x86_64`).
+    - `tasks/repository.yml`: Installs prerequisites (`ca-certificates`, `curl`), ensures `/etc/apt/keyrings` directory exists (mode `0755`), downloads official Docker GPG key to `/etc/apt/keyrings/docker.asc` (mode `0644`), and configures official Docker APT repository via modern `signed-by` syntax in `/etc/apt/sources.list.d/docker.list` (zero deprecated `apt-key` usage).
+    - `tasks/install.yml`: Declares official Docker Engine packages (`docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`) with `state: present` (non-breaking, idempotent).
+    - `tasks/config.yml`: Deploys `/etc/docker/daemon.json` configuring `log-driver: json-file` with bounded rotation limits (`max-size: 10m`, `max-file: 3`) to prevent unbounded disk consumption on a 20 GB EBS volume. Enforces safety assertion strictly prohibiting unauthenticated TCP daemon endpoints (`tcp://`), binding exclusively to the local UNIX socket (`unix:///var/run/docker.sock`).
+    - `tasks/service.yml`: Manages `containerd` and `docker` systemd units (`state: started`, `enabled: true`).
+    - `handlers/main.yml`: Implements guarded restart handlers (`Restart Docker daemon`, `Restart containerd`).
+    - `tasks/users.yml`: Ensures `docker` group exists; adds authorized users (`ubuntu` via `group_vars/cicd.yml`) with `append: true` preserving existing groups; enforces security check preventing premature addition of `jenkins` user in Phase 4 (deferred strictly to Phase 7 per ADR 007).
+    - `tasks/verify.yml`: Validates presence of Docker CLI and modern Compose plugin (`docker compose version`).
+  - **Playbook Targeting**:
+    - Updated `ansible/playbooks/test-docker.yml` to target canonical `hosts: cicd` with `become: true`.
+  - **Fixture Test Suite (`ansible/tests/test_docker_role.sh`)**:
+    - Implemented comprehensive 30-assertion isolated test suite covering OS validation, architecture detection, targeting guards, keyring permissions, signed-by syntax, package selection, Compose plugin, log-rotation config, TCP exposure rejection, socket protection, user permissions, service lifecycle, and playbook syntax (30/30 PASS).
+  - **Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - `test_docker_role.sh`: 30/30 PASS
+    - Total test suite: 161/161 PASS across all 7 test suites.
+    - Playbook syntax validation: `ansible-playbook --syntax-check` clean on all playbooks.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+    - Zero remote SSH executions or package installations against cloud instances.
+    - Checkpoint 4.6 complete at local implementation and fixture validation level. Ready for Checkpoint 4.7.
+- **Outcome**: Checkpoint 4.6 fully implemented, tested, and documented.

@@ -203,9 +203,18 @@ flowchart TD
        - Play 3 (`hosts: puppet_agents`): Certificate verification, supervised catalog run, service activation, and daemon verification (Steps 4–9).
      - Created comprehensive fixture test suite `ansible/tests/test_puppet_enrollment.sh` (45/45 PASS). Full regression suite: 131/131 checks pass across all 6 project test suites.
   6. **Checkpoint 4.6: Docker Engine & Compose Bootstrap (EC2 3)**:
-     - Install official Docker CE and Compose plugin from Docker's Ubuntu Noble repository.
-     - Add `ubuntu` user to the `docker` group. (Adding `jenkins` user is deferred to Phase 7).
-     - Verify Docker daemon status via `systemctl status docker`.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (30/30 Tests Passed; 161/161 Full Suite Regression)**. Live host application pending Boundary B.
+     - Implemented modular, idempotent, and secure Ansible role `ansible/roles/docker/`:
+       - **Targeting & Preflight (`tasks/preflight.yml`)**: Restricts Docker installation exclusively to `cicd-server` (EC2 3) / `cicd` inventory group; halts immediately if executed against `puppet-server` or `app-server`. Validates Ubuntu 24.04 LTS (Noble) target and 64-bit CPU architecture (`amd64`/`x86_64`).
+       - **Repository & Keyring Configuration (`tasks/repository.yml`)**: Installs prerequisites (`ca-certificates`, `curl`), ensures `/etc/apt/keyrings` exists (mode `0755`), downloads official Docker ASCII armor GPG key to `/etc/apt/keyrings/docker.asc` (mode `0644`), and configures official Docker APT repository via modern `signed-by` syntax in `/etc/apt/sources.list.d/docker.list` (zero deprecated `apt-key` usage).
+       - **Package Installation (`tasks/install.yml`)**: Declares official Docker Engine components: `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, and `docker-compose-plugin` with `state: present` (avoiding breaking upgrades). Excludes legacy standalone `docker-compose`.
+       - **Daemon Configuration & Security (`tasks/config.yml`)**: Deploys `/etc/docker/daemon.json` configuring `log-driver: json-file` with bounded log rotation (`max-size: 10m`, `max-file: 3`) to prevent unbounded disk consumption on a 20 GB EBS volume. Enforces security assertion strictly prohibiting unauthenticated TCP daemon endpoints (`tcp://`), binding exclusively to the local UNIX socket (`unix:///var/run/docker.sock`).
+       - **Service Lifecycle Management (`tasks/service.yml`, `handlers/main.yml`)**: Configures systemd management for both `containerd` and `docker` units (`state: started`, `enabled: true`). Implements guarded restart handlers (`Restart Docker daemon`, `Restart containerd`).
+       - **User Permissions & Group Security (`tasks/users.yml`)**: Ensures `docker` group exists; adds authorized users (`ubuntu` from `group_vars/cicd.yml`) with `append: true` to preserve existing group memberships; enforces strict security check preventing premature addition of `jenkins` user in Phase 4 (deferred strictly to Phase 7 per ADR 007 and `AGENTS.md`).
+       - **Verification Tasks (`tasks/verify.yml`)**: Verifies presence of Docker CLI and Docker Compose plugin (`docker compose version`), checks active/enabled daemon status, and outputs summary diagnostics.
+     - Updated test playbook `ansible/playbooks/test-docker.yml` to target canonical `hosts: cicd` with `become: true`.
+     - Authored isolated fixture test suite `ansible/tests/test_docker_role.sh` (30/30 PASS).
+     - Full project regression test baseline: 161/161 checks passing across all 7 test suites.
   7. **Checkpoint 4.7: NGINX Bootstrap Baseline (EC2 2)**:
      - Deploy baseline NGINX package on EC2 2.
      - Confirm service is active and responds on port 80.
