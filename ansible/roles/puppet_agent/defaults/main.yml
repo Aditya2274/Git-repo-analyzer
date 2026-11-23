@@ -33,5 +33,5 @@ puppet_agent_splay: true
 puppet_agent_splaylimit: "5m"
 
 # Service management
-puppet_agent_service_enabled: true
+puppet_agent_service_enabled: false
 puppet_agent_service_state: "stopped"

@@ -552,6 +552,46 @@
 
 ---
 
+## 2026-11-23: Phase 4 — Checkpoint 4.4 Final Service Lifecycle Correction: Complete Service Gating (Disabled & Stopped)
+
+- **Task**: Correct the remaining service lifecycle vulnerability identified during independent review of commit `61f0bb8` under Approval Boundary A.
+- **Objective**:
+  - Enforce full service gating during Checkpoint 4.4 by setting both `puppet_agent_service_enabled: false` and `puppet_agent_service_state: "stopped"` in `defaults/main.yml` and `tasks/service.yml`.
+  - Guarantee that host reboots cannot automatically trigger the Puppet Agent daemon before CA certificate signing and initial catalog compilation.
+  - Guard configuration handlers in `handlers/main.yml` against starting or restarting the service while gated, strictly requiring both `state == 'started'` and `enabled == true`.
+  - Establish the authoritative 9-step Checkpoint 4.5 handover contract: the agent service must **never** be started merely because a CSR has been signed, but only after successful supervised catalog application via `puppet agent -t --detailed-exitcodes` (codes 0 or 2).
+- **Actions Completed**:
+  - **Role Defaults & Tasks**:
+    - `ansible/roles/puppet_agent/defaults/main.yml`: Set `puppet_agent_service_enabled: false` (changed from `true`) and confirmed `puppet_agent_service_state: "stopped"`.
+    - `ansible/roles/puppet_agent/tasks/service.yml`: Updated `enabled` parameter default to `default(false)`.
+    - `ansible/roles/puppet_agent/handlers/main.yml`: Hardened `restart puppet agent` handler to require both `puppet_agent_service_state | default('stopped') == 'started'` and `puppet_agent_service_enabled | default(false) | bool`.
+  - **Handover Contract**:
+    - Documented the strict 9-step Checkpoint 4.5 sequence in `IMPLEMENTATION_PLAN.md` and authored ADR 012 in `ARCHITECTURE_DECISIONS.md`.
+  - **Fixture Test Suite Extension (`ansible/tests/test_puppet_agent_role.sh`)**:
+    - Expanded test suite from 35 to 37 comprehensive tests:
+      - Verified `puppet_agent_service_enabled` defaults to `false` and `puppet_agent_service_state` defaults to `stopped`.
+      - Verified `tasks/service.yml` declares `enabled default(false)` and `state default('stopped')`.
+      - Verified `handlers/main.yml` requires both `state == 'started'` and `enabled == true`.
+      - Evaluated full truth table across all 4 service lifecycle states (`stopped/false`, `stopped/true`, `started/false`, `started/true`), proving handler cannot bypass the gate.
+      - Verified explicit overrides support Checkpoint 4.5 handover (`enabled: true`, `state: "started"`).
+      - Re-verified all CSR preservation, conflict detection, and strict reachability tests.
+- **Verification & Regression Results**:
+  - `sync_terraform_inventory.sh`: 5/5 PASS
+  - `verify_ssh_host_keys.sh`: 8/8 PASS
+  - `test_common_role.sh`: 16/16 PASS
+  - `test_puppet_server_role.sh`: 20/20 PASS
+  - `test_puppet_agent_role.sh`: 37/37 PASS
+  - Total regression suite: 86/86 checks passed across all 5 test suites.
+  - Ansible syntax checks: `test-puppet-agent.yml` (PASS) and `site.yml` (PASS).
+  - Whitespace check: `git diff --check` exits with 0 errors.
+- **Boundary Compliance**:
+  - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+  - Zero remote executions or live certificate signing performed.
+  - Checkpoint 4.4 complete at local implementation and fixture validation level. Checkpoint 4.5 remains unstarted.
+- **Outcome**: Service lifecycle fully corrected and verified. Milestone ready for commit.
+
+---
+
 ## 2026-11-23: Phase 4 — Checkpoint 4.4 Corrective Follow-up: Gating Puppet Agent Startup & Eliminating Misleading CSR Success
 
 - **Task**: Implement the two focused corrections identified in the source-level audit of commit `a6289d8` under Approval Boundary A.

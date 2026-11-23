@@ -267,3 +267,22 @@ This Architecture Decision Record (ADR) logs all approved architectural, infrast
 - **Private Key Storage Standard:** The canonical location for private keys is `~/.ssh/git-repo-analyzer.pem` with mode `0400`. Keeping private keys in the repository workspace (even if git-ignored) is an operational security risk; `.gitignore` is not an equivalent security substitute for external storage.
 - **Production-Ready vs. Demonstration-Ready Distinction:** The project target is explicitly **demonstration-ready**, optimized for low-cost ephemeral execution, rather than an enterprise high-availability 24/7 production service.
 - **Consequences:** Limits demonstration session costs to ~$0.31 (4 hours) or ~$1.24/month for weekly demos, while preserving account credits. Requires conscious export of desired artifacts before teardown.
+
+---
+
+## ADR 012: Two-Phase Puppet Agent Service Lifecycle & Gated Startup Invariant
+
+- **Date:** 2026-11-23
+- **Status:** Approved
+- **Context:** In Checkpoint 4.4, Puppet Agent packages are installed, configurations deployed, and CSRs generated/submitted. If the `puppet` systemd service unit is enabled or started during this initial phase, the background daemon could start automatically upon a host reboot or poll the Puppet Server continuously in the background. The instant an administrator signs the agent's certificate on EC2 1 during Checkpoint 4.5, a running background daemon would automatically fetch the signed certificate and compile/apply the node catalog without Ansible supervision or operator observability.
+- **Decision:** Enforce a strict two-phase service lifecycle governing the Puppet Agent:
+  1. **Phase 1 — Checkpoint 4.4 Bootstrap Invariant (Disabled & Stopped):**
+     - The agent systemd service defaults strictly to `puppet_agent_service_enabled: false` and `puppet_agent_service_state: "stopped"`.
+     - Configuration handlers in `handlers/main.yml` are guarded with `when: puppet_agent_service_state | default('stopped') == 'started'` and `puppet_agent_service_enabled | default(false) | bool`.
+     - The service remains dormant and will not start across system reboots or configuration notifications.
+  2. **Phase 2 — Checkpoint 4.5 Handover Sequence (Supervised Enforcement & Startup):**
+     - Certificate signing on EC2 1 must be verified.
+     - Initial catalog application must be executed under Ansible supervision: `puppet agent -t --detailed-exitcodes`, asserting documented clean exit codes (`0` or `2`).
+     - Only after successful catalog verification are `puppet_agent_service_enabled: true` and `puppet_agent_service_state: "started"` explicitly enforced.
+     - The agent service must **never** be enabled or started merely because a CSR was signed.
+- **Consequences:** Eliminates background polling races and guarantees that the initial catalog application is completely observable, deterministic, and verified by Ansible before continuous daemon polling is activated.

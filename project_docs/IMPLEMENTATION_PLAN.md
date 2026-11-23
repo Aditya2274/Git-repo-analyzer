@@ -132,29 +132,36 @@ flowchart TD
      - Service management task enables and starts `puppetserver`, verifies TCP port 8140 availability via `wait_for`, and checks CA health via `puppetserver ca status`.
      - Verified locally via isolated fixture test suite `ansible/tests/test_puppet_server_role.sh` (20/20 PASS).
   4. **Checkpoint 4.4: Puppet Agent Installation (EC2 2 & EC2 3)**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (35/35 Tests Passed; Corrective Audit Follow-up Applied)**. Live host application pending Boundary B.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (37/37 Tests Passed; Service Lifecycle Corrected)**. Live host application pending Boundary B.
+     - **Corrective History & Audit Iteration**:
+       - *Initial Implementation (`a6289d8`)*: Configured agent installation, certname configuration, and CSR submission, but left service daemon active (`state: started`, `enabled: true`), defaulted reachability to non-strict (`require_server_reachable: false`), and suppressed CSR CLI failure (`failed_when: false`), causing misleading "pending CA approval" notices on unreachable servers and risking background catalog application races.
+       - *Audit Follow-up (`61f0bb8`)*: Enforced strict reachability (`require_server_reachable: true` by default), distinguished remote submission (`puppet ssl submit_request`, failing fast on `rc != 0`) from offline generation (`puppet ssl generate_request`), and stopped the daemon (`state: stopped`).
+       - *Final Service Lifecycle Correction*: Independent review noted that a systemd-enabled service (`enabled: true`) can start automatically after a host reboot even if stopped, violating lifecycle gating. Checkpoint 4.4 defaults were updated to both `puppet_agent_service_state: "stopped"` and `puppet_agent_service_enabled: false`. Handlers strictly require both `state == 'started'` and `enabled == true`. The service remains disabled and stopped throughout Checkpoint 4.4.
      - Implemented dedicated Ansible role `ansible/roles/puppet_agent/` with modular task structure: `preflight.yml`, `repository.yml`, `install.yml`, `config.yml`, `csr.yml`, `service.yml`, `defaults/main.yml`, and `handlers/main.yml`.
-     - Preflight task validates target OS (`Ubuntu 24.04 LTS Noble`), inventory targeting (`app-server` on EC2 2, `cicd-server` on EC2 3), resolves `puppet-server` against expected private IP from inventory, and tests TCP 8140 reachability with actionable diagnostics.
-     - Applied **Correction B (Eliminate Misleading CSR Success)**: `puppet_agent_require_server_reachable: true` is enforced by default. Live deployments fail fast during preflight if port 8140 is unreachable. Distinguishes remote submission (`puppet ssl submit_request`, which fails fast on rc != 0 when server is reachable) from local offline generation (`puppet ssl generate_request` when server is unreachable and offline testing is explicitly requested via `puppet_agent_require_server_reachable: false`). Never reports "pending CA approval" unless submission has genuinely succeeded.
-     - Applied **Correction A (Keep Puppet Agent Service Stopped)**: `puppet_agent_service_state: "stopped"` and `puppet_agent_service_enabled: true` are enforced by default. Prevents the Puppet daemon from running in the background before CA certificate signing, eliminating background polling races and uncontrolled catalog application. Handlers enforce `when: puppet_agent_service_state | default('stopped') == 'started'`, guaranteeing that configuration notifications do not accidentally start a stopped service. Checkpoint 4.5 explicitly controls initial catalog application via supervised `puppet agent -t --detailed-exitcodes` before starting the daemon.
+     - Preflight task validates target OS (`Ubuntu 24.04 LTS Noble`), inventory targeting (`app-server` on EC2 2, `cicd-server` on EC2 3), resolves `puppet-server` against expected private IP from inventory, and tests TCP 8140 reachability with actionable diagnostics. Strict mode defaults to `puppet_agent_require_server_reachable: true` (failing fast in live runs).
      - Repository task installs official `puppet8-release-noble.deb` and enforces APT priority pinning (`/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` @ 900 > 500) to reject Ubuntu Universe's distro package. No Jammy fallback is needed or used (native Noble `puppet-agent` package published by vendor).
      - Installation task installs official `puppet-agent` package and validates binary executable path `/opt/puppetlabs/bin/puppet`.
      - Configuration task non-destructively manages `/etc/puppetlabs/puppet/puppet.conf` via `community.general.ini_file`: configures `server = puppet-server`, stable certnames (`app-server` on EC2 2, `cicd-server` on EC2 3), `runinterval = 30m`, preserves custom options, and ensures `autosign` is strictly absent.
      - CSR submission task implements controlled registration:
        - Preserves existing valid certificates and skips submission (zero key/cert regeneration).
        - Fails fast safely if existing certificate identity conflicts with inventory certname or is corrupted/mismatched.
-       - Submits CSR via `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server` when no certificate exists and server is reachable.
+       - Submits CSR via `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server` when no certificate exists and server is reachable (failing fast on `rc != 0`).
+       - Generates local CSR via `/opt/puppetlabs/bin/puppet ssl generate_request` in explicit offline mode without network transmission.
        - Verifies that local CSR exists and subject CN strictly matches expected certname (`app-server` or `cicd-server`).
        - Enforces strict security boundaries: zero autosigning, zero CA signing (signing belongs exclusively to Checkpoint 4.5), zero CA private key copying, zero key sharing between nodes, and zero destructive SSL removal.
-     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (35/35 PASS). All 5 project test suites pass (84/84 checks).
+     - Service task manages `puppet` systemd unit as both disabled and stopped (`enabled: false`, `state: "stopped"`), with handler guard requiring both `state == 'started'` and `enabled == true`.
+     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (37/37 PASS). All 5 project test suites pass (86/86 checks).
   5. **Checkpoint 4.5: Puppet CA Verification & Strict CSR Enrollment**:
-     - On agent nodes, run `/opt/puppetlabs/bin/puppet ssl verify`. If valid, skip CSR submission.
-     - If not verified, execute `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server`.
-     - On EC2 1, execute `/opt/puppetlabs/bin/puppetserver ca list --all --format json` and parse JSON array.
-     - Enforce whitelist security check: ensure only `app-server` and `cicd-server` are present; fail on unknown CSRs.
-     - Sign approved certificates individually: `/opt/puppetlabs/bin/puppetserver ca sign --certname <node>`.
-     - On agents, enforce catalog via `/opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes`.
-     - Ansible handles exit codes: `failed_when: result.rc not in [0, 2]`, `changed_when: result.rc == 2`.
+     - Explicit Handover Sequence from Checkpoint 4.4:
+       1. Verify Puppet Server (EC2 1) and agent connectivity over private network (TCP 8140).
+       2. Inspect pending CSRs on the Puppet Server CA via `puppetserver ca list --all --format json`.
+       3. Enforce whitelist security check: ensure only `app-server` and `cicd-server` are present; sign approved certificates individually: `/opt/puppetlabs/bin/puppetserver ca sign --certname <node>`.
+       4. Verify certificate enrollment on both agents via `/opt/puppetlabs/bin/puppet ssl verify`.
+       5. Execute supervised catalog application on agents: `/opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes`.
+       6. Accept only documented successful exit codes (0: clean / no changes, 2: changes successfully applied).
+       7. Verify catalog application result and report compilation status.
+       8. Only after successful supervised catalog application, explicitly enable and start the Puppet Agent service (`puppet_agent_service_enabled: true`, `puppet_agent_service_state: "started"`). The agent daemon must NEVER be started merely because a CSR was signed.
+       9. Verify that both agent services are enabled and active via `systemctl is-active puppet` and `systemctl is-enabled puppet`.
   6. **Checkpoint 4.6: Docker Engine & Compose Bootstrap (EC2 3)**:
      - Install official Docker CE and Compose plugin from Docker's Ubuntu Noble repository.
      - Add `ubuntu` user to the `docker` group. (Adding `jenkins` user is deferred to Phase 7).
