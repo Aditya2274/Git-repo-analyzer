@@ -245,6 +245,7 @@ flowchart TD
 
 ### Phase 5A: Puppet Foundations & Monitoring Prerequisites
 - **Objective:** Establish foundational Puppet module and manifest directory structures on EC2 1, deploy foundational monitoring daemons (NRPE) on agent nodes, prepare Nagios Core prerequisites on EC2 2, and formalize Ansible-to-Puppet ownership handovers.
+- **Architectural Reference:** The complete architectural specification, comparative evaluation (Ansible-only vs. Puppet-only), lifecycle interaction diagrams, and resource ownership boundaries are codified in [`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md).
 - **Prerequisites:** Phase 4 completion (Puppet agents communicating with Puppet Server).
 - **Subtasks:**
   1. **Puppet Environment Structure (`/etc/puppetlabs/code/environments/production/`)**:

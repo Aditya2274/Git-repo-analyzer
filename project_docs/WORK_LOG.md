@@ -902,3 +902,31 @@
     - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made.
     - All Phase 4 local engineering gates passed. Ready for separately authorized Boundary B live deployment.
 - **Outcome**: Phase 4 successfully consolidated, verified, and ready for deployment authorization.
+
+---
+
+## 2026-11-23: Phase 4/5 — Architectural Specification: Dual Roles & Significance of Ansible and Puppet
+
+- **Task**: Author comprehensive architectural specification and documentation explaining the distinct roles, responsibilities, lifecycle interaction, and engineering significance of Ansible and Puppet within the Git Repository Analyzer platform.
+- **Objective**: Formalize the architectural rationale for employing both Ansible (push-based orchestration & bootstrap) and Puppet (pull-based continuous desired-state management) across the three Ubuntu 24.04 EC2 instances, evaluate architectural alternatives (Ansible-only vs. Puppet-only vs. combined), detail the 10-step infrastructure lifecycle, and codify the strict ADR 006 resource ownership and handover matrix before proceeding to Phase 5.
+- **Actions Completed**:
+  - **Authored Dedicated Architectural Specification (`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`)**:
+    - Structured across 7 mandatory sections: Executive Summary & Premise, Role of Ansible (Orchestration & Bootstrap), Role of Puppet (Continuous Desired-State & Drift Correction), Comparative Architectural Analysis (Approach A: Ansible-only, Approach B: Puppet-only, Approach C: Ansible + Puppet), End-to-End Infrastructure Lifecycle, Engineering Significance in Production DevOps, and Governing Resource Ownership Matrix.
+    - Included Detailed Capability Comparison Matrix comparing push/pull transports, chicken-and-egg bootstrap resolution, multi-node ordering, dynamic host-key trust, declarative dependency graphs, and continuous drift correction.
+    - Created two GitHub-flavored Markdown Mermaid diagrams:
+      - System architecture flowchart (`flowchart TD`) illustrating the 3 distinct lifecycle stages (Provisioning $\to$ Bootstrap $\to$ Desired-State Enforcement) across EC2 1, EC2 2, and EC2 3.
+      - Sequence diagram (`sequenceDiagram`) detailing the complete 10-step handover sequence from `terraform apply` through inventory sync, SSH verification, baseline roles, Puppet Server CA setup, gated agent CSR submission, allowlisted CA signing, supervised catalog execution (`puppet agent -t`), daemon activation, Docker/NGINX bootstrap, and recurring 30-minute mTLS catalog convergence loops.
+    - Articulated advanced DevOps engineering principles: separation of operational lifecycles, elimination of configuration drift (IaC as single source of truth), ephemeral fleet reproducibility under ADR 011 (~$0.0773/hr running rate, zero-touch 12-minute reconstruction), and defense-in-depth security (least-privilege SSH operator access, internal mTLS CA signing, private VPC isolation).
+    - Codified the complete ADR 006 resource ownership and handover policy matrix governing base OS packages, swapfiles, `/etc/hosts`, Docker Engine, Puppet Server/CA, Puppet Agent/PKI, NGINX package, NGINX virtual hosts, Node.js runtime, backend systemd units, backend environment files, Nagios Core, and NRPE daemons.
+  - **Cross-Referenced Canonical Project Documentation**:
+    - `project_docs/ARCHITECTURE_DECISIONS.md`: Added reference in ADR 006 pointing to the comprehensive specification.
+    - `project_docs/IMPLEMENTATION_PLAN.md`: Added architectural reference in the Phase 5A introductory section.
+    - `project_docs/PROJECT_STATUS.md`: Added status entry in Section 2 Component Implementation Status table.
+    - `project_docs/WORK_LOG.md`: Logged this comprehensive architectural documentation task.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `ansible-playbook --syntax-check` on all 7 production playbooks: 0 errors, 0 warnings.
+    - Shell syntax (`bash -n`) across all test scripts: Clean.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git pushes executed.
+- **Outcome**: Architectural roles, lifecycle interactions, and resource ownership of Ansible and Puppet fully formalized, validated, and documented.

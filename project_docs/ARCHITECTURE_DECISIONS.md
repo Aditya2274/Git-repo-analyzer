@@ -145,7 +145,7 @@ This Architecture Decision Record (ADR) logs all approved architectural, infrast
     6. Overwriting valid existing certificates or ignoring certname mismatches.
     7. Suppressing real submission failures in live deployment.
   - *Service Daemon Gating & Controlled Catalog Invariant*: The agent systemd service defaults to `state: stopped` and `enabled: true` during Checkpoint 4.4. Leaving the daemon stopped prevents it from polling the CA in the background, eliminating race conditions where the daemon could automatically download a newly-signed certificate and apply catalogs without Ansible supervision. Handlers guard `restart puppet agent` with `when: puppet_agent_service_state | default('stopped') == 'started'`, ensuring configuration updates never accidentally start a stopped service. Supervised catalog execution (`puppet agent -t --detailed-exitcodes`) and service startup are deferred strictly to Checkpoint 4.5.
-- **Consequences:** Completely eliminates configuration conflicts and flapping between automation tools, while preserving strict vendor filesystem standards across all nodes.
+- **Consequences:** Completely eliminates configuration conflicts and flapping between automation tools, while preserving strict vendor filesystem standards across all nodes. See [`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md) for the comprehensive architectural specification, comparative evaluation of alternative approaches (Ansible-only vs. Puppet-only), lifecycle interaction diagrams, and engineering analysis.
 
 ---
 
