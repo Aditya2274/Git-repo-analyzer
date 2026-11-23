@@ -1,0 +1,49 @@
+---
+# Puppet 8 APT repository and priority pinning for Puppet Agent
+
+- name: Install prerequisite packages for Puppet repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: false
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"
+
+- name: Download Puppet 8 Noble release repository package
+  ansible.builtin.get_url:
+    url: "{{ puppet_release_deb_url | default('https://apt.puppet.com/puppet8-release-noble.deb') }}"
+    dest: /tmp/puppet8-release-noble.deb
+    mode: "0644"
+  register: puppet_agent_release_download
+
+- name: Install Puppet 8 release package
+  ansible.builtin.apt:
+    deb: /tmp/puppet8-release-noble.deb
+  register: puppet_agent_release_install
+
+- name: Clean up temporary release deb package
+  ansible.builtin.file:
+    path: /tmp/puppet8-release-noble.deb
+    state: absent
+
+- name: Configure APT preferences to prioritize official PuppetLabs packages over Ubuntu Universe
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/puppetlabs.pref
+    content: |
+      # Enforce vendor priority (900) over distro universe (500) for Puppet components
+      Package: puppet-agent puppet-tools
+      Pin: origin apt.puppet.com
+      Pin-Priority: 900
+    owner: root
+    group: root
+    mode: "0644"
+  register: puppet_agent_apt_preferences
+
+- name: Update APT package cache for Puppet 8 Agent
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ apt_cache_valid_time | default(3600) }}"
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"
+  when: (puppet_agent_release_install is changed) or (puppet_agent_apt_preferences is changed)

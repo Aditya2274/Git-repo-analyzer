@@ -1,0 +1,9 @@
+---
+# Puppet Agent systemd service management
+
+- name: Manage Puppet Agent systemd service
+  ansible.builtin.systemd:
+    name: "{{ puppet_agent_service_name | default('puppet') }}"
+    enabled: "{{ puppet_agent_service_enabled | default(true) }}"
+    state: "{{ puppet_agent_service_state | default('started') }}"
+  register: puppet_agent_service_status

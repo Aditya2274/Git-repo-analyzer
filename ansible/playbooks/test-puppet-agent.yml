@@ -1,0 +1,7 @@
+---
+# Playbook to test Puppet Agent installation and configuration across the agent fleet
+- name: Test Puppet Agent role across agent fleet
+  hosts: puppet_agents
+  become: true
+  roles:
+    - puppet_agent

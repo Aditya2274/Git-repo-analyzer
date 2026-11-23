@@ -1,0 +1,37 @@
+---
+# Default variables for puppet_agent role (EC2 2: Application, EC2 3: CI/CD)
+
+puppet_role: agent
+puppet_agent_service_name: puppet
+
+# Target OS constraints
+puppet_target_distribution: "Ubuntu"
+puppet_target_release: "24.04"
+
+# Puppet 8 repository and package configuration
+puppet_release_package: puppet8-release
+puppet_release_deb_url: "https://apt.puppet.com/puppet8-release-noble.deb"
+puppet_keyring_path: "/etc/apt/keyrings/puppetlabs-keyring.gpg"
+puppet_agent_package_name: puppet-agent
+
+# Executable and configuration paths
+puppet_bin_dir: "/opt/puppetlabs/bin"
+puppet_config_dir: "/etc/puppetlabs/puppet"
+puppet_config_file: "/etc/puppetlabs/puppet/puppet.conf"
+puppet_ssl_dir: "/etc/puppetlabs/puppet/ssl"
+
+# Puppet Server connection settings
+puppet_server_host: "puppet-server"
+puppet_server_port: 8140
+puppet_preflight_connect_timeout: 5
+puppet_agent_require_server_reachable: false
+
+# Agent identity and execution schedule
+puppet_agent_certname: "{{ puppet_certname | default(inventory_hostname) }}"
+puppet_agent_runinterval: "30m"
+puppet_agent_splay: true
+puppet_agent_splaylimit: "5m"
+
+# Service management
+puppet_agent_service_enabled: true
+puppet_agent_service_state: "started"

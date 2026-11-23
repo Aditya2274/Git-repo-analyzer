@@ -1,0 +1,73 @@
+---
+# Preflight validations for Puppet Agent nodes (EC2 2 & EC2 3)
+
+- name: Validate target operating system distribution
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == (puppet_target_distribution | default("Ubuntu"))
+      - ansible_distribution_version is version(puppet_target_release | default("24.04"), "==")
+    fail_msg: >
+      Target node {{ inventory_hostname }} is running {{ ansible_distribution | default('Unknown') }} {{ ansible_distribution_version | default('Unknown') }}.
+      Puppet Agent 8 is targeted exclusively on Ubuntu 24.04 LTS (Noble Numbat).
+    success_msg: "Target OS verified as Ubuntu 24.04 LTS (Noble Numbat)."
+
+- name: Validate inventory targeting for Puppet Agent nodes
+  ansible.builtin.assert:
+    that:
+      - "'puppet_agents' in group_names or 'application' in group_names or 'cicd' in group_names"
+      - inventory_hostname in ['app-server', 'cicd-server']
+    fail_msg: "This role must only be applied to agent nodes ('app-server' or 'cicd-server')."
+    success_msg: "Inventory targeting verified for {{ inventory_hostname }}."
+
+- name: Validate server identity definition
+  ansible.builtin.assert:
+    that:
+      - puppet_server_host is defined
+      - puppet_server_host | length > 0
+    fail_msg: "Variable 'puppet_server_host' must be defined and non-empty."
+
+- name: Resolve Puppet Server hostname to verify DNS resolution
+  ansible.builtin.command:
+    cmd: "getent hosts {{ puppet_server_host | default('puppet-server') }}"
+  register: puppet_server_dns_check
+  changed_when: false
+  failed_when: false
+
+- name: Validate Puppet Server DNS resolution against expected private IP
+  ansible.builtin.assert:
+    that:
+      - puppet_server_dns_check.rc == 0
+      - (puppet_server_dns_check.stdout | default('') | split | first) == (hostvars['puppet-server']['private_ip'] | default(puppet_server_dns_check.stdout | default('') | split | first))
+    fail_msg: >
+      Puppet Server DNS resolution failed for '{{ puppet_server_host }}'.
+      Resolved IP '{{ puppet_server_dns_check.stdout | default('NONE') }}' does not match expected private IP '{{ hostvars['puppet-server']['private_ip'] | default('UNKNOWN') }}'.
+      Ensure Checkpoint 4.2 hosts task (/etc/hosts) has been executed.
+    success_msg: "Puppet Server hostname '{{ puppet_server_host }}' resolves correctly to expected private IP."
+  when: hostvars['puppet-server'] is defined and hostvars['puppet-server']['private_ip'] is defined
+
+- name: Check TCP port 8140 connectivity to Puppet Server
+  ansible.builtin.wait_for:
+    host: "{{ puppet_server_host | default('puppet-server') }}"
+    port: "{{ puppet_server_port | default(8140) }}"
+    timeout: "{{ puppet_preflight_connect_timeout | default(5) }}"
+    state: started
+  register: puppet_server_port_check
+  ignore_errors: true
+
+- name: Enforce Puppet Server port reachability if required
+  ansible.builtin.fail:
+    msg: >
+      Puppet Server TCP port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host }}' is unreachable.
+      Verify that EC2 1 security group allows ingress from EC2 2 and EC2 3, and that puppetserver is running.
+  when:
+    - puppet_agent_require_server_reachable | default(false)
+    - puppet_server_port_check is failed
+
+- name: Report preflight port status notice
+  ansible.builtin.debug:
+    msg: >
+      {% if puppet_server_port_check is succeeded %}
+      Port {{ puppet_server_port }} on {{ puppet_server_host }} is reachable.
+      {% else %}
+      NOTICE: Port {{ puppet_server_port }} on {{ puppet_server_host }} is currently unreachable. Live connectivity validation is pending EC2 1 provisioning under Boundary B.
+      {% endif %}

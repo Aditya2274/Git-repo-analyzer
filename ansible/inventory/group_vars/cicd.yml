@@ -3,6 +3,9 @@
 
 node_role: cicd_analysis
 
+# Puppet Agent stable identity
+puppet_certname: "cicd-server"
+
 # Auxiliary swapfile cushion per ADR 005 (2.0 GB swap on 20 GB EBS)
 swap_size_mb: 2048
 

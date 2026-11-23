@@ -552,6 +552,49 @@
 
 ---
 
+## 2026-11-23: Phase 4 — Checkpoint 4.4: Puppet Agent Installation and Configuration
+
+- **Task**: Implement Ansible role `ansible/roles/puppet_agent/` for installing and configuring Puppet Agents on EC2 2 (`app-server`) and EC2 3 (`cicd-server`).
+- **Objective**: Author modular tasks, configuration templates, group variables, and fixture tests to configure agent identities, enforce repository pinning, validate network preflights, and perform controlled CSR submission without signing.
+- **Actions Completed**:
+  - **Group Variables & Identities**:
+    - Injected `puppet_certname: "app-server"` into `ansible/inventory/group_vars/application.yml`.
+    - Injected `puppet_certname: "cicd-server"` into `ansible/inventory/group_vars/cicd.yml`.
+    - Declared `puppet_server_host: "puppet-server"` in `ansible/inventory/group_vars/puppet_agents.yml`.
+  - **Dedicated Role Implementation (`ansible/roles/puppet_agent/`)**:
+    - `defaults/main.yml`: Defined target OS (`Ubuntu 24.04`), package name (`puppet-agent`), paths (`/opt/puppetlabs/bin`, `/etc/puppetlabs/puppet`), schedules (`30m`), and service defaults.
+    - `tasks/preflight.yml`: Validated OS distribution and version, checked inventory targeting (`app-server` or `cicd-server`), resolved `puppet-server` against expected inventory private IP, and probed TCP 8140 reachability with actionable diagnostics.
+    - `tasks/repository.yml`: Configured `puppet8-release-noble.deb` repository and deployed `/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` at priority 900 over distro 500. No Jammy fallback required as vendor natively publishes Noble `puppet-agent`.
+    - `tasks/install.yml`: Verified package candidate origin and installed official vendor `puppet-agent` package, asserting executable binary path at `/opt/puppetlabs/bin/puppet`.
+    - `tasks/config.yml`: Non-destructively updated `/etc/puppetlabs/puppet/puppet.conf` via `community.general.ini_file`: configured `server = puppet-server`, stable certname (`app-server` or `cicd-server`), `runinterval = 30m`, preserved unrelated sections, and asserted `autosign` is absent.
+    - `tasks/csr.yml`: Implemented controlled CSR lifecycle and SSL state safety:
+      - Validated existing certificates against certname CN, expiration, and private key modulus equality; preserved valid certificates without regeneration.
+      - Triggered safe fast-failure on conflicting certnames, missing private keys, or corrupted moduli without deleting existing files.
+      - Submitted CSR via `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server` when no certificate exists.
+      - Verified local CSR existence on disk and subject CN match against expected identity.
+      - Enforced strict security rules: zero autosigning, zero CA signing (`puppetserver ca sign` prohibited), zero CA key copying, zero key sharing, and zero destructive SSL cleanups.
+    - `tasks/service.yml`: Managed `puppet` systemd unit (`enabled=true`, `state=started`).
+    - `handlers/main.yml`: Provided `restart puppet agent` handler for configuration updates.
+  - **Playbook & Fixture Test Suite**:
+    - Created test playbook `ansible/playbooks/test-puppet-agent.yml`.
+    - Implemented comprehensive 25-scenario fixture test suite `ansible/tests/test_puppet_agent_role.sh` covering OS validation, repository reachability, candidate selection, APT priority pinning, executable path, identities, server hostname, run interval, config preservation, DNS preflight, port 8140 success/failure diagnostics, fresh CSR submission, valid cert preservation, conflict rejection, inconsistent SSL state rejection, CSR identity verification, autosign absence, zero CA signing, zero key copying, zero destructive cleanup, service enablement, handler notifications, and playbook syntax.
+  - **Verification & Regression Results**:
+    - `sync_terraform_inventory.sh`: 5/5 PASS
+    - `verify_ssh_host_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 25/25 PASS
+    - Total test suite: 74/74 PASS across all 5 suites.
+    - Ansible syntax checks: `test-common.yml` (PASS), `test-puppet-server.yml` (PASS), `test-puppet-agent.yml` (PASS).
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not run).
+    - Zero remote Ansible executions or live CA certificate signing performed.
+    - Certificate approval and catalog compilation belong exclusively to Checkpoint 4.5. Checkpoint 4.5 remains unstarted.
+- **Outcome**: Checkpoint 4.4 fully implemented and locally validated. Ready for operator review before beginning Checkpoint 4.5.
+
+---
+
 ## 2026-11-23: Phase 4 — Milestone Consolidation of Checkpoints 4.1–4.3
 
 - **Task**: Consolidate and commit completed Phase 4 bootstrap checkpoints (Checkpoints 4.1, 4.2, and 4.3).

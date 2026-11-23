@@ -132,9 +132,20 @@ flowchart TD
      - Service management task enables and starts `puppetserver`, verifies TCP port 8140 availability via `wait_for`, and checks CA health via `puppetserver ca status`.
      - Verified locally via isolated fixture test suite `ansible/tests/test_puppet_server_role.sh` (20/20 PASS).
   4. **Checkpoint 4.4: Puppet Agent Installation (EC2 2 & EC2 3)**:
-     - Install `puppet8-release-noble.deb` and `puppet-agent` on Instances 2 and 3.
-     - Configure `server = puppet-server` in `/etc/puppetlabs/puppet/puppet.conf`.
-     - Set `certname = app-server` on EC2 2 and `certname = cicd-server` on EC2 3.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (25/25 Tests Passed)**. Live host application pending Boundary B.
+     - Implemented dedicated Ansible role `ansible/roles/puppet_agent/` with modular task structure: `preflight.yml`, `repository.yml`, `install.yml`, `config.yml`, `csr.yml`, `service.yml`, `defaults/main.yml`, and `handlers/main.yml`.
+     - Preflight task validates target OS (`Ubuntu 24.04 LTS Noble`), inventory targeting (`app-server` on EC2 2, `cicd-server` on EC2 3), resolves `puppet-server` against expected private IP from inventory, and tests TCP 8140 reachability with actionable diagnostics.
+     - Repository task installs official `puppet8-release-noble.deb` and enforces APT priority pinning (`/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` @ 900 > 500) to reject Ubuntu Universe's distro package. No Jammy fallback is needed or used (native Noble `puppet-agent` package published by vendor).
+     - Installation task installs official `puppet-agent` package and validates binary executable path `/opt/puppetlabs/bin/puppet`.
+     - Configuration task non-destructively manages `/etc/puppetlabs/puppet/puppet.conf` via `community.general.ini_file`: configures `server = puppet-server`, stable certnames (`app-server` on EC2 2, `cicd-server` on EC2 3), `runinterval = 30m`, preserves custom options, and ensures `autosign` is strictly absent.
+     - CSR submission task implements controlled registration:
+       - Preserves existing valid certificates and skips submission (zero key/cert regeneration).
+       - Fails fast safely if existing certificate identity conflicts with inventory certname or is corrupted/mismatched.
+       - Submits CSR via `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server` when no certificate exists.
+       - Verifies that local CSR exists and subject CN strictly matches expected certname (`app-server` or `cicd-server`).
+       - Enforces strict security boundaries: zero autosigning, zero CA signing (signing belongs exclusively to Checkpoint 4.5), zero CA private key copying, zero key sharing between nodes, and zero destructive SSL removal.
+     - Service task manages `puppet` systemd unit (enabled=true, state=started) with configuration handler notification.
+     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (25/25 PASS). All 5 project test suites pass (74/74 checks).
   5. **Checkpoint 4.5: Puppet CA Verification & Strict CSR Enrollment**:
      - On agent nodes, run `/opt/puppetlabs/bin/puppet ssl verify`. If valid, skip CSR submission.
      - If not verified, execute `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server`.

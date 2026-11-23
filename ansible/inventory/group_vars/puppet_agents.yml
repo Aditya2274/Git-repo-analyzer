@@ -2,6 +2,7 @@
 # Variables shared by all Puppet Agent nodes (application and cicd)
 
 puppet_role: agent
+puppet_server_host: "puppet-server"
 puppet_server_endpoint: "puppet-server.ec2.internal"
 puppet_server_port: 8140
 
