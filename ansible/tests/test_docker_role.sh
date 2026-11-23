@@ -82,18 +82,52 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 3. Dedicated Instance Targeting (cicd-server exclusively)
 # ------------------------------------------------------------------------------
-echo -n "[Test 4/30] Instance targeting preflight permits cicd-server / cicd group... "
+echo -n "[Test 4/30] Instance targeting preflight enforces strict AND contract (all cases)... "
 python3 -c "
-def validate_target(hostname, groups, target_host='cicd-server', target_group='cicd'):
-    if hostname != target_host and target_group not in groups:
-        return False
-    return True
+import jinja2, yaml
 
-assert validate_target('cicd-server', ['cicd', 'puppet_agents']), 'cicd-server must be permitted'
-assert not validate_target('puppet-server', ['puppet_server']), 'puppet-server must be blocked'
-assert not validate_target('app-server', ['application', 'puppet_agents']), 'app-server must be blocked'
+with open('${ANSIBLE_DIR}/roles/docker/tasks/preflight.yml', 'r') as f:
+    tasks = yaml.safe_load(f)
+
+target_task = [t for t in tasks if 'targeting' in t.get('name', '').lower()][0]
+when_cond = target_task.get('when', [])
+cond_list = when_cond if isinstance(when_cond, list) else [when_cond]
+
+env = jinja2.Environment()
+# In Ansible, list items in 'when' are AND-combined.
+# The task is 'ansible.builtin.fail', so if when evaluates to True, execution is REJECTED.
+# If when evaluates to False, execution is ACCEPTED.
+tmpl = env.from_string('{% if ' + ' and '.join(f'({c})' for c in cond_list) + ' %}REJECTED{% else %}ACCEPTED{% endif %}')
+
+# Targeting Contract:
+# 1. Correct hostname + correct group -> ACCEPTED
+# 2. Correct hostname + missing group -> REJECTED
+# 3. Incorrect hostname + correct group -> REJECTED
+# 4. Incorrect hostname + missing group -> REJECTED
+# 5. App server (with standard application groups) -> REJECTED
+# 6. Puppet server (with standard puppet_server group) -> REJECTED
+# 7. App server with cicd group mistakenly added -> REJECTED
+# 8. Puppet server with cicd group mistakenly added -> REJECTED
+test_scenarios = [
+    ('cicd-server', ['cicd', 'puppet_agents'], 'ACCEPTED'),
+    ('cicd-server', ['puppet_agents'], 'REJECTED'),
+    ('cicd-server', [], 'REJECTED'),
+    ('other-host', ['cicd'], 'REJECTED'),
+    ('other-host', ['some_group'], 'REJECTED'),
+    ('app-server', ['application', 'puppet_agents'], 'REJECTED'),
+    ('app-server', ['cicd'], 'REJECTED'),
+    ('puppet-server', ['puppet_server'], 'REJECTED'),
+    ('puppet-server', ['cicd'], 'REJECTED'),
+]
+
+for host, groups, expected in test_scenarios:
+    res = tmpl.render(inventory_hostname=host, group_names=groups).strip()
+    assert res == expected, (
+        f'Targeting contract violation for host={host}, groups={groups}: '
+        f'expected {expected}, got {res}'
+    )
 "
-echo "PASS (Targeting logic strictly permits cicd-server and blocks other instances)"
+echo "PASS (All targeting contract scenarios verified: both hostname and group required)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo -n "[Test 5/30] Instance targeting assertion in preflight.yml... "
@@ -106,10 +140,13 @@ with open('${ANSIBLE_DIR}/roles/docker/tasks/preflight.yml', 'r') as f:
 target_tasks = [t for t in tasks if 'targeting' in t.get('name', '').lower()]
 assert len(target_tasks) >= 1, 'Must contain inventory targeting check'
 tt = target_tasks[0]
-assert 'docker_target_host' in str(tt.get('when', ''))
-assert 'cicd' in str(tt.get('when', ''))
+when_raw = str(tt.get('when', ''))
+assert 'docker_target_host' in when_raw, 'Must check docker_target_host'
+assert 'docker_target_group' in when_raw or 'cicd' in when_raw, 'Must check target group'
+assert ' or ' in when_raw, 'Must use OR boolean logic in fail task to enforce AND requirement'
+assert tt.get('ansible.builtin.fail') is not None, 'Targeting check must be ansible.builtin.fail'
 "
-echo "PASS (Preflight prevents execution on unintended fleet instances)"
+echo "PASS (AST verifies fail task with disjunctive fail condition)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------

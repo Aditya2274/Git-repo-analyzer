@@ -8,8 +8,8 @@
       Docker must be installed exclusively on '{{ docker_target_host | default('cicd-server') }}' (EC2 3 in group '{{ docker_target_group | default('cicd') }}').
       Attempted execution on '{{ inventory_hostname }}'. Execution halted to protect dedicated instances.
   when:
-    - inventory_hostname != (docker_target_host | default('cicd-server'))
-    - "'cicd' not in group_names"
+    - (inventory_hostname != (docker_target_host | default('cicd-server'))) or
+      ((docker_target_group | default('cicd')) not in group_names)
 
 - name: Validate target operating system is Ubuntu 24.04 LTS
   ansible.builtin.fail:

@@ -803,3 +803,25 @@
     - Zero remote SSH executions or package installations against cloud instances.
     - Checkpoint 4.6 complete at local implementation and fixture validation level. Ready for Checkpoint 4.7.
 - **Outcome**: Checkpoint 4.6 fully implemented, tested, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.6 Follow-up: Target-Isolation Verification & Conditional Correction
+
+- **Task**: Perform focused verification and correction of Docker role host-targeting logic in `ansible/roles/docker/tasks/preflight.yml`.
+- **Finding & Defect Confirmation**:
+  - The initial preflight task used a list structure under `when:` (`when: [inventory_hostname != ..., "'cicd' not in group_names"]`), which Ansible evaluates as a logical AND.
+  - In a fail task (`ansible.builtin.fail`), an AND condition means failure occurs only when *both* conditions are violated. By De Morgan's Law, execution was permitted when *either* condition was satisfied (`inventory_hostname == 'cicd-server'` OR `'cicd' in group_names`), creating an unintended loophole (e.g. `app-server` accidentally in group `cicd`, or `cicd-server` missing from group `cicd`).
+- **Correction Applied**:
+  - Corrected `ansible/roles/docker/tasks/preflight.yml` to disjunctive fail logic:
+    `when: (inventory_hostname != (docker_target_host | default('cicd-server'))) or ((docker_target_group | default('cicd')) not in group_names)`.
+  - Guarantees execution is permitted if and only if both conditions are strictly satisfied (Condition A: `inventory_hostname == 'cicd-server'` AND Condition B: host belongs to group `cicd`).
+- **Test Enhancement & Regression Verification**:
+  - Updated `ansible/tests/test_docker_role.sh` Test 4 and Test 5 to evaluate the actual parsed AST and Jinja2 evaluation logic across all 6 targeting contract scenarios (plus edge cases with misallocated groups). Confirmed tests fail if reverted to the old condition.
+  - Dedicated Docker tests: 30/30 PASS (`test_docker_role.sh`).
+  - Full Phase 4 regression: 161/161 PASS across all 7 test suites (`test_sync_inventory.sh`, `test_verify_ssh_keys.sh`, `test_common_role.sh`, `test_puppet_server_role.sh`, `test_puppet_agent_role.sh`, `test_puppet_enrollment.sh`, `test_docker_role.sh`).
+  - Playbook syntax checks: 13/13 playbooks pass `ansible-playbook --syntax-check`.
+  - Whitespace/diff check: `git diff --check` passes cleanly with 0 errors.
+- **Operational Boundary Compliance**:
+  - Strictly under Approval Boundary A. Zero AWS API calls, zero Terraform executions, zero live SSH or remote executions.
+- **Outcome**: Target-isolation logic corrected and verified. Checkpoint 4.6 ready for commit.
