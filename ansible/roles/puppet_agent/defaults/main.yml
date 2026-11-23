@@ -32,6 +32,10 @@ puppet_agent_runinterval: "30m"
 puppet_agent_splay: true
 puppet_agent_splaylimit: "5m"
 
+# Checkpoint 4.5 enrollment and supervised execution settings
+puppet_ca_connect_timeout: 10
+puppet_catalog_timeout: 300
+
 # Service management
 puppet_agent_service_enabled: false
 puppet_agent_service_state: "stopped"

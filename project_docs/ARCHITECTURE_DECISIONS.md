@@ -285,4 +285,5 @@ This Architecture Decision Record (ADR) logs all approved architectural, infrast
      - Initial catalog application must be executed under Ansible supervision: `puppet agent -t --detailed-exitcodes`, asserting documented clean exit codes (`0` or `2`).
      - Only after successful catalog verification are `puppet_agent_service_enabled: true` and `puppet_agent_service_state: "started"` explicitly enforced.
      - The agent service must **never** be enabled or started merely because a CSR was signed.
+- **Implementation Status:** Phase 1 implemented in Checkpoint 4.4 (`ansible/roles/puppet_agent/defaults/main.yml`, `service.yml`, `handlers/main.yml`). Phase 2 implemented in Checkpoint 4.5 (`ansible/roles/puppet_server/tasks/signing.yml`, `ansible/roles/puppet_agent/tasks/handover.yml`, `ansible/playbooks/enroll-puppet-agents.yml`, and `ansible/tests/test_puppet_enrollment.sh`).
 - **Consequences:** Eliminates background polling races and guarantees that the initial catalog application is completely observable, deterministic, and verified by Ansible before continuous daemon polling is activated.

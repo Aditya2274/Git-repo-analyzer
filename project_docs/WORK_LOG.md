@@ -714,3 +714,55 @@
   - Live package installation, daemon runtime operation, and CA behavior remain explicitly pending live AWS provisioning under Boundary B.
   - Checkpoint 4.4 (Puppet Agent Installation) remains unstarted.
 - **Outcome**: Milestone commit prepared and committed cleanly. Ready for operator review before beginning Checkpoint 4.4.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.5: Controlled Puppet CA Enrollment & Supervised Agent Handover
+
+- **Task**: Implement Ansible automation for Checkpoint 4.5 across the 3-node fleet (`puppet-server` on EC2 1, `app-server` on EC2 2, `cicd-server` on EC2 3).
+- **Objective**: Establish the complete 9-step controlled enrollment, identity allowlisting, individual signing, supervised catalog execution, and gated service startup sequence governed by ADR 012 and Approval Boundary A.
+- **Actions Completed**:
+  - **Pre-Enrollment Connectivity Verification (`ansible/roles/puppet_agent/tasks/connectivity.yml`)**:
+    - Probes TCP 8140 reachability from agent nodes to `puppet_server_host` using `ansible.builtin.wait_for`.
+    - Configured with bounded timeout (`puppet_ca_connect_timeout: 10`).
+    - Fails fast with explicit, actionable diagnostic message upon reachability failure before any CA operations are initiated.
+  - **Pending CSR Inspection & Defensive JSON Parsing (`ansible/roles/puppet_server/tasks/signing.yml`)**:
+    - Executes `puppetserver ca list --all --format json` on Puppet Server CA.
+    - Defensive Jinja/set_fact extraction supporting both Puppet 8 dictionary schema (`certificate_requests`, `signed_certificates`) and sequence schema (`[{"name": "...", "state": "requested"}]`).
+    - Handles empty CSR queues safely without Python/Ansible exceptions and halts execution if CLI returns non-zero (`failed_when: ca_list_raw.rc != 0`).
+  - **Identity Allowlisting & Controlled Individual Signing (`ansible/roles/puppet_server/tasks/signing.yml`)**:
+    - Enforced strict allowlist: `puppet_ca_allowed_agents: ['app-server', 'cicd-server']`.
+    - Security Check: Rejects unexpected CSR identities with `CRITICAL SECURITY ALERT` and halts immediately. Zero autosign, zero wildcard (`*`), and zero bulk (`--all`) signing permitted.
+    - Completeness Check: Identifies missing allowlisted agents (`missing_agents`) and fails fast if an expected agent CSR is not found on the CA.
+    - Signs approved CSRs individually via `puppetserver ca sign --certname {{ item }}`.
+    - Skips already-signed certificates idempotently.
+    - Re-queries the CA post-signing and asserts all allowlisted agents are verified signed.
+  - **Certificate Verification & Supervised Handover (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+    - Step 4: Downloads signed certificate via `puppet ssl download_cert` if missing locally; verifies certificate enrollment and trust chain via `puppet ssl verify`; asserts local cert file exists; extracts subject CN with OpenSSL and strictly asserts exact match with `puppet_agent_certname`.
+    - Step 5: Executes supervised catalog application wrapped in bounded timeout: `timeout {{ puppet_catalog_timeout | default(300) }} /opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes`, registering stdout, stderr, and detailed return code.
+    - Step 6: Enforces strict exit code validation: accepts only `0` (clean, no changes) or `2` (clean, changes applied); strictly rejects `1` (general failure), `4` (transaction failure), `6` (failure + changes), `124` (timeout), and unexpected codes.
+    - Step 7: Formally logs catalog results distinguishing exit code 0 from 2.
+    - Step 8: Explicitly transitions systemd unit to `enabled: true` and `state: started` ONLY when `puppet_catalog_run.rc in [0, 2]`. Role defaults in `defaults/main.yml` remain `enabled: false` and `state: stopped`.
+    - Step 9: Verifies active daemon state via `systemctl is-active puppet == active` and `systemctl is-enabled puppet == enabled`.
+  - **Orchestration Playbook (`ansible/playbooks/enroll-puppet-agents.yml`)**:
+    - Connects the 9-step workflow across 3 plays using `include_role` with `tasks_from`:
+      - Play 1 (`hosts: puppet_agents`): Pre-enrollment connectivity verification.
+      - Play 2 (`hosts: puppet_server`): CA inspection and controlled allowlisted signing.
+      - Play 3 (`hosts: puppet_agents`): Supervised catalog application, service activation, and daemon verification.
+  - **Fixture Test Suite (`ansible/tests/test_puppet_enrollment.sh`)**:
+    - Implemented comprehensive 45-assertion isolated test suite covering connectivity probes, bounded timeouts, fail-fast diagnostics, JSON parsing across schemas, allowlisting security alerts, individual signing commands, absence of `--all`/`*`, idempotency, cert download, SSL verify, CN matching, catalog timeouts, detailed exit code evaluation (0/2 accepted; 1/4/6/124 rejected), service activation gating, active daemon checks, and playbook syntax validation (45/45 PASS).
+  - **Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - Total test suite: 131/131 PASS across all 6 test suites.
+    - Playbook syntax validation: `ansible-playbook --syntax-check` clean on all playbooks.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+    - Zero remote SSH executions or live certificate operations against cloud instances.
+    - Checkpoint 4.5 complete at local implementation and fixture validation level. Ready for Checkpoint 4.6.
+- **Outcome**: Checkpoint 4.5 fully implemented, orchestrated, tested, and documented.

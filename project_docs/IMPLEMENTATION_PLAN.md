@@ -152,16 +152,56 @@ flowchart TD
      - Service task manages `puppet` systemd unit as both disabled and stopped (`enabled: false`, `state: "stopped"`), with handler guard requiring both `state == 'started'` and `enabled == true`.
      - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (37/37 PASS). All 5 project test suites pass (86/86 checks).
   5. **Checkpoint 4.5: Puppet CA Verification & Strict CSR Enrollment**:
-     - Explicit Handover Sequence from Checkpoint 4.4:
-       1. Verify Puppet Server (EC2 1) and agent connectivity over private network (TCP 8140).
-       2. Inspect pending CSRs on the Puppet Server CA via `puppetserver ca list --all --format json`.
-       3. Enforce whitelist security check: ensure only `app-server` and `cicd-server` are present; sign approved certificates individually: `/opt/puppetlabs/bin/puppetserver ca sign --certname <node>`.
-       4. Verify certificate enrollment on both agents via `/opt/puppetlabs/bin/puppet ssl verify`.
-       5. Execute supervised catalog application on agents: `/opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes`.
-       6. Accept only documented successful exit codes (0: clean / no changes, 2: changes successfully applied).
-       7. Verify catalog application result and report compilation status.
-       8. Only after successful supervised catalog application, explicitly enable and start the Puppet Agent service (`puppet_agent_service_enabled: true`, `puppet_agent_service_state: "started"`). The agent daemon must NEVER be started merely because a CSR was signed.
-       9. Verify that both agent services are enabled and active via `systemctl is-active puppet` and `systemctl is-enabled puppet`.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (45/45 Tests Passed; 9-Step Handover Orchestrated)**. Live host application pending Boundary B.
+     - Implemented complete 9-step enrollment and handover workflow across `ansible/roles/puppet_server/`, `ansible/roles/puppet_agent/`, and `ansible/playbooks/enroll-puppet-agents.yml`:
+       1. **Step 1 — Pre-Enrollment Connectivity Verification (`ansible/roles/puppet_agent/tasks/connectivity.yml`)**:
+          - Probes TCP 8140 reachability from agent nodes to `puppet_server_host` using `ansible.builtin.wait_for`.
+          - Configurable bounded timeout (`puppet_ca_connect_timeout: 10`).
+          - Fails fast with clear, actionable diagnostic output if server is unreachable, halting before any CA operations.
+       2. **Step 2 — Pending CSR Inspection (`ansible/roles/puppet_server/tasks/signing.yml`)**:
+          - Executes `puppetserver ca list --all --format json` on Puppet Server CA.
+          - Defensive JSON schema parsing supporting both Puppet 8 dictionary schemas (`certificate_requests`, `signed_certificates`) and sequence schemas (`[{"name": "...", "state": "requested"}]`).
+          - Handles empty queues and query failures safely (`failed_when: ca_list_raw.rc != 0`).
+       3. **Step 3 — Identity Allowlisting & Controlled Signing (`ansible/roles/puppet_server/tasks/signing.yml`)**:
+          - Enforces strict allowlist: `puppet_ca_allowed_agents: ['app-server', 'cicd-server']`.
+          - Security Check: Compares discovered pending CSRs against allowlist; immediately triggers `CRITICAL SECURITY ALERT` and halts execution if any unauthorized CSR identity is detected.
+          - Completeness Check: Asserts all allowlisted agents have either pending CSRs or signed certificates (`missing_agents`); halts execution if an expected CSR is absent.
+          - Signs approved CSRs individually: `/opt/puppetlabs/bin/puppetserver ca sign --certname {{ item }}`.
+          - Idempotency: Skips nodes with certificates already signed on CA.
+          - Zero `--all` or wildcard signing permitted.
+          - Re-queries CA and verifies all allowlisted agents are confirmed signed.
+       4. **Step 4 — Certificate Enrollment Verification (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+          - Downloads signed certificate via `puppet ssl download_cert` if not yet present on local disk.
+          - Verifies certificate enrollment and trust chain via `puppet ssl verify`.
+          - Asserts local certificate exists at `/etc/puppetlabs/puppet/ssl/certs/<certname>.pem`.
+          - Extracts certificate subject CN using OpenSSL and strictly asserts exact match with `puppet_agent_certname`. Verification failure halts immediately before catalog application.
+       5. **Step 5 — Supervised Catalog Application (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+          - Executes supervised catalog compilation and application: `timeout {{ puppet_catalog_timeout | default(300) }} /opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes`.
+          - Preserves full stdout, stderr, and detailed return code in `puppet_catalog_run` (`failed_when: false`).
+       6. **Step 6 — Strict Exit-Code Validation (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+          - Evaluates detailed return codes:
+            - `0`: Clean execution, no changes required (ACCEPTED).
+            - `2`: Clean execution, resource changes successfully applied (ACCEPTED).
+            - `1`: General failure / compilation error (STRICTLY REJECTED).
+            - `4`: Resource transaction failures (STRICTLY REJECTED).
+            - `6`: Changes applied with transaction failures (STRICTLY REJECTED).
+            - `124`: Bounded timeout exceeded (STRICTLY REJECTED).
+            - Any unexpected code: STRICTLY REJECTED.
+       7. **Step 7 — Catalog Result Verification & Reporting (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+          - Formally logs catalog results, distinguishing clean idempotent runs (code 0) from clean resource mutations (code 2).
+       8. **Step 8 — Explicit Service Activation Gate (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+          - Systemd service defaults in `roles/puppet_agent/defaults/main.yml` remain `puppet_agent_service_enabled: false` and `puppet_agent_service_state: "stopped"` per Checkpoint 4.4 invariants.
+          - Explicitly transitions service to `enabled: true` and `state: started` ONLY when `puppet_catalog_run.rc in [0, 2]`.
+          - Signing alone or certificate verification alone NEVER activates or starts the daemon.
+       9. **Step 9 — Active Daemon Verification (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+          - Verifies daemon active status: `systemctl is-active puppet` strictly returns `active`.
+          - Verifies daemon boot-persistence status: `systemctl is-enabled puppet` strictly returns `enabled`.
+          - Reports successful handover completion for continuous autonomous configuration management.
+     - Central Orchestration Playbook (`ansible/playbooks/enroll-puppet-agents.yml`):
+       - Play 1 (`hosts: puppet_agents`): Pre-enrollment connectivity check to Puppet Server (Step 1).
+       - Play 2 (`hosts: puppet_server`): CA inspection and controlled allowlisted signing (Steps 2 & 3).
+       - Play 3 (`hosts: puppet_agents`): Certificate verification, supervised catalog run, service activation, and daemon verification (Steps 4–9).
+     - Created comprehensive fixture test suite `ansible/tests/test_puppet_enrollment.sh` (45/45 PASS). Full regression suite: 131/131 checks pass across all 6 project test suites.
   6. **Checkpoint 4.6: Docker Engine & Compose Bootstrap (EC2 3)**:
      - Install official Docker CE and Compose plugin from Docker's Ubuntu Noble repository.
      - Add `ubuntu` user to the `docker` group. (Adding `jenkins` user is deferred to Phase 7).

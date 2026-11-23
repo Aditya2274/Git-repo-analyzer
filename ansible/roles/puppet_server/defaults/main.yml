@@ -36,3 +36,9 @@ puppet_server_conf_file: "/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf"
 puppet_server_default_file: "/etc/default/puppetserver"
 puppet_ca_dir: "/etc/puppetlabs/puppetserver/ca"
 puppet_bin_dir: "/opt/puppetlabs/bin"
+
+# Puppet CA enrollment and controlled signing (Checkpoint 4.5)
+puppet_ca_allowed_agents:
+  - "app-server"
+  - "cicd-server"
+puppet_ca_require_all_allowed: true
