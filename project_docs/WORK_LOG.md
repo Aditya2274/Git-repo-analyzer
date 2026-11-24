@@ -1294,3 +1294,37 @@
   - **Operational Boundary Compliance**:
     - Preserved commit `d93e505`. Strictly within Approval Boundary A. Zero AWS, SSH, or Git push operations.
 - **Outcome**: All 4 verification items confirmed; node check targeting cleanly enforced and validated.
+
+---
+
+## 2026-11-25: Phase 5A — Checkpoint 5A.3 Hardening: Removal of Fallback for Custom NRPE Checks
+
+- **Task**: Perform a narrowly scoped hardening correction to Checkpoint 5A.3 removing the unauthenticated fallback for custom NRPE checks on unrecognized Puppet certnames.
+- **Objective**: Ensure that any unrecognized certname does not receive all three custom checks by default, adhering to least-privilege security principles while preserving canonical node targeting, explicit parameter overrides, and standalone test validity.
+- **Actions Completed**:
+  - **Removed Unauthenticated Custom Check Fallback (`puppet/modules/nrpe/manifests/server.pp`)**:
+    - Updated `case $trusted['certname']` `default:` block to assign empty collections: `$default_node_commands = {}` and `$default_plugins = []`.
+    - Unrecognized or rogue certnames now receive only baseline system checks (`check_users`, `check_load`, `check_disk`, `check_zombie_procs`, `check_total_procs`), zero custom scripts are installed in `/usr/lib/nagios/plugins/`, and zero custom commands are appended to `nrpe.cfg`.
+    - Preserved canonical targeting:
+      - `puppet-server`: exclusively deploys `check_puppetserver.sh` and registers `command[check_puppetserver]`.
+      - `cicd-server`: exclusively deploys `check_jenkins.sh` and `check_docker.sh` and registers `command[check_jenkins]` / `command[check_docker]`.
+      - `app-server`: classified strictly as NRPE client (`nrpe::client`); zero NRPE server components.
+    - Preserved explicit override functionality: `$commands` and `$custom_plugins` parameters override defaults when supplied.
+  - **Updated Standalone Catalog Compilation Test (`puppet/tests/test_nrpe_module.sh` - Test 14)**:
+    - Updated Test 14 to declare explicit test parameters (`custom_plugins` and `commands`) when invoking `class { 'nrpe::server': ... }`, proving explicit parameter overrides work cleanly without reliance on a production fallback.
+  - **Added Security Regression Test (`puppet/tests/test_nrpe_module.sh` - Test 19)**:
+    - Added Test 19 verifying three security regression scenarios:
+      - Scenario A (`--certname unexpected-node.local`): Verifies baseline packages, `nrpe.cfg`, and service are declared, while `check_puppetserver.sh`, `check_jenkins.sh`, and `check_docker.sh` are strictly absent.
+      - Scenario B (`--certname rogue-server`): Verifies all three custom checks are strictly absent.
+      - Scenario C (`--certname custom-node.local` with explicit `custom_plugins => ['check_docker.sh']`): Verifies that explicit class parameter overrides are honored even for non-canonical certnames.
+  - **Executed Comprehensive Regression Suite**:
+    - `puppet/tests/test_nrpe_module.sh`: **19/19 checks passed (100% PASS)**.
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 checks passed (100% PASS)**.
+    - `puppet/tests/test_common_module.sh`: **14/14 checks passed (100% PASS)**.
+    - Total: **48/48 Puppet tests passed**.
+  - **Code Quality and Formatting**:
+    - `puppet parser validate puppet/modules/nrpe/manifests/*.pp`: Clean Puppet DSL syntax.
+    - `git diff --check`: 0 whitespace errors, 0 merge conflicts.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform operations, zero remote SSH connections, zero live Puppet/CA operations, zero Git pushes.
+- **Outcome**: Fallback cleanly eliminated; security regression verified; test coverage expanded to 19 checks. Ready for commit.

@@ -53,13 +53,10 @@ class nrpe::server (
       $default_plugins = ['check_jenkins.sh', 'check_docker.sh']
     }
     default: {
-      # Fallback for standalone / catalog testing: include all checks
-      $default_node_commands = {
-        'check_puppetserver' => '/usr/lib/nagios/plugins/check_puppetserver.sh',
-        'check_jenkins'      => '/usr/lib/nagios/plugins/check_jenkins.sh',
-        'check_docker'       => '/usr/lib/nagios/plugins/check_docker.sh',
-      }
-      $default_plugins = ['check_puppetserver.sh', 'check_jenkins.sh', 'check_docker.sh']
+      # Unrecognized certname: no node-specific custom checks are assigned by default.
+      # Only baseline system checks are configured unless explicitly overridden via parameters.
+      $default_node_commands = {}
+      $default_plugins       = []
     }
   }
 

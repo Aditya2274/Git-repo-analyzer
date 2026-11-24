@@ -12,7 +12,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PUPPET_DIR="${PROJECT_ROOT}/puppet"
 
 PASSED_COUNT=0
-TOTAL_COUNT=18
+TOTAL_COUNT=19
 
 echo "=============================================================================="
 echo "Running Test Suite: Checkpoint 5A.3 (NRPE Puppet Module)"
@@ -323,19 +323,30 @@ echo "PASS (linear DAG dependency chain established with explicit require & noti
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 14. Catalog Compilation for nrpe::server (puppet apply --noop)
+# 14. Catalog Compilation for nrpe::server with Explicit Parameters (puppet apply --noop)
 # ------------------------------------------------------------------------------
-echo -n "[Test 14/${TOTAL_COUNT}] Catalog compilation: nrpe::server (puppet apply --noop)... "
+echo -n "[Test 14/${TOTAL_COUNT}] Catalog compilation: nrpe::server with explicit test parameters... "
 export PUPPET_DIR
 python3 - << 'EOF'
 import os, subprocess
 
 puppet_dir = os.environ['PUPPET_DIR']
+manifest_code = """
+class { 'nrpe::server':
+  custom_plugins => ['check_jenkins.sh', 'check_docker.sh', 'check_puppetserver.sh'],
+  commands       => {
+    'check_users'        => '/usr/lib/nagios/plugins/check_users -w 5 -c 10',
+    'check_puppetserver' => '/usr/lib/nagios/plugins/check_puppetserver.sh',
+    'check_jenkins'      => '/usr/lib/nagios/plugins/check_jenkins.sh',
+    'check_docker'       => '/usr/lib/nagios/plugins/check_docker.sh',
+  },
+}
+"""
 cmd = [
     'puppet', 'apply', '--noop',
     f'--modulepath={puppet_dir}/modules',
     f'--hiera_config={puppet_dir}/hiera.yaml',
-    '-e', "include nrpe::server"
+    '-e', manifest_code
 ]
 res = subprocess.run(cmd, capture_output=True, text=True)
 assert res.returncode == 0, f'nrpe::server compilation failed: {res.stderr}'
@@ -348,7 +359,7 @@ assert 'File[/usr/lib/nagios/plugins/check_docker.sh]' in combined, 'Must manage
 assert 'File[/usr/lib/nagios/plugins/check_puppetserver.sh]' in combined, 'Must manage check_puppetserver.sh'
 assert 'Service[nagios-nrpe-server]' in combined, 'Must manage nagios-nrpe-server service'
 EOF
-echo "PASS (nrpe::server compiles cleanly with all required resources)"
+echo "PASS (nrpe::server compiles cleanly with explicitly configured resources)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
@@ -456,6 +467,71 @@ for i in range(2):
     assert 'Found 1 dependency cycle' not in res.stderr and 'Found 1 dependency cycle' not in res.stdout
 EOF
 echo "PASS (zero dependency cycles detected in repeat applications)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 19. Security Regression: Unexpected Certname Receives Zero Custom Checks
+# ------------------------------------------------------------------------------
+echo -n "[Test 19/${TOTAL_COUNT}] Security regression: unexpected certname receives zero custom checks... "
+export PUPPET_DIR
+python3 - << 'EOF'
+import os, subprocess
+
+puppet_dir = os.environ['PUPPET_DIR']
+
+# Scenario A: Unexpected node certname without explicit parameters
+cmd1 = [
+    'puppet', 'apply', '--noop',
+    f'--modulepath={puppet_dir}/modules',
+    f'--hiera_config={puppet_dir}/hiera.yaml',
+    '--certname', 'unexpected-node.local',
+    '-e', "include nrpe::server"
+]
+res1 = subprocess.run(cmd1, capture_output=True, text=True)
+assert res1.returncode == 0, f'Unexpected certname compilation failed: {res1.stderr}'
+combined1 = res1.stdout + res1.stderr
+
+# Assert that NONE of the custom scripts are managed
+assert 'check_puppetserver.sh' not in combined1, 'unexpected-node must NOT manage check_puppetserver.sh'
+assert 'check_jenkins.sh' not in combined1, 'unexpected-node must NOT manage check_jenkins.sh'
+assert 'check_docker.sh' not in combined1, 'unexpected-node must NOT manage check_docker.sh'
+
+# Assert that baseline packages, config, and service ARE still managed
+assert 'Package[nagios-nrpe-server]' in combined1, 'Must manage nagios-nrpe-server package'
+assert 'File[/etc/nagios/nrpe.cfg]' in combined1, 'Must manage nrpe.cfg'
+assert 'Service[nagios-nrpe-server]' in combined1, 'Must manage nagios-nrpe-server service'
+
+# Scenario B: Arbitrary rogue server certname without parameters
+cmd2 = [
+    'puppet', 'apply', '--noop',
+    f'--modulepath={puppet_dir}/modules',
+    f'--hiera_config={puppet_dir}/hiera.yaml',
+    '--certname', 'rogue-server',
+    '-e', "include nrpe::server"
+]
+res2 = subprocess.run(cmd2, capture_output=True, text=True)
+assert res2.returncode == 0, f'Rogue certname compilation failed: {res2.stderr}'
+combined2 = res2.stdout + res2.stderr
+assert 'check_puppetserver.sh' not in combined2, 'rogue-server must NOT manage check_puppetserver.sh'
+assert 'check_jenkins.sh' not in combined2, 'rogue-server must NOT manage check_jenkins.sh'
+assert 'check_docker.sh' not in combined2, 'rogue-server must NOT manage check_docker.sh'
+
+# Scenario C: Explicit overrides for an unexpected node are honored
+cmd3 = [
+    'puppet', 'apply', '--noop',
+    f'--modulepath={puppet_dir}/modules',
+    f'--hiera_config={puppet_dir}/hiera.yaml',
+    '--certname', 'custom-node.local',
+    '-e', "class { 'nrpe::server': custom_plugins => ['check_docker.sh'] }"
+]
+res3 = subprocess.run(cmd3, capture_output=True, text=True)
+assert res3.returncode == 0, f'Explicit override failed: {res3.stderr}'
+combined3 = res3.stdout + res3.stderr
+assert 'File[/usr/lib/nagios/plugins/check_docker.sh]' in combined3, 'Explicit override for check_docker.sh must be honored'
+assert 'check_puppetserver.sh' not in combined3, 'Non-configured check_puppetserver.sh must NOT be present'
+assert 'check_jenkins.sh' not in combined3, 'Non-configured check_jenkins.sh must NOT be present'
+EOF
+echo "PASS (unexpected certnames receive zero custom checks; explicit overrides honored)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo "=============================================================================="
