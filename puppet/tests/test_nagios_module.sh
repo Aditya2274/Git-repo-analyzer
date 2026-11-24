@@ -16,7 +16,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PUPPET_DIR="${PROJECT_ROOT}/puppet"
 
 PASSED_COUNT=0
-TOTAL_COUNT=24
+TOTAL_COUNT=26
 
 echo "=============================================================================="
 echo "Running Test Suite: Checkpoint 5A.4 (Nagios Core Puppet Module)"
@@ -732,44 +732,60 @@ echo "PASS (scoped exit 101 for nagios4/apache2, exit 0 for unrelated daemons, c
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 22. Sandboxed Behavioral Test: Existing Admin policy-rc.d Preserved & Steady-State No-Op
+# 22. Sandboxed Behavioral Test: Existing Admin policy-rc.d Safely Denies Both & Steady-State No-Op
 # ------------------------------------------------------------------------------
-echo -n "[Test 22/${TOTAL_COUNT}] Behavioral (sandboxed /tmp): admin policy-rc.d preserved & idempotency... "
+echo -n "[Test 22/${TOTAL_COUNT}] Behavioral (sandboxed /tmp): admin policy safely denies target services & idempotency... "
 export PUPPET_DIR
 python3 - << 'EOF'
-import os, subprocess, tempfile
+import hashlib, os, subprocess, tempfile
 
 puppet_dir = os.environ['PUPPET_DIR']
-with tempfile.TemporaryDirectory() as tmpdir:
-    policy = os.path.join(tmpdir, 'policy-rc.d')
-    pid_file = os.path.join(tmpdir, 'guard.pid')
-    admin_content = "#!/bin/sh\n# ADMIN CUSTOM POLICY DO NOT MODIFY\nexit 104\n"
-    with open(policy, 'w') as f:
-        f.write(admin_content)
-    os.chmod(policy, 0o755)
 
-    # A: Run install_guard when packages need install AND admin policy-rc.d exists
-    manifest_admin = f"""
+for label, admin_content in [
+    ('targeted_deny', "#!/bin/sh\n# ADMIN CUSTOM TARGETED POLICY\ncase \"${1%.service}\" in\n  nagios4|apache2) exit 101 ;;\n  *) exit 0 ;;\nesac\n"),
+    ('blanket_deny',  "#!/bin/sh\n# ADMIN BLANKET POLICY\nexit 101\n"),
+]:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        policy = os.path.join(tmpdir, 'policy-rc.d')
+        pid_file = os.path.join(tmpdir, 'guard.pid')
+        pkg_flag = os.path.join(tmpdir, 'pkg_installed')
+        with open(policy, 'wb') as f:
+            f.write(admin_content.encode('utf-8'))
+        os.chmod(policy, 0o755)
+        before_sha = hashlib.sha256(admin_content.encode('utf-8')).hexdigest()
+
+        manifest_admin = f"""
 class {{ 'nagios::install_guard':
   target_packages => ['nonexistent-nagios-test-pkg'],
   policy_file     => '{policy}',
   pid_file        => '{pid_file}',
 }}
-Exec['nagios_enable_policy_rc_d'] -> Exec['nagios_disable_policy_rc_d']
+exec {{ 'mock_pkg_install':
+  command => '/usr/bin/touch {pkg_flag}',
+  require => Exec['nagios_enable_policy_rc_d'],
+  before  => Exec['nagios_disable_policy_rc_d'],
+}}
 """
-    res_a = subprocess.run([
-        'puppet', 'apply', f'--modulepath={puppet_dir}/modules', '-e', manifest_admin
-    ], capture_output=True, text=True)
-    assert res_a.returncode == 0, f'Admin preservation test failed: {res_a.stderr}'
-    assert os.path.isfile(policy), 'Existing admin-managed policy-rc.d must NEVER be deleted'
-    with open(policy) as f:
-        assert f.read() == admin_content, 'Existing admin-managed policy-rc.d must NEVER be modified'
-    assert not os.path.exists(pid_file), 'PID file must not be written when yielding to admin policy'
+        res_a = subprocess.run([
+            'puppet', 'apply', '--detailed-exitcodes',
+            f'--modulepath={puppet_dir}/modules', '-e', manifest_admin
+        ], capture_output=True, text=True)
+        assert res_a.returncode == 2, f'{label} safe admin policy test failed ({res_a.returncode}): {res_a.stderr}\n{res_a.stdout}'
+        assert os.path.exists(pkg_flag), f'{label}: package installation must proceed when admin policy safely denies both'
+        assert os.path.isfile(policy), f'{label}: admin policy must NEVER be deleted'
+        with open(policy, 'rb') as f:
+            after_bytes = f.read()
+        assert hashlib.sha256(after_bytes).hexdigest() == before_sha, f'{label}: admin policy must remain byte-for-byte identical'
+        assert not os.path.exists(pid_file), f'{label}: temporary PID file must not be written when yielding to valid admin policy'
 
 with tempfile.TemporaryDirectory() as tmpdir2:
-    # B: Steady-state run when all packages are already installed (bash/coreutils)
+    # Steady-state repeated Puppet runs when all packages are installed (even if admin policy exists)
     policy2 = os.path.join(tmpdir2, 'policy-rc.d')
     pid2 = os.path.join(tmpdir2, 'guard.pid')
+    admin_steady = "#!/bin/sh\nexit 101\n"
+    with open(policy2, 'w') as f:
+        f.write(admin_steady)
+    os.chmod(policy2, 0o755)
     manifest_steady = f"""
 class {{ 'nagios::install_guard':
   target_packages => ['bash', 'coreutils'],
@@ -778,15 +794,16 @@ class {{ 'nagios::install_guard':
 }}
 Exec['nagios_enable_policy_rc_d'] -> Exec['nagios_disable_policy_rc_d']
 """
-    res_b = subprocess.run([
-        'puppet', 'apply', '--detailed-exitcodes',
-        f'--modulepath={puppet_dir}/modules', '-e', manifest_steady
-    ], capture_output=True, text=True)
-    # --detailed-exitcodes: 0 means ZERO resource changes!
-    assert res_b.returncode == 0, f'Steady-state run must have exit code 0 (no changes), got {res_b.returncode}: {res_b.stderr}\n{res_b.stdout}'
-    assert not os.path.exists(policy2), 'Steady-state run must not create policy-rc.d'
+    for run in range(2):
+        res_b = subprocess.run([
+            'puppet', 'apply', '--detailed-exitcodes',
+            f'--modulepath={puppet_dir}/modules', '-e', manifest_steady
+        ], capture_output=True, text=True)
+        assert res_b.returncode == 0, f'Steady-state run {run+1} must return 0 changes, got {res_b.returncode}: {res_b.stderr}\n{res_b.stdout}'
+    with open(policy2) as f:
+        assert f.read() == admin_steady
 EOF
-echo "PASS (existing admin policy untouched; steady-state run causes 0 changes)"
+echo "PASS (safe admin policy verified, byte-for-byte unchanged, steady-state run causes 0 changes)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
@@ -915,6 +932,215 @@ exec {{ 'mock_service':
     assert not os.path.exists(service_flag), 'Steady-state run must NEVER restart running service'
 EOF
 echo "PASS (failed validation blocks start/reload even across retries; steady-state causes 0 restarts)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 25. Sandboxed Behavioral Test: Permissive Admin policy-rc.d Blocks Package Install
+# ------------------------------------------------------------------------------
+echo -n "[Test 25/${TOTAL_COUNT}] Behavioral (sandboxed /tmp): admin policy permitting nagios4/apache2 blocks install... "
+export PUPPET_DIR
+python3 - << 'EOF'
+import hashlib, os, subprocess, tempfile
+
+puppet_dir = os.environ['PUPPET_DIR']
+
+scenarios = [
+    ('permits_both_104', "#!/bin/sh\nexit 104\n"),
+    ('permits_apache2',  "#!/bin/sh\ncase \"${1%.service}\" in\n  nagios4) exit 101 ;;\n  *) exit 0 ;;\nesac\n"),
+    ('permits_nagios4',  "#!/bin/sh\ncase \"${1%.service}\" in\n  apache2) exit 101 ;;\n  *) exit 0 ;;\nesac\n"),
+    ('permits_systemd_unit', "#!/bin/sh\ncase \"$1\" in\n  nagios4|apache2|apache2.service) exit 101 ;;\n  *) exit 0 ;;\nesac\n"),
+]
+
+for name, content in scenarios:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        policy = os.path.join(tmpdir, 'policy-rc.d')
+        pid_file = os.path.join(tmpdir, 'guard.pid')
+        pkg_flag = os.path.join(tmpdir, 'pkg_should_not_run')
+        with open(policy, 'wb') as f:
+            f.write(content.encode('utf-8'))
+        os.chmod(policy, 0o755)
+        expected_sha = hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+        manifest = f"""
+class {{ 'nagios::install_guard':
+  target_packages => ['nonexistent-nagios-test-pkg'],
+  policy_file     => '{policy}',
+  pid_file        => '{pid_file}',
+}}
+exec {{ 'mock_pkg_install':
+  command => '/usr/bin/touch {pkg_flag}',
+  require => Exec['nagios_enable_policy_rc_d'],
+  before  => Exec['nagios_disable_policy_rc_d'],
+}}
+"""
+        res = subprocess.run([
+            'puppet', 'apply', '--detailed-exitcodes',
+            f'--modulepath={puppet_dir}/modules', '-e', manifest
+        ], capture_output=True, text=True)
+        assert res.returncode in (4, 6), f'{name} must FAIL preflight (exit 4/6), got {res.returncode}'
+        combined = res.stdout + res.stderr
+        assert 'PERMITS premature startup/restart' in combined, f'{name} must emit clear diagnostic: {combined}'
+        assert not os.path.exists(pkg_flag), f'{name}: failed preflight MUST prevent package installation'
+        assert os.listdir(tmpdir) == ['policy-rc.d'], f'{name}: must leave zero temp/PID files behind: {os.listdir(tmpdir)}'
+        with open(policy, 'rb') as f:
+            assert hashlib.sha256(f.read()).hexdigest() == expected_sha, f'{name}: admin file must remain byte-for-byte unchanged'
+EOF
+echo "PASS (permissive admin policy fails preflight cleanly, blocks package install, leaves policy untouched)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 26. Sandboxed Behavioral Test: Indeterminable Policy & Existing Puppet Guard Lifecycle
+# ------------------------------------------------------------------------------
+echo -n "[Test 26/${TOTAL_COUNT}] Behavioral (sandboxed /tmp): indeterminable admin policy & Puppet guard lifecycle... "
+export PUPPET_DIR
+python3 - << 'EOF'
+import hashlib, os, subprocess, sys, tempfile, time
+
+puppet_dir = os.environ['PUPPET_DIR']
+
+# Part A: Indeterminable admin policies (non-executable, broken symlink, ambiguous exit 1/105, non-deterministic)
+def run_indeterminable(name, setup_fn, expect_diag):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        policy = os.path.join(tmpdir, 'policy-rc.d')
+        pid_file = os.path.join(tmpdir, 'guard.pid')
+        pkg_flag = os.path.join(tmpdir, 'pkg_should_not_run')
+        before_sha = setup_fn(tmpdir, policy)
+
+        manifest = f"""
+class {{ 'nagios::install_guard':
+  target_packages => ['nonexistent-nagios-test-pkg'],
+  policy_file     => '{policy}',
+  pid_file        => '{pid_file}',
+}}
+exec {{ 'mock_pkg_install':
+  command => '/usr/bin/touch {pkg_flag}',
+  require => Exec['nagios_enable_policy_rc_d'],
+  before  => Exec['nagios_disable_policy_rc_d'],
+}}
+"""
+        res = subprocess.run([
+            'puppet', 'apply', '--detailed-exitcodes',
+            f'--modulepath={puppet_dir}/modules', '-e', manifest
+        ], capture_output=True, text=True)
+        assert res.returncode in (4, 6), f'{name} must fail preflight (4/6), got {res.returncode}: {res.stderr}'
+        combined = res.stdout + res.stderr
+        assert expect_diag in combined, f'{name} missing diagnostic {expect_diag}: {combined}'
+        assert not os.path.exists(pkg_flag), f'{name}: failed preflight MUST prevent package installation'
+        assert not os.path.exists(pid_file), f'{name}: failed preflight must not create guard PID file'
+        if before_sha is not None:
+            with open(policy, 'rb') as f:
+                assert hashlib.sha256(f.read()).hexdigest() == before_sha, f'{name}: admin file mutated!'
+
+def setup_non_exec(td, p):
+    raw = b"#!/bin/sh\nexit 101\n"
+    with open(p, 'wb') as f:
+        f.write(raw)
+    os.chmod(p, 0o644)
+    return hashlib.sha256(raw).hexdigest()
+
+def setup_broken_link(td, p):
+    os.symlink('/nonexistent/admin/policy-target', p)
+    return None
+
+def setup_ambiguous_105(td, p):
+    raw = b"#!/bin/sh\nexit 105\n"
+    with open(p, 'wb') as f:
+        f.write(raw)
+    os.chmod(p, 0o755)
+    return hashlib.sha256(raw).hexdigest()
+
+def setup_nondeterministic(td, p):
+    counter = os.path.join(td, 'state.cnt')
+    raw = f"#!/bin/sh\nif [ ! -f '{counter}' ]; then\n  touch '{counter}'\n  exit 101\nfi\nexit 0\n".encode('utf-8')
+    with open(p, 'wb') as f:
+        f.write(raw)
+    os.chmod(p, 0o755)
+    return hashlib.sha256(raw).hexdigest()
+
+run_indeterminable('non_executable', setup_non_exec, 'not both readable and executable')
+run_indeterminable('broken_symlink', setup_broken_link, 'broken symlink')
+run_indeterminable('ambiguous_exit_105', setup_ambiguous_105, 'cannot be reliably determined')
+run_indeterminable('nondeterministic', setup_nondeterministic, 'PERMITS premature startup/restart')
+
+# Part B: Existing Puppet-managed guard lifecycle (stale dead PID recovery AND live concurrent PID protection)
+with tempfile.TemporaryDirectory() as tmpdir_stale:
+    policy = os.path.join(tmpdir_stale, 'policy-rc.d')
+    pid_file = os.path.join(tmpdir_stale, 'guard.pid')
+    probe_out = os.path.join(tmpdir_stale, 'probe.txt')
+    marker = 'PUPPET-MANAGED-TEMP-POLICY-RC-D: git-repo-analyzer-nagios'
+    with open(policy, 'w') as f:
+        f.write(f"#!/bin/sh\n# {marker}\nexit 0\n")
+    os.chmod(policy, 0o755)
+    with open(pid_file, 'w') as f:
+        f.write("999999\n")  # Non-existent stale dead PID
+
+    manifest_stale = f"""
+class {{ 'nagios::install_guard':
+  target_packages => ['nonexistent-nagios-test-pkg'],
+  policy_file     => '{policy}',
+  pid_file        => '{pid_file}',
+}}
+exec {{ 'probe_after_stale_refresh':
+  command  => "
+    rc_nag=0; '{policy}' nagios4 start || rc_nag=\\$?
+    rc_apa=0; '{policy}' apache2.service start || rc_apa=\\$?
+    rc_cro=0; '{policy}' cron start || rc_cro=\\$?
+    echo \\"nag=\\${{rc_nag}} apa=\\${{rc_apa}} cro=\\${{rc_cro}}\\" > '{probe_out}'
+  ",
+  provider => 'shell',
+  require  => Exec['nagios_enable_policy_rc_d'],
+  before   => Exec['nagios_disable_policy_rc_d'],
+}}
+"""
+    res_stale = subprocess.run([
+        'puppet', 'apply', '--detailed-exitcodes',
+        f'--modulepath={puppet_dir}/modules', '-e', manifest_stale
+    ], capture_output=True, text=True)
+    assert res_stale.returncode == 2, f'Stale Puppet guard recovery failed ({res_stale.returncode}): {res_stale.stderr}'
+    with open(probe_out) as f:
+        assert f.read().strip() == 'nag=101 apa=101 cro=0'
+    assert not os.path.exists(policy), 'Puppet-managed policy must be cleaned up after refresh+install'
+    assert not os.path.exists(pid_file)
+
+with tempfile.TemporaryDirectory() as tmpdir_live:
+    policy = os.path.join(tmpdir_live, 'policy-rc.d')
+    pid_file = os.path.join(tmpdir_live, 'guard.pid')
+    pkg_flag = os.path.join(tmpdir_live, 'pkg_should_not_run')
+    marker = 'PUPPET-MANAGED-TEMP-POLICY-RC-D: git-repo-analyzer-nagios'
+    original_policy = f"#!/bin/sh\n# {marker}\nexit 101\n"
+    with open(policy, 'w') as f:
+        f.write(original_policy)
+    os.chmod(policy, 0o755)
+    # Spawn a real lightweight process whose cmdline contains 'puppet' simulating another live Puppet run
+    proc = subprocess.Popen(['python3', '-c', 'import time; time.sleep(15)', 'puppet-simulated-concurrent-agent'])
+    try:
+        with open(pid_file, 'w') as f:
+            f.write(f"{proc.pid}\n")
+        manifest_live = f"""
+class {{ 'nagios::install_guard':
+  target_packages => ['nonexistent-nagios-test-pkg'],
+  policy_file     => '{policy}',
+  pid_file        => '{pid_file}',
+}}
+exec {{ 'mock_pkg_install':
+  command => '/usr/bin/touch {pkg_flag}',
+  require => Exec['nagios_enable_policy_rc_d'],
+  before  => Exec['nagios_disable_policy_rc_d'],
+}}
+"""
+        res_live = subprocess.run([
+            'puppet', 'apply', '--detailed-exitcodes',
+            f'--modulepath={puppet_dir}/modules', '-e', manifest_live
+        ], capture_output=True, text=True)
+        assert res_live.returncode in (4, 6), f'Concurrent Puppet guard must fail safely (4/6), got {res_live.returncode}'
+        assert 'Concurrent active Puppet process' in (res_live.stdout + res_live.stderr)
+        assert not os.path.exists(pkg_flag), 'Must not install packages while concurrent Puppet process holds lock'
+        assert os.path.isfile(policy) and os.path.isfile(pid_file)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+EOF
+echo "PASS (indeterminable admin policies blocked & unchanged; Puppet stale recovery and live lock protection verified)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo "=============================================================================="

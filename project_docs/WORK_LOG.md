@@ -1413,3 +1413,24 @@
     - Scope distinction: Behavior verified via static checks, ERB rendering, compiled Puppet `--graph` analysis, `--noop` catalog compilation for all 3 nodes, and sandboxed non-root `/tmp` `puppet apply` simulations; real Ubuntu `apt-get install nagios4`/`apache2` and live systemd convergence occur during Phase 8 after EC2 provisioning.
     - Strictly compliant with Approval Boundary A (no AWS, SSH, remote execution, or git push).
 - **Outcome**: Both hardening corrections completed, verified (72/72 total checks passed), and ready for commit.
+
+---
+
+## 2026-11-25: Phase 5A.4 — Narrowly Scoped Correction to `nagios::install_guard` Existing-Policy Preflight
+
+- **Task**: Add fail-closed preflight verification to `nagios::install_guard` when an existing `/usr/sbin/policy-rc.d` file is present prior to package installation.
+- **Root Cause**: `nagios_enable_policy_rc_d` skipped modifying an existing administrator-managed `policy-rc.d` (preserving it cleanly), but allowed `Package['nagios4']` and `Package['apache2']` to proceed without verifying whether that existing policy actually denied startup (exit `101`) for both `nagios4` and `apache2`.
+- **Actions Completed**:
+  - **Removed Blind Skip & Added Preflight Verification (`puppet/modules/nagios/manifests/install_guard.pp`, `puppet/modules/nagios/templates/enable_policy_rc_d.sh.erb`)**:
+    - Kept `unless => $all_installed_cmd` so steady-state runs remain 0-change no-ops once all target packages are installed, while removing the `onlyif` that skipped preflight whenever an unrelated `policy-rc.d` existed.
+    - When no policy exists: retains existing atomic creation of scoped Puppet-marked `/usr/sbin/policy-rc.d` (`0755`) + `/run/puppet-nagios-pkg-install.pid` and cleanup via `nagios_disable_policy_rc_d`.
+    - When a Puppet-marked policy already exists: inspects recorded PID lifecycle (fails safely if another active Puppet process owns the lock; refreshes stale dead PID cleanly on recovery).
+    - When an administrator-managed policy exists (lacking Puppet marker): never overwrites, modifies, deletes, or writes temp/PID files. Verifies regular-file/readable/executable status and runs repeatable clean-env (`env -i`), timeout-guarded (`timeout 3 < /dev/null`) probes across `nagios4` and `apache2` (`start`, `.service start`, `"(start)"`, `"(start)" 2`, `.service restart`, `"(restart)"`). Proceeds only if every probe returns `101`; otherwise fails before package installation with a clear operator diagnostic.
+  - **Expanded `puppet/tests/test_nagios_module.sh` (26/26 PASS)**:
+    - Upgraded Test 22 to validate safe targeted/blanket admin `policy-rc.d` denial, SHA256 byte-for-byte preservation, and steady-state 0-change runs.
+    - Added Test 25 proving permissive admin policies (permitting both, permitting `apache2`, permitting `nagios4`, or permitting `.service`) fail preflight before package install with zero temp files or policy mutations.
+    - Added Test 26 proving indeterminable policies (non-executable `0644`, broken symlink, ambiguous `105`, non-deterministic toggling) block package install untouched, and verifying existing Puppet guard stale-PID recovery vs. concurrent live-PID protection.
+  - **Executed Full Regression & Verification Suite**:
+    - `test_nagios_module.sh`: **26/26 PASS**; `test_nrpe_module.sh`: **19/19 PASS**; `test_puppet_architecture.sh`: **15/15 PASS**; `test_common_module.sh`: **14/14 PASS** (total **74/74 PASS**).
+    - `puppet parser validate`, all 3 fleet catalog compilations (`puppet apply --noop`), and `git diff --check` clean under Approval Boundary A.
+- **Outcome**: Fail-closed preflight verification implemented and locally validated (74/74 checks passed).
