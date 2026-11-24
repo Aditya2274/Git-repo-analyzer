@@ -1268,3 +1268,29 @@
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes.
 - **Outcome**: Checkpoint 5A.3 fully implemented and validated (18/18 tests in NRPE suite, 14/14 in common module suite, 15/15 in architecture suite; total 47/47 Puppet checks passed); ready for Checkpoint 5A.4.
+
+---
+
+## 2026-11-24: Phase 5A — Post-Checkpoint 5A.3 Narrowly Scoped Verification & Node-Targeting Refinement
+
+- **Task**: Conduct a narrowly scoped verification of four specific NRPE implementation items (`allowed_hosts`, interface binding, custom check targeting, Docker check permissions).
+- **Objective**: Verify whether hostname resolution in `allowed_hosts` is supported by NRPE 4.1.0 and reliable via `/etc/hosts`; assess `server_address` interface binding against security group boundaries; enforce strict node-specific custom check script and command assignment (`check_puppetserver` on `puppet-server` only, `check_jenkins`/`check_docker` on `cicd-server` only); verify unprivileged Docker check behavior.
+- **Actions Completed**:
+  - **NRPE `allowed_hosts` Verification**:
+    - Confirmed NRPE 4.1.0 calls `getaddrinfo()` during startup when parsing `allowed_hosts`, adding resolved IP addresses to the daemon ACL table.
+    - Confirmed `app-server` resolves deterministically to its private IP via `/etc/hosts` (injected in Checkpoint 4.2). Zero hardcoded or ephemeral IP addresses required.
+  - **NRPE Interface Binding Verification**:
+    - Confirmed `server_port = 5666` is configured and `$server_address = undef` binds to `0.0.0.0`, enabling local loopback diagnostics (`check_nrpe -H 127.0.0.1`) while AWS security groups (`cicd_analysis_sg`, `puppet_server_sg`) strictly restrict port 5666 ingress to `app_monitoring_sg.id`.
+  - **Node-Specific Check Targeting Refinement**:
+    - Refined `puppet/modules/nrpe/manifests/server.pp` to dynamically resolve node checks via `$trusted['certname']`:
+      - `puppet-server`: Deploys only `check_puppetserver.sh` and registers only `command[check_puppetserver]`. Jenkins and Docker checks are strictly omitted.
+      - `cicd-server`: Deploys only `check_jenkins.sh` and `check_docker.sh`, and registers `command[check_jenkins]` / `command[check_docker]`. Puppet Server check is strictly omitted.
+    - Updated `puppet/modules/nrpe/templates/nrpe.cfg.erb` to render `@effective_commands`.
+  - **Docker Check Permission Safety Verification**:
+    - Confirmed `check_docker.sh` checks `systemctl is-active docker` and `/var/run/docker.sock` socket presence via `test -S` (which evaluates successfully without read/write access to the socket). Unprivileged permission denial on `docker info` falls through gracefully to report status `OK` (exit code 0).
+  - **Updated Test Suites**:
+    - Enhanced `puppet/tests/test_nrpe_module.sh` Test 17 to assert strict exclusion and inclusion of node-specific checks across all three nodes.
+    - Test results: `test_nrpe_module.sh` (18/18 PASS), `test_puppet_architecture.sh` (15/15 PASS), `test_common_module.sh` (14/14 PASS). Total: 47/47 PASS.
+  - **Operational Boundary Compliance**:
+    - Preserved commit `d93e505`. Strictly within Approval Boundary A. Zero AWS, SSH, or Git push operations.
+- **Outcome**: All 4 verification items confirmed; node check targeting cleanly enforced and validated.

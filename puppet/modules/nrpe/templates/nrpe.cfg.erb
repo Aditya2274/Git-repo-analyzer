@@ -32,8 +32,8 @@ command_timeout=<%= @command_timeout %>
 connection_timeout=<%= @connection_timeout %>
 
 # BASELINE SYSTEM & SERVICE COMMAND DEFINITIONS (READ-ONLY)
-<% @commands.keys.sort.each do |cmd_name| -%>
-command[<%= cmd_name %>]=<%= @commands[cmd_name] %>
+<% @effective_commands.keys.sort.each do |cmd_name| -%>
+command[<%= cmd_name %>]=<%= @effective_commands[cmd_name] %>
 <% end -%>
 
 # INCLUSION DIRECTORY FOR OPTIONAL EXTENSIONS

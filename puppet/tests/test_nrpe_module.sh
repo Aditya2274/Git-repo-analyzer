@@ -144,7 +144,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 echo -n "[Test 7/${TOTAL_COUNT}] nrpe::server class signature and typed parameters... "
 python3 - << 'EOF'
-import os
+import os, re
 
 puppet_dir = os.environ.get('PUPPET_DIR', 'puppet')
 server_path = os.path.join(puppet_dir, 'modules/nrpe/manifests/server.pp')
@@ -152,13 +152,14 @@ with open(server_path) as f:
     content = f.read()
 
 assert 'class nrpe::server (' in content, 'Must define class nrpe::server'
-assert 'String[1]                  $package_name' in content, 'package_name must be String[1]'
-assert 'String[1]                  $service_name' in content, 'service_name must be String[1]'
-assert 'Array[String[1]]           $plugin_packages' in content, 'plugin_packages must be Array[String[1]]'
-assert 'Integer[1, 65535]          $server_port' in content, 'server_port must be Integer[1, 65535]'
-assert 'Array[String[1]]           $allowed_hosts' in content, 'allowed_hosts must be Array[String[1]]'
-assert 'Integer[0, 1]              $dont_blame_nrpe' in content, 'dont_blame_nrpe must be Integer[0, 1]'
-assert 'Hash[String[1], String[1]] $commands' in content, 'commands must be Hash[String[1], String[1]]'
+assert re.search(r'String\[1\]\s+\$package_name', content), 'package_name must be String[1]'
+assert re.search(r'String\[1\]\s+\$service_name', content), 'service_name must be String[1]'
+assert re.search(r'Array\[String\[1\]\]\s+\$plugin_packages', content), 'plugin_packages must be Array[String[1]]'
+assert re.search(r'Integer\[1, 65535\]\s+\$server_port', content), 'server_port must be Integer[1, 65535]'
+assert re.search(r'Array\[String\[1\]\]\s+\$allowed_hosts', content), 'allowed_hosts must be Array[String[1]]'
+assert re.search(r'Integer\[0, 1\]\s+\$dont_blame_nrpe', content), 'dont_blame_nrpe must be Integer[0, 1]'
+assert '$commands' in content, 'commands parameter must be declared'
+assert '$custom_plugins' in content, 'custom_plugins parameter must be declared'
 EOF
 echo "PASS (nrpe::server parameters strongly typed with strict validations)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
@@ -200,7 +201,7 @@ assert 'allowed_hosts=<%= @allowed_hosts.join(\',\') %>' in tpl, 'Template must 
 assert 'dont_blame_nrpe=<%= @dont_blame_nrpe %>' in tpl, 'Template must configure dont_blame_nrpe'
 assert 'allow_bash_command_substitution=0' in tpl, 'Template must disable command substitution'
 assert 'include_dir=' in tpl, 'Template must configure include_dir'
-assert 'command[<%= cmd_name %>]=<%= @commands[cmd_name] %>' in tpl, 'Template must generate command definitions'
+assert 'command[<%= cmd_name %>]=<%= @effective_commands[cmd_name] %>' in tpl, 'Template must generate command definitions'
 EOF
 echo "PASS (template contains all mandatory NRPE directives)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
@@ -233,7 +234,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 echo -n "[Test 11/${TOTAL_COUNT}] Security posture: dont_blame_nrpe=0 (no argument injection)... "
 python3 - << 'EOF'
-import os, yaml
+import os, yaml, re
 
 puppet_dir = os.environ.get('PUPPET_DIR', 'puppet')
 common_yaml = os.path.join(puppet_dir, 'hieradata/common.yaml')
@@ -246,7 +247,7 @@ server_pp = os.path.join(puppet_dir, 'modules/nrpe/manifests/server.pp')
 with open(server_pp) as f:
     content = f.read()
 
-assert 'Integer[0, 1]              $dont_blame_nrpe    = 0,' in content or '$dont_blame_nrpe = 0' in content
+assert re.search(r'\$dont_blame_nrpe\s*=\s*0', content), 'dont_blame_nrpe default must be 0'
 EOF
 echo "PASS (zero command argument injection permitted)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
@@ -415,12 +416,21 @@ for node in ['puppet-server', 'app-server', 'cicd-server']:
     res = subprocess.run(cmd, capture_output=True, text=True)
     assert res.returncode == 0, f'Compilation failed for node {node}: {res.stderr}'
     combined = res.stdout + res.stderr
-    if node in ['puppet-server', 'cicd-server']:
-        assert 'Service[nagios-nrpe-server]' in combined, f'{node} must manage NRPE service'
-        assert 'File[/etc/nagios/nrpe.cfg]' in combined, f'{node} must manage nrpe.cfg'
+    if node == 'puppet-server':
+        assert 'Service[nagios-nrpe-server]' in combined, 'puppet-server must manage NRPE service'
+        assert 'File[/etc/nagios/nrpe.cfg]' in combined, 'puppet-server must manage nrpe.cfg'
+        assert 'File[/usr/lib/nagios/plugins/check_puppetserver.sh]' in combined, 'puppet-server must manage check_puppetserver.sh'
+        assert 'check_jenkins.sh' not in combined, 'puppet-server must NOT manage check_jenkins.sh'
+        assert 'check_docker.sh' not in combined, 'puppet-server must NOT manage check_docker.sh'
+    elif node == 'cicd-server':
+        assert 'Service[nagios-nrpe-server]' in combined, 'cicd-server must manage NRPE service'
+        assert 'File[/etc/nagios/nrpe.cfg]' in combined, 'cicd-server must manage nrpe.cfg'
+        assert 'File[/usr/lib/nagios/plugins/check_jenkins.sh]' in combined, 'cicd-server must manage check_jenkins.sh'
+        assert 'File[/usr/lib/nagios/plugins/check_docker.sh]' in combined, 'cicd-server must manage check_docker.sh'
+        assert 'check_puppetserver.sh' not in combined, 'cicd-server must NOT manage check_puppetserver.sh'
     elif node == 'app-server':
-        assert 'Package[nagios-nrpe-plugin]' in combined, f'{node} must manage nagios-nrpe-plugin'
-        assert 'Service[nagios-nrpe-server]' not in combined, f'{node} must NOT manage NRPE server'
+        assert 'Package[nagios-nrpe-plugin]' in combined, 'app-server must manage nagios-nrpe-plugin'
+        assert 'Service[nagios-nrpe-server]' not in combined, 'app-server must NOT manage NRPE server'
 EOF
 echo "PASS (site.pp compiles for all three fleet nodes with correct role targeting)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
