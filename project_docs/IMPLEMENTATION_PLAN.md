@@ -265,8 +265,9 @@ flowchart TD
      - Supports `manage_puppet_agent` toggle for maintenance or testing.
      - Validated via `puppet apply --noop`, Hiera v5 parameter binding, fleet-wide `site.pp` compilation across all three nodes, and dedicated test suite `puppet/tests/test_common_module.sh` (14/14 checks passed).
   3. **Checkpoint 5A.3: NRPE Module**:
-     - *Status*: **In Progress (Server & Client Classes Implemented; Templates Scheduled)**.
-     - Responsibilities: `nrpe::server` on monitored targets (`nagios-nrpe-server`, `monitoring-plugins-basic`, `allowed_hosts`, `check_*` definitions); `nrpe::client` on monitoring host (`nagios-nrpe-plugin`).
+     - *Status*: **Complete at Local Implementation & Verification Level (18/18 Tests Passed)**.
+     - Responsibilities: `nrpe::server` on monitored targets (`puppet-server` and `cicd-server`) managing packages (`nagios-nrpe-server`, `monitoring-plugins-basic`), directories (`/etc/nagios`, `/etc/nagios/nrpe.d`, `/usr/lib/nagios/plugins`), custom read-only check scripts (`check_jenkins.sh`, `check_docker.sh`, `check_puppetserver.sh`), authoritative template (`nrpe.cfg.erb`) with strict `allowed_hosts` (restricted strictly to loopback and `app-server`), security posture (`dont_blame_nrpe=0`, zero argument injection), pre-restart configuration validator (`validate_cmd` with awk), and systemd service `nagios-nrpe-server`; `nrpe::client` on monitoring host (`app-server`) managing client plugin package (`nagios-nrpe-plugin`).
+     - Validated via `puppet parser validate`, local check script behavioral tests, AST typing, ERB rendering, awk `validate_cmd` logic, individual class compilation (`puppet apply --noop`), Hiera v5 parameter binding, master `site.pp` fleet compilation across all three nodes, and dedicated test suite `puppet/tests/test_nrpe_module.sh` (18/18 checks passed).
   4. **Checkpoint 5A.4: Nagios Module**:
      - *Status*: **In Progress (Server, Objects & Web Classes Implemented; Definitions Scheduled)**.
      - Responsibilities: `nagios::server` (`nagios4`, `monitoring-plugins-basic`), `nagios::objects` (host, service, command, contact definitions), `nagios::web` (`apache2`, `apache2-utils`, loopback port 8080, HTTP basic auth).

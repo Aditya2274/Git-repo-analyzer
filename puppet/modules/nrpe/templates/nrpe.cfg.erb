@@ -1,0 +1,40 @@
+# ==============================================================================
+# Managed by Puppet: modules/nrpe/templates/nrpe.cfg.erb
+# Purpose: Authoritative NRPE daemon configuration for monitored nodes.
+# Fleet Targets: puppet-server (EC2 1) and cicd-server (EC2 3).
+# Access: Strictly restricted to Nagios monitoring host (app-server) and loopback.
+# Security: dont_blame_nrpe=<%= @dont_blame_nrpe %> (arguments strictly prohibited).
+# ==============================================================================
+
+# LOGGING & PROCESS MANAGEMENT
+log_facility=daemon
+debug=0
+pid_file=<%= @pid_file %>
+
+# NETWORK BINDING & PORT
+<% if @server_address and !@server_address.empty? -%>
+server_address=<%= @server_address %>
+<% end -%>
+server_port=<%= @server_port %>
+
+# EXECUTION IDENTITY
+nrpe_user=<%= @nrpe_user %>
+nrpe_group=<%= @nrpe_group %>
+
+# ACCESS CONTROL & SECURITY POSTURE
+# Restrict inbound requests strictly to authorized monitoring host and loopback
+allowed_hosts=<%= @allowed_hosts.join(',') %>
+dont_blame_nrpe=<%= @dont_blame_nrpe %>
+allow_bash_command_substitution=0
+
+# TIMEOUTS
+command_timeout=<%= @command_timeout %>
+connection_timeout=<%= @connection_timeout %>
+
+# BASELINE SYSTEM & SERVICE COMMAND DEFINITIONS (READ-ONLY)
+<% @commands.keys.sort.each do |cmd_name| -%>
+command[<%= cmd_name %>]=<%= @commands[cmd_name] %>
+<% end -%>
+
+# INCLUSION DIRECTORY FOR OPTIONAL EXTENSIONS
+include_dir=<%= @include_dir %>/

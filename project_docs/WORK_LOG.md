@@ -1223,3 +1223,48 @@
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes.
 - **Outcome**: Checkpoint 5A.2 fully implemented and validated (14/14 tests in common module suite, 15/15 tests in architecture suite); ready for Checkpoint 5A.3.
+
+
+---
+
+## 2026-11-24: Phase 5A — Checkpoint 5A.3: NRPE Puppet Module Implementation & Validation
+
+- **Task**: Implement Checkpoint 5A.3 of Phase 5A (Puppet Configuration Management). Author and validate the NRPE Puppet module (`nrpe`) to establish secure, centralized, and read-only remote infrastructure monitoring across the fleet under the canonical architecture.
+- **Objective**: Implement `nrpe::server` on monitored nodes (`puppet-server` and `cicd-server`), implement `nrpe::client` on monitoring host (`app-server`), configure a managed `nrpe.cfg` template, restrict `allowed_hosts` strictly to loopback and `app-server`, enforce `dont_blame_nrpe=0` (zero argument injection), deploy custom read-only monitoring scripts (`check_jenkins.sh`, `check_docker.sh`, `check_puppetserver.sh`), implement pre-restart configuration validation via awk, maintain strict separation of concerns, and validate via automated test suites under Approval Boundary A.
+- **Actions Completed**:
+  - **Authored Custom Read-Only Monitoring Check Scripts (`puppet/modules/nrpe/files/`)**:
+    - `check_jenkins.sh`: Verifies `jenkins.service` via `systemctl is-active`, validates local HTTP API listener (`http://127.0.0.1:8080/login`), and checks TCP port 8080. Returns standard Nagios exit codes (0=OK, 1=WARNING, 2=CRITICAL). Strictly read-only; never executes user code. Mode `0755`.
+    - `check_docker.sh`: Verifies `docker.service` status, confirms `/var/run/docker.sock` UNIX domain socket existence, queries `docker info` for engine version and container metrics if CLI accessible. Returns 0=OK, 2=CRITICAL. Strictly read-only; never starts containers or mounts untrusted repositories. Mode `0755`.
+    - `check_puppetserver.sh`: Verifies `puppetserver.service` status, inspects port 8140 via HTTPS status endpoint (`/status/v1/simple`), and verifies TCP 8140 listener. Returns 0=OK, 1=WARNING, 2=CRITICAL. Strictly read-only. Mode `0755`.
+  - **Authored Authoritative NRPE Configuration Template (`puppet/modules/nrpe/templates/nrpe.cfg.erb`)**:
+    - Binds `server_port` (default: 5666) and optional `server_address`.
+    - Formats `allowed_hosts` as comma-separated list strictly restricted to `127.0.0.1`, `::1`, and `app-server`.
+    - Enforces security posture: `dont_blame_nrpe=0` (completely disables remote command arguments) and `allow_bash_command_substitution=0`.
+    - Configures process attributes (`nrpe_user=nagios`, `nrpe_group=nagios`, `pid_file=/run/nagios/nrpe.pid`).
+    - Configures baseline system checks (`check_users`, `check_load`, `check_disk`, `check_zombie_procs`, `check_total_procs`) and custom checks (`check_puppetserver`, `check_jenkins`, `check_docker`).
+    - Enables extension directory `include_dir=/etc/nagios/nrpe.d/`.
+  - **Refined `nrpe::server` Class Manifest (`puppet/modules/nrpe/manifests/server.pp`)**:
+    - Strongly typed parameters with comprehensive defaults.
+    - Manages packages `nagios-nrpe-server` and `monitoring-plugins-basic`.
+    - Manages directory layout (`/etc/nagios`, `/etc/nagios/nrpe.d`, `/usr/lib/nagios/plugins`) with idempotent `defined()` guards.
+    - Deploys custom check scripts to `/usr/lib/nagios/plugins/` with mode `0755` and `root:root` ownership.
+    - Manages `/etc/nagios/nrpe.cfg` from template with inline `validate_cmd` awk validator: verifies all non-comment/non-blank lines contain `=` and rejects malformed lines before restarting service.
+    - Manages `nagios-nrpe-server` systemd service with `hasstatus => true` and `hasrestart => true`, triggered via `notify` on config change.
+    - Enforces linear dependency DAG: Packages -> Directories -> Custom Scripts -> Config -> Service.
+  - **Verified `nrpe::client` Class Manifest (`puppet/modules/nrpe/manifests/client.pp`)**:
+    - Strictly scoped to client plugin package `nagios-nrpe-plugin` on `app-server`.
+    - Confirmed zero overlap or duplicate resource declarations with server or common classes.
+  - **Reconciled Hiera Parameter Declarations (`puppet/hieradata/common.yaml`)**:
+    - Restricted `nrpe::server::allowed_hosts` strictly to `127.0.0.1`, `::1`, and `app-server` (removed `puppet-server` from allowed hosts).
+  - **Authored Dedicated Checkpoint 5A.3 Validation Suite (`puppet/tests/test_nrpe_module.sh`)**:
+    - Created 18 automated validation checks covering file existence, Puppet parser validation, script permissions (0755), bash syntax (`bash -n`), safety/read-only code inspection, behavioral script execution (active Docker, active Jenkins, inactive Puppet Server), server/client class AST data typing, template rendering, `allowed_hosts` boundaries, security posture (`dont_blame_nrpe=0`), awk `validate_cmd` logic, linear resource dependency chaining, catalog compilation for `nrpe::server` and `nrpe::client` via `--noop`, Hiera v5 automatic parameter binding, full fleet `site.pp` compilation across all three nodes, and cycle-free repeat application.
+    - Test results: **18/18 checks passed (100% pass rate)**.
+  - **Executed Architectural & Common Module Regression Suites**:
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 checks passed (100% PASS)**.
+    - `puppet/tests/test_common_module.sh`: **14/14 checks passed (100% PASS)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes.
+- **Outcome**: Checkpoint 5A.3 fully implemented and validated (18/18 tests in NRPE suite, 14/14 in common module suite, 15/15 in architecture suite; total 47/47 Puppet checks passed); ready for Checkpoint 5A.4.

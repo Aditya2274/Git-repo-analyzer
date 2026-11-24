@@ -18,11 +18,11 @@ common::packages:
   - 'ca-certificates'
 
 # NRPE configuration parameters
+# Restricted strictly to loopback and actual Nagios monitoring host (app-server)
 nrpe::server::server_port: 5666
 nrpe::server::allowed_hosts:
   - '127.0.0.1'
   - '::1'
-  - 'puppet-server'
   - 'app-server'
 nrpe::server::dont_blame_nrpe: 0
 
