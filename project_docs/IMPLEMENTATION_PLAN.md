@@ -132,12 +132,12 @@ flowchart TD
      - Service management task enables and starts `puppetserver`, verifies TCP port 8140 availability via `wait_for`, and checks CA health via `puppetserver ca status`.
      - Verified locally via isolated fixture test suite `ansible/tests/test_puppet_server_role.sh` (20/20 PASS).
   4. **Checkpoint 4.4: Puppet Agent Installation (EC2 2 & EC2 3)**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (46/46 Tests Passed; Service Lifecycle Corrected & Handover Protected)**. Live host application pending Boundary B.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (54/54 Tests Passed; Service Lifecycle Corrected, Cryptographically Verified & Handover Protected)**. Live host application pending Boundary B.
      - **Corrective History & Audit Iteration**:
        - *Initial Implementation (`a6289d8`)*: Configured agent installation, certname configuration, and CSR submission, but left service daemon active (`state: started`, `enabled: true`), defaulted reachability to non-strict (`require_server_reachable: false`), and suppressed CSR CLI failure (`failed_when: false`), causing misleading "pending CA approval" notices on unreachable servers and risking background catalog application races.
        - *Audit Follow-up (`61f0bb8`)*: Enforced strict reachability (`require_server_reachable: true` by default), distinguished remote submission (`puppet ssl submit_request`, failing fast on `rc != 0`) from offline generation (`puppet ssl generate_request`), and stopped the daemon (`state: stopped`).
        - *Final Service Lifecycle Correction*: Independent review noted that a systemd-enabled service (`enabled: true`) can start automatically after a host reboot even if stopped, violating lifecycle gating. Checkpoint 4.4 defaults were updated to both `puppet_agent_service_state: "stopped"` and `puppet_agent_service_enabled: false`. Handlers strictly require both `state == 'started'` and `enabled == true`. The service remains disabled and stopped throughout Checkpoint 4.4.
-       - *Lifecycle-Aware Handover Protection*: To prevent repeated executions of `site.yml` from stopping or disabling the agent post-handover, `service.yml` implements a certificate-state guard. If a valid signed certificate is present, service enforcement is skipped to preserve Puppet's steady-state ownership, with an explicit override `puppet_agent_force_bootstrap: true` for manual operator recovery.
+       - *Lifecycle-Aware Handover Protection*: To prevent repeated executions of `site.yml` from stopping or disabling the agent post-handover, `service.yml` implements a cryptographic certificate-state guard. If a valid signed certificate is present, unexpired, matching the agent certname, and verified against the Puppet CA bundle, service enforcement is skipped to preserve Puppet's steady-state ownership, with an explicit override `puppet_agent_force_bootstrap: true` for manual operator recovery.
      - Implemented dedicated Ansible role `ansible/roles/puppet_agent/` with modular task structure: `preflight.yml`, `repository.yml`, `install.yml`, `config.yml`, `csr.yml`, `service.yml`, `defaults/main.yml`, and `handlers/main.yml`.
      - Preflight task validates target OS (`Ubuntu 24.04 LTS Noble`), inventory targeting (`app-server` on EC2 2, `cicd-server` on EC2 3), resolves `puppet-server` against expected private IP from inventory, and tests TCP 8140 reachability with actionable diagnostics. Strict mode defaults to `puppet_agent_require_server_reachable: true` (failing fast in live runs).
      - Repository task installs official `puppet8-release-noble.deb` and enforces APT priority pinning (`/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` @ 900 > 500) to reject Ubuntu Universe's distro package. No Jammy fallback is needed or used (native Noble `puppet-agent` package published by vendor).
@@ -150,8 +150,8 @@ flowchart TD
        - Generates local CSR via `/opt/puppetlabs/bin/puppet ssl generate_request` in explicit offline mode without network transmission.
        - Verifies that local CSR exists and subject CN strictly matches expected certname (`app-server` or `cicd-server`).
        - Enforces strict security boundaries: zero autosigning, zero CA signing (signing belongs exclusively to Checkpoint 4.5), zero CA private key copying, zero key sharing between nodes, and zero destructive SSL removal.
-     - Service task manages `puppet` systemd unit as both disabled and stopped (`enabled: false`, `state: "stopped"`), with handler guard requiring both `state == 'started'` and `enabled == true`, protected by a post-enrollment certificate state guard.
-     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (46/46 PASS). All project test suites pass (200/200 checks).
+     - Service task manages `puppet` systemd unit as both disabled and stopped (`enabled: false`, `state: "stopped"`), with handler guard requiring both `state == 'started'` and `enabled == true`, protected by a post-enrollment cryptographic certificate state guard.
+     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (54/54 PASS). All project test suites pass (208/208 checks).
   5. **Checkpoint 4.5: Puppet CA Verification & Strict CSR Enrollment**:
      - *Status*: **Complete at Local Implementation & Fixture Validation Level (45/45 Tests Passed; 9-Step Handover Orchestrated)**. Live host application pending Boundary B.
      - Implemented complete 9-step enrollment and handover workflow across `ansible/roles/puppet_server/`, `ansible/roles/puppet_agent/`, and `ansible/playbooks/enroll-puppet-agents.yml`:
@@ -217,7 +217,7 @@ flowchart TD
      - Authored isolated fixture test suite `ansible/tests/test_docker_role.sh` (30/30 PASS).
      - Full project regression test baseline: 161/161 checks passing across all 7 test suites.
   7. **Checkpoint 4.7: NGINX Bootstrap Baseline (EC2 2)**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (30/30 Tests Passed; 200/200 Full Suite Regression)**. Live host application pending Boundary B.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (30/30 Tests Passed; 208/208 Full Suite Regression)**. Live host application pending Boundary B.
      - Implemented modular, idempotent, and secure Ansible role `ansible/roles/nginx/`:
        - **Targeting & Preflight (`tasks/preflight.yml`)**: Enforces strict dual-condition targeting: requires both canonical inventory hostname (`app-server` / EC2 2) and inventory group (`application`) via disjunctive fail logic (`(inventory_hostname != target_host) or (target_group not in group_names)`), halting immediately if executed against `puppet-server` or `cicd-server`. Validates Ubuntu 24.04 LTS (Noble) target and supported 64-bit CPU architecture (`amd64`/`x86_64`/`arm64`).
        - **Package Installation (`tasks/install.yml`)**: Declares official Ubuntu distribution package `nginx` with `state: present` and bounded cache validity (`cache_valid_time: 3600`) via `ansible.builtin.apt`. Strictly excludes arbitrary external repositories or version pinning.
@@ -226,12 +226,12 @@ flowchart TD
        - **Verification Tasks (`tasks/verify.yml`)**: Validates `/usr/sbin/nginx` binary existence, checks `nginx -v` version, executes `nginx -t` syntax test, and outputs summary diagnostics with `changed_when: false`.
      - Updated test playbook `ansible/playbooks/test-nginx.yml` targeting canonical `hosts: application` with `become: true`.
      - Authored comprehensive fixture test suite `ansible/tests/test_nginx_role.sh` (30/30 PASS), including reversion sensitivity checks confirming detection of defective OR-permitting logic.
-     - Full project regression test baseline: 200/200 checks passing across all 8 test suites.
+     - Full project regression test baseline: 208/208 checks passing across all 8 test suites.
    8. **Checkpoint 4.8: Phase 4 Local Consolidation & Boundary B Pre-flight Verification**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (200/200 Full Suite Regression, 7/7 Playbooks Syntax Clean, Terraform Format Clean)**. Ready for separately authorized Boundary B live deployment.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (208/208 Full Suite Regression, 7/7 Playbooks Syntax Clean, Terraform Format Clean)**. Ready for separately authorized Boundary B live deployment.
      - Refactored master fleet orchestration playbook [`ansible/playbooks/site.yml`](file:///home/aditya-2274/Git-repo-analyzer/ansible/playbooks/site.yml) to execute modular roles across canonical inventory groups (`hosts: all` $\to$ `common`, `hosts: puppet_server` $\to$ `puppet_server`, `hosts: puppet_agents` $\to$ `puppet_agent`, `hosts: cicd` $\to$ `docker`, `hosts: application` $\to$ `nginx`), enforcing strict target isolation and eliminating legacy `webservers` warnings.
      - Cleaned up obsolete untracked learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `app.conf.j2`, `demo.txt`), leaving exactly 7 playbooks (2 authoritative operational playbooks: `site.yml`, `enroll-puppet-agents.yml`; 5 diagnostic role runners: `test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) that all pass `ansible-playbook --syntax-check` with zero warnings.
-     - Verified all 8 Phase 4 regression test suites pass with 100% success (200/200 checks).
+     - Verified all 8 Phase 4 regression test suites pass with 100% success (208/208 checks).
      - Verified Terraform configuration formatting with `terraform fmt -check` (clean, exit 0).
      - Authored comprehensive Boundary B deployment runbook and readiness checklist covering prerequisite verification, Terraform provisioning, dynamic inventory sync, host-key verification, Ansible bootstrap sequence, service verification, and teardown procedures.
 - **Completion Criteria:**
@@ -248,14 +248,25 @@ flowchart TD
 - **Objective:** Establish foundational Puppet module and manifest directory structures on EC2 1, deploy foundational monitoring daemons (NRPE) on agent nodes, prepare Nagios Core prerequisites on EC2 2, and formalize Ansible-to-Puppet ownership handovers.
 - **Architectural Reference:** The complete architectural specification, comparative evaluation (Ansible-only vs. Puppet-only), lifecycle interaction diagrams, and resource ownership boundaries are codified in [`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md).
 - **Prerequisites:** Phase 4 completion (Puppet agents communicating with Puppet Server).
-- **Subtasks:**
-  1. **Puppet Environment Structure (`/etc/puppetlabs/code/environments/production/`)**:
-     - Set up `manifests/site.pp` and standard module paths (`modules/common`, `modules/nagios`, `modules/nrpe`).
-  2. **Foundational Node Configurations (`site.pp`)**:
-     - `node 'puppet-server'`: Manage base packages, Puppet Server service monitoring, and `/etc/hosts` private DNS drift enforcement.
-     - `node 'app-server'`: Manage base packages, Nagios Core prerequisites (`apache2`, `apache2-utils`, `libgd3`), Apache loopback on `127.0.0.1:8080`, and baseline directories.
-     - `node 'cicd-server'`: Manage base packages, NRPE daemon, and baseline directories.
-  3. **Puppet Agent Ownership Transition Sequence**:
+- **Checkpoints & Execution Roadmap:**
+  1. **Checkpoint 5A.1: Puppet Module Architecture & Manifest Structure**:
+     - *Status*: **Complete at Local Implementation & Verification Level (15/15 Tests Passed)**.
+     - Established clean module hierarchy: `puppet/manifests/site.pp`, `puppet/hiera.yaml`, `puppet/hieradata/common.yaml`, `puppet/modules/common/`, `puppet/modules/nrpe/`, and `puppet/modules/nagios/`.
+     - Defined authoritative node classification in `site.pp` (`puppet-server`, `app-server`, `cicd-server`, `default`) with explicit arrow chaining (`->`) to enforce dependency order and prevent circular dependencies.
+     - Declared global `Exec` default path in `site.pp`.
+     - Configured Puppet Hiera v5 structure and parameters in `hieradata/common.yaml`.
+     - Verified all manifests via `puppet parser validate` with 100% syntax compliance.
+     - Authored and executed dedicated test suite `puppet/tests/test_puppet_architecture.sh` (15/15 checks passed).
+  2. **Checkpoint 5A.2: Common Module**:
+     - *Status*: **In Progress (Baseline Class Implemented; Refinement Scheduled)**.
+     - Responsibilities: baseline system packages, timezone configuration, and steady-state Puppet Agent service management (`service { 'puppet': ensure => running, enable => true }`) post-enrollment.
+  3. **Checkpoint 5A.3: NRPE Module**:
+     - *Status*: **In Progress (Server & Client Classes Implemented; Templates Scheduled)**.
+     - Responsibilities: `nrpe::server` on monitored targets (`nagios-nrpe-server`, `monitoring-plugins-basic`, `allowed_hosts`, `check_*` definitions); `nrpe::client` on monitoring host (`nagios-nrpe-plugin`).
+  4. **Checkpoint 5A.4: Nagios Module**:
+     - *Status*: **In Progress (Server, Objects & Web Classes Implemented; Definitions Scheduled)**.
+     - Responsibilities: `nagios::server` (`nagios4`, `monitoring-plugins-basic`), `nagios::objects` (host, service, command, contact definitions), `nagios::web` (`apache2`, `apache2-utils`, loopback port 8080, HTTP basic auth).
+- **Puppet Agent Ownership Transition Sequence**:
      - **Step 1 (Ansible Bootstrap)**: Ansible installs `puppet-agent` (8.10.x), configures `puppet.conf` with certname and server, and enforces `puppet_agent_service_enabled: false` and `puppet_agent_service_state: stopped` (preventing premature connection).
      - **Step 2 (Ansible Supervised Enrollment)**: Ansible verifies TCP 8140 reachability, submits agent CSRs, signs certificates on EC2 1 with strict allowlisting, executes initial catalog run (`puppet agent -t --detailed-exitcodes`), verifies exit codes 0 or 2, and only then enables and starts `puppet.service`.
      - **Step 3 (Puppet Steady-State Ownership)**: In Phase 5A, Puppet's `common` module assumes exclusive steady-state desired-state ownership of `/etc/puppetlabs/puppet/puppet.conf` (`runinterval = 30m`) and `service { 'puppet': ensure => running, enable => true }`.

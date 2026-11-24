@@ -356,7 +356,12 @@ To prevent operational conflicts when the canonical master orchestration playboo
 
 4. **Stage 4 — Steady State & Repeated Orchestration Preservation**:
    - Puppet maintains agent configuration and service state autonomously on its 30-minute convergence loop.
-   - **Resolution of Repeated `site.yml` Execution**: In `ansible/roles/puppet_agent/tasks/service.yml`, a lifecycle-aware guard inspects the agent node's SSL certificate (`/etc/puppetlabs/puppet/ssl/certs/<certname>.pem`).
-     - If no signed certificate exists (pre-enrollment), Ansible applies the bootstrap defaults (`stopped`/`disabled`).
-     - If a valid signed certificate exists (post-enrollment), Ansible skips service enforcement entirely, reporting that service lifecycle ownership has been transferred to Puppet.
+   - **Resolution of Repeated `site.yml` Execution**: In `ansible/roles/puppet_agent/tasks/service.yml`, a lifecycle-aware guard verifies the agent node's SSL certificate (`/etc/puppetlabs/puppet/ssl/certs/<certname>.pem`).
+     - A simple file-existence check is insufficient. The guard performs cryptographic verification:
+       1. Valid X.509 certificate structure (`openssl x509 -in <cert> -noout`).
+       2. Expiry verification (`openssl x509 -in <cert> -noout -checkend 0`).
+       3. Subject CN match: extracted CN must strictly equal `puppet_agent_certname`.
+       4. CA trust/signature: verified against the expected Puppet CA bundle (`openssl verify -CAfile <ca.pem> <cert>`).
+     - If no certificate exists, or if a certificate is present but corrupted, expired, wrong-CN, or untrusted, `puppet_agent_is_enrolled` evaluates to `false`. Ansible enforces Phase 4 safety defaults (`stopped`/`disabled`), preventing invalid or mismatched certificates from silently bypassing bootstrap safeguards.
+     - Only if the certificate passes all cryptographic validations does Ansible classify the agent as enrolled (`puppet_agent_is_enrolled: true`) and skip service enforcement, preserving the Phase 4.5 handover to Puppet's `common` module.
      - **Operator Override**: In emergency recovery scenarios where an operator intentionally requires resetting agent service state, setting `puppet_agent_force_bootstrap: true` bypasses the guard. Ordinary orchestration runs leave this default (`false`) intact, guaranteeing zero reversal of the handover.

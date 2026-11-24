@@ -1079,3 +1079,85 @@
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, and zero Git commits or pushes.
 - **Outcome**: Ansible-to-Puppet ownership handover conflict resolved cleanly with lifecycle guard; 200/200 regression tests passing; Phase 4 ready for final closure.
+
+---
+
+## 2026-11-24: Phase 4 Narrow Audit — Puppet Agent Lifecycle Guard Cryptographic Verification & Behavioral Regression Suite
+
+- **Task**: Perform final technical verification of the Puppet Agent lifecycle guard in `ansible/roles/puppet_agent/tasks/service.yml`; strengthen certificate-state verification from simple file existence to cryptographic and identity verification; add controlled fixture and mock behavioral coverage across 8 operational scenarios in `ansible/tests/test_puppet_agent_role.sh`; reconcile documentation scope by reverting unrelated ADR 011 changes in `project_docs/ARCHITECTURE_DECISIONS.md`; explain Git HEAD history; and execute full regression validation under Approval Boundary A.
+- **Objective**: Ensure that the post-enrollment lifecycle guard strictly distinguishes a valid enrolled agent from an invalid, expired, corrupt, or mismatched certificate file; preserve Phase 4 safety defaults (`stopped`/`disabled`); provide behavioral verification for all 8 scenarios; and ensure complete consistency across documentation without staging, committing, or pushing.
+- **Actions Completed**:
+  - **Reconciled Git History**:
+    - Inspected `git rev-parse HEAD` (`f0532b0`), `git log --oneline -10`, and `git diff HEAD^..HEAD --stat`.
+    - Identified that commit `f0532b0` was created in the previous turn in direct response to the user's prompt `"commit the the changes and show the git diff"`.
+    - Clarified that the subsequent summary text mistakenly contained an outdated boilerplate assertion claiming no commits had occurred. Confirmed that no unauthorized commits occurred and no history modifications (reset/rebase/amend) will be made.
+  - **Reconciled Documentation Scope (`ARCHITECTURE_DECISIONS.md`)**:
+    - Reverted unrelated changes in `project_docs/ARCHITECTURE_DECISIONS.md` back to the exact accepted baseline of commit `2212683`.
+    - Clarified that the edits to ADR 011 concerning Terraform five-stage provisioning and retained S3 costs were added during runbook alignment, but exceeded the scope of the Puppet Agent ownership lifecycle guard.
+  - **Implemented Cryptographic Certificate Verification (`service.yml`)**:
+    - Replaced the bare `ansible.builtin.stat.exists` check in `ansible/roles/puppet_agent/tasks/service.yml` with deep cryptographic and identity verification:
+      1. Valid X.509 certificate structure (`openssl x509 -in <cert> -noout`).
+      2. Valid expiration (`openssl x509 -in <cert> -noout -checkend 0`).
+      3. Subject CN match: extracted CN must strictly equal `puppet_agent_certname`.
+      4. CA signature & trust: verified against Puppet CA bundle (`openssl verify -CAfile <ca.pem> <cert>`).
+    - Only when all checks succeed is `puppet_agent_is_enrolled` set to `true`, skipping service management to preserve Phase 4.5 handover.
+    - If no cert exists, or if a cert file exists but is corrupted, expired, wrong-CN, or untrusted, `puppet_agent_is_enrolled` evaluates to `false`, an explicit diagnostic warning is emitted, and Phase 4 safety defaults (`state: stopped`, `enabled: false`) are enforced. Invalid certificates can never silently bypass bootstrap safeguards.
+    - Preserved `puppet_agent_force_bootstrap: true` escape hatch for deliberate operator recovery.
+  - **Added Behavioral Regression Coverage for 8 Scenarios (`test_puppet_agent_role.sh`)**:
+    - Expanded `ansible/tests/test_puppet_agent_role.sh` from 46 to 54 tests (54/54 PASS).
+    - Added dedicated behavioral tests (Tests 47–54) using real OpenSSL fixtures and controlled mock environments:
+      - *Scenario 1 (Test 47)*: No certificate -> bootstrap service remains stopped and disabled.
+      - *Scenario 2 (Test 48)*: Valid enrolled certificate -> ordinary `site.yml` execution skips service task, daemon not stopped/disabled.
+      - *Scenario 3 (Test 49)*: Invalid/corrupt certificate -> guard does not classify agent as enrolled, safe defaults enforced.
+      - *Scenario 4 (Test 50)*: Wrong certificate CN -> enrollment guard fails safely, safe defaults enforced.
+      - *Scenario 5 (Test 51)*: Expired certificate -> enrollment guard fails safely, safe defaults enforced.
+      - *Scenario 6 (Test 52)*: Explicit force-bootstrap override -> works only when deliberately requested.
+      - *Scenario 7 (Test 53)*: Enrollment handover -> agent starts only after catalog exit code 0 or 2 (gated strictly in `handover.yml`).
+      - *Scenario 8 (Test 54)*: Repeated orchestration -> play structure isolates roles, `site.yml` role variables remain unpolluted.
+  - **Synchronized Project Documentation**:
+    - Updated `IMPLEMENTATION_PLAN.md` and `PROJECT_STATUS.md` with revised test metrics (Checkpoint 4.4: 54/54 PASS; Total Suite: 208/208 PASS).
+    - Updated `ANSIBLE_AND_PUPPET_ARCHITECTURE.md` Section 7.1 to document the cryptographic verification requirements.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: All 7 playbooks clean (2 authoritative operational playbooks, 5 diagnostic runners).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes, and zero staging or committing of files.
+- **Outcome**: Cryptographic certificate verification and behavioral fixture regression suite fully implemented and passing (54/54 in role test, 208/208 across all 8 suites); documentation fully reconciled and clean.
+
+---
+
+## 2026-11-24: Phase 5A — Checkpoint 5A.1: Puppet Module Architecture Implementation & Validation
+
+- **Task**: Implement Checkpoint 5A.1 of Phase 5A (Puppet Configuration Management). Establish the complete Puppet directory layout, module architecture, authoritative site manifest (`manifests/site.pp`), Hiera v5 configuration, modular class definitions for `common`, `nrpe`, and `nagios`, and isolated validation test suite under Approval Boundary A.
+- **Objective**: Build a clean, maintainable, dependency-aware Puppet module architecture establishing unambiguous node classification, resource chaining without cycles, Hiera parameter management, and steady-state Puppet Agent service management without interfering with Phase 4 bootstrap safeguards.
+- **Actions Completed**:
+  - **Established Puppet Module Architecture & File Layout**:
+    - Created complete directory tree under `puppet/`: `manifests/`, `hieradata/nodes/`, `modules/common/{manifests,files}`, `modules/nrpe/{manifests,templates}`, `modules/nagios/{manifests,templates}`, `tests/`.
+  - **Configured Hiera v5**:
+    - Deployed `puppet/hiera.yaml` specifying version 5 hierarchy with per-node overrides (`nodes/%{trusted.certname}.yaml`) and common parameters (`common.yaml`).
+    - Configured `puppet/hieradata/common.yaml` with parameters for timezone (`UTC`), package baselines, NRPE port (`5666`), allowed hosts, and Nagios web port (`8080`).
+  - **Authored Authoritative Site Manifest (`puppet/manifests/site.pp`)**:
+    - Declared global `Exec` default path (`/bin`, `/usr/bin`, `/usr/local/bin`, `/sbin`, `/usr/sbin`, `/opt/puppetlabs/bin`).
+    - Implemented explicit node classifications:
+      - `node 'puppet-server'`: chained `class { 'common': } -> class { 'nrpe::client': } -> class { 'nagios': }`.
+      - `node 'app-server'`: chained `class { 'common': } -> class { 'nrpe::server': }`.
+      - `node 'cicd-server'`: chained `class { 'common': } -> class { 'nrpe::server': }`.
+      - `node default`: baseline `class { 'common': }`.
+    - Documented architectural observations regarding Nagios Core placement between prompt specifications and historical AGENTS.md / Terraform security group rules.
+  - **Implemented Modular Class Definitions**:
+    - `common/manifests/init.pp`: manages baseline packages (`curl`, `git`, `htop`, `unzip`, `tar`, `jq`), `/etc/timezone`, and steady-state Puppet Agent service (`ensure => running, enable => true`).
+    - `nrpe/manifests/init.pp`, `server.pp`, `client.pp`: modular wrapper, server class managing `nagios-nrpe-server` and monitoring plugins, and client class managing `nagios-nrpe-plugin`.
+    - `nagios/manifests/init.pp`, `server.pp`, `objects.pp`, `web.pp`: orchestrator, core server daemon (`nagios4`), object definitions, and Apache loopback virtual host (`127.0.0.1:8080`) with basic authentication.
+  - **Authored & Executed Checkpoint 5A.1 Validation Suite**:
+    - Created `puppet/tests/test_puppet_architecture.sh` containing 15 automated validation checks.
+    - Validated all manifests via `puppet parser validate` (100% syntax compliance across all 8 `.pp` files).
+    - Verified directory layout, file presence, node classification, arrow chaining, Hiera v5 structure, and Ansible playbook syntax compatibility.
+    - Test results: **15/15 checks passed (100% pass rate)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: All 7 playbooks clean (2 authoritative operational playbooks, 5 diagnostic runners).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes, and zero staging or committing of files.
+- **Outcome**: Checkpoint 5A.1 fully implemented and validated (15/15 checks passed); ready for Checkpoint 5A.2.

@@ -7,12 +7,14 @@
 # repeated site.yml execution from reversing the Phase 4.5 enrollment handover.
 #
 # Lifecycle Stages:
-#   Stage 1 (Initial Bootstrap): No signed certificate exists on disk.
+#   Stage 1 (Initial Bootstrap): No signed certificate exists on disk or certificate
+#     fails cryptographic/identity verification.
 #     -> Enforce puppet_agent_service_state (default: stopped) and
 #        puppet_agent_service_enabled (default: false).
 #     -> This prevents premature agent connection before CA verification.
 #
-#   Stage 2+ (Post-Enrollment): A valid signed certificate exists on disk.
+#   Stage 2+ (Post-Enrollment): A cryptographically verified signed certificate
+#     matching puppet_agent_certname and signed by Puppet CA exists on disk.
 #     -> The enrollment playbook (enroll-puppet-agents.yml / handover.yml)
 #        has already activated and enabled the service.
 #     -> Skip service enforcement entirely to avoid conflicting with
@@ -20,17 +22,61 @@
 #     -> This preserves the handover: Puppet's common module exclusively
 #        manages puppet.conf and puppet.service in Phase 5A+.
 #
+# Cryptographic Verification Requirements:
+#   1. Valid X.509 certificate structure (openssl x509 -noout).
+#   2. Expiry check (openssl x509 -checkend 0).
+#   3. Identity verification: subject CN strictly matches puppet_agent_certname.
+#   4. CA trust/signature verification: openssl verify against ca.pem.
+#
+# If any cryptographic check fails, puppet_agent_is_enrolled evaluates to false,
+# preserving the Phase 4 safety defaults (service stopped and disabled) and preventing
+# invalid or mismatched certificates from silently bypassing bootstrap safeguards.
+#
 # Override: Set puppet_agent_force_bootstrap: true to force the bootstrap
 # defaults even on an enrolled agent (operator-only recovery scenario).
 
-- name: Determine Puppet Agent enrollment state from signed certificate
+- name: Set SSL certificate path facts for lifecycle guard
+  ansible.builtin.set_fact:
+    puppet_agent_cert_file: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certs/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+    puppet_agent_ca_file: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certs/ca.pem"
+
+- name: Check existence of Puppet Agent certificate file
   ansible.builtin.stat:
-    path: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certs/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+    path: "{{ puppet_agent_cert_file }}"
   register: puppet_agent_cert_check
 
-- name: Set Puppet Agent enrollment fact
+- name: Cryptographically verify Puppet Agent certificate validity and CA trust
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      # 1. Verify valid X.509 certificate structure
+      openssl x509 -in "{{ puppet_agent_cert_file }}" -noout
+      # 2. Verify certificate has not expired
+      openssl x509 -in "{{ puppet_agent_cert_file }}" -noout -checkend 0
+      # 3. Verify certificate subject CN matches expected agent certname
+      sub_cn=$(openssl x509 -in "{{ puppet_agent_cert_file }}" -noout -subject | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\([^, /]*\).*/\1/p')
+      [ "$sub_cn" = "{{ puppet_agent_certname | default(inventory_hostname) }}" ]
+      # 4. Verify certificate trust and signature against expected Puppet CA bundle
+      [ -f "{{ puppet_agent_ca_file }}" ]
+      openssl verify -CAfile "{{ puppet_agent_ca_file }}" "{{ puppet_agent_cert_file }}"
+  register: puppet_agent_cert_crypto_check
+  changed_when: false
+  failed_when: false
+  when: puppet_agent_cert_check.stat.exists
+
+- name: Set Puppet Agent enrollment fact based on cryptographic verification
   ansible.builtin.set_fact:
-    puppet_agent_is_enrolled: "{{ puppet_agent_cert_check.stat.exists | default(false) }}"
+    puppet_agent_is_enrolled: "{{ puppet_agent_cert_check.stat.exists and (puppet_agent_cert_crypto_check.rc | default(1) == 0) }}"
+
+- name: Warn when certificate file is present but failed cryptographic or identity verification
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: A certificate file was found at {{ puppet_agent_cert_file }} on {{ inventory_hostname }},
+      but it failed cryptographic/identity verification (rc={{ puppet_agent_cert_crypto_check.rc | default('N/A') }}).
+      The agent is NOT classified as enrolled. Preserving Phase 4 safety defaults (service stopped and disabled).
+  when:
+    - puppet_agent_cert_check.stat.exists
+    - not (puppet_agent_is_enrolled | bool)
 
 - name: "Manage Puppet Agent service (pre-enrollment bootstrap: stopped/disabled)"
   ansible.builtin.systemd:
@@ -45,7 +91,7 @@
 - name: "Report lifecycle-aware service skip (post-enrollment: ownership transferred)"
   ansible.builtin.debug:
     msg: >-
-      Puppet Agent on {{ inventory_hostname }} has a valid signed certificate.
+      Puppet Agent on {{ inventory_hostname }} has a cryptographically verified signed certificate.
       Service management skipped to preserve Phase 4.5 enrollment handover.
       The Puppet Agent service lifecycle is now owned by Puppet's common module (Phase 5A+).
       To override this guard, set puppet_agent_force_bootstrap: true.

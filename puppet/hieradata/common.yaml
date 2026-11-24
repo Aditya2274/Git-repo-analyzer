@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# Hiera Common Configuration - Git Repository Analyzer Platform
+# ==============================================================================
+
+# Common baseline configuration
+common::timezone: 'UTC'
+common::manage_puppet_agent: true
+common::puppet_agent_service: 'puppet'
+common::packages:
+  - 'curl'
+  - 'git'
+  - 'htop'
+  - 'unzip'
+  - 'tar'
+  - 'jq'
+
+# NRPE configuration parameters
+nrpe::server::server_port: 5666
+nrpe::server::allowed_hosts:
+  - '127.0.0.1'
+  - '::1'
+  - 'puppet-server'
+  - 'app-server'
+nrpe::server::dont_blame_nrpe: 0
+
+# Nagios Core configuration parameters
+nagios::web::admin_user: 'nagiosadmin'
+nagios::web::admin_password_hash: '$apr1$demo$hashedpassword'
+nagios::web::listen_port: 8080
+nagios::web::bind_address: '127.0.0.1'
