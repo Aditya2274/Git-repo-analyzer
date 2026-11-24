@@ -90,7 +90,7 @@ Puppet serves as the **centralized desired-state configuration management engine
 | **Node.js 20 LTS Runtime** | *Not implemented in Phase 4.* | **Exclusively Owned by Puppet** on EC2 2 (Phase 5B). |
 | **Application Systemd Unit**| *Not implemented in Phase 4.* | **Exclusively Owned by Puppet** (`git-repo-analyzer-backend.service`, Phase 5B). |
 | **Production NGINX VHost** | *Baseline port 80 default only (Ansible Checkpoint 4.7).* | **Exclusively Owned by Puppet** (React static build + `/api/` reverse proxy, Phase 5B). |
-| **Monitoring Daemons** | *Not implemented in Phase 4.* | **Exclusively Owned by Puppet** (Nagios Core on EC2 2, NRPE on EC2 1 & 3, Phase 5A). |
+| **Monitoring Daemons** | *Implemented & Locally Validated in Phase 5A (Boundary A).* | **Exclusively Owned by Puppet** (Nagios Core + Apache loopback on EC2 2; NRPE server on EC2 1 & 3, client plugin on EC2 2; live convergence pending Boundary B). |
 
 ### 3.3 The Puppet Operational Paradigm (Pull-Based Convergence)
 Puppet operates on a declarative graph-based compilation model during periodic or triggered catalog runs (configured with `runinterval = 30m` once agents are activated):
@@ -350,8 +350,8 @@ To prevent operational conflicts when the canonical master orchestration playboo
    - Ansible executes the supervised initial catalog run (`puppet agent -t --detailed-exitcodes`).
    - The agent service is started and enabled **only after** catalog exit code 0 or 2 is strictly verified.
 
-3. **Stage 3 — Ownership Handover (Phase 5A+, Puppet `common::agent`)**:
-   - Puppet's `common::agent` class assumes exclusive steady-state desired-state ownership of `/etc/puppetlabs/puppet/puppet.conf`, service running state, and service enablement (`ensure => running, enable => true`).
+3. **Stage 3 — Ownership Handover (Phase 5A+, Puppet `common` class)**:
+   - Puppet's `common` class (`puppet/modules/common/manifests/init.pp`) assumes exclusive steady-state desired-state ownership of `/etc/puppetlabs/puppet/puppet.conf` (planned live override) and `service { 'puppet': ensure => running, enable => true }`.
    - Ansible permanently relinquishes ownership of these transferred resources.
 
 4. **Stage 4 — Steady State & Repeated Orchestration Preservation**:

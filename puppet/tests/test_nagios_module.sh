@@ -495,9 +495,9 @@ echo "PASS (Nagios Core exclusively on app-server; fail-closed default and rogue
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 18. Idempotent Resource Declarations [Catalog Compilation]
+# 18. Catalog Compilation Determinism & Cycle-Free DAG
 # ------------------------------------------------------------------------------
-echo -n "[Test 18/${TOTAL_COUNT}] Idempotent resource declarations (cycle-free DAG)... "
+echo -n "[Test 18/${TOTAL_COUNT}] Repeat catalog compilation determinism (cycle-free DAG)... "
 export PUPPET_DIR
 python3 - << 'EOF'
 import os, subprocess, tempfile

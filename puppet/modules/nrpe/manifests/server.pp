@@ -9,6 +9,8 @@
 class nrpe::server (
   String[1]                            $package_name       = 'nagios-nrpe-server',
   String[1]                            $service_name       = 'nagios-nrpe-server',
+  Enum['running', 'stopped']           $service_ensure     = 'running',
+  Boolean                              $service_enable     = true,
   Array[String[1]]                     $plugin_packages    = ['monitoring-plugins-basic'],
   String[1]                            $config_file        = '/etc/nagios/nrpe.cfg',
   String[1]                            $include_dir        = '/etc/nagios/nrpe.d',
@@ -128,6 +130,7 @@ class nrpe::server (
         File['/usr/lib/nagios/plugins'],
         Package[$plugin_packages],
       ],
+      before  => Service[$service_name],
     }
   }
 
@@ -142,6 +145,7 @@ class nrpe::server (
         File['/usr/lib/nagios/plugins'],
         Package[$plugin_packages],
       ],
+      before  => Service[$service_name],
     }
   }
 
@@ -156,6 +160,7 @@ class nrpe::server (
         File['/usr/lib/nagios/plugins'],
         Package[$plugin_packages],
       ],
+      before  => Service[$service_name],
     }
   }
 
@@ -181,12 +186,13 @@ class nrpe::server (
   # 6. Service Management
   # ----------------------------------------------------------------------------
   service { $service_name:
-    ensure     => running,
-    enable     => true,
+    ensure     => $service_ensure,
+    enable     => $service_enable,
     hasstatus  => true,
     hasrestart => true,
     require    => [
       Package[$package_name],
+      Package[$plugin_packages],
       File[$config_file],
     ],
   }

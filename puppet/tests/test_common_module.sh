@@ -288,9 +288,9 @@ echo "PASS (site.pp compiles successfully for all three fleet nodes)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 14. Repeat Application Idempotency Check
+# 14. Repeat Catalog Compilation Determinism (Zero Dependency Cycles)
 # ------------------------------------------------------------------------------
-echo -n "[Test 14/${TOTAL_COUNT}] Repeated compilation idempotency (zero dependency cycles)... "
+echo -n "[Test 14/${TOTAL_COUNT}] Repeated catalog compilation determinism (zero dependency cycles)... "
 export PUPPET_DIR
 python3 - << 'EOF'
 import os, subprocess
@@ -307,7 +307,7 @@ for i in range(2):
     assert res.returncode == 0, f'Run {i+1} failed: {res.stderr}'
     assert 'Found 1 dependency cycle' not in res.stderr and 'Found 1 dependency cycle' not in res.stdout
 EOF
-echo "PASS (class is cycle-free and safe for repeated application)"
+echo "PASS (catalog compilation is deterministic and cycle-free; live convergence deferred to Boundary B)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo "=============================================================================="

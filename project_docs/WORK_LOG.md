@@ -1434,3 +1434,26 @@
     - `test_nagios_module.sh`: **26/26 PASS**; `test_nrpe_module.sh`: **19/19 PASS**; `test_puppet_architecture.sh`: **15/15 PASS**; `test_common_module.sh`: **14/14 PASS** (total **74/74 PASS**).
     - `puppet parser validate`, all 3 fleet catalog compilations (`puppet apply --noop`), and `git diff --check` clean under Approval Boundary A.
 - **Outcome**: Fail-closed preflight verification implemented and locally validated (74/74 checks passed).
+
+---
+
+## 2026-11-25: Phase 5A.5 — Puppet Catalog Compilation, Dependency Ordering, Node Targeting & Convergence Validation
+
+- **Task**: Perform end-to-end catalog compilation, dependency DAG analysis, cross-node targeting verification, terminology/documentation alignment, and consolidated regression testing for Phase 5A (`Checkpoints 5A.1–5A.5`) under strict Approval Boundary A.
+- **Concrete Defects Discovered & Fixed**:
+  1. **NRPE Service Dependency Ordering & Stop-State Safety (`puppet/modules/nrpe/manifests/server.pp`)**:
+     - Added `before => Service[$service_name]` on custom check script resources (`check_jenkins.sh`, `check_docker.sh`, `check_puppetserver.sh`) and added `Package[$plugin_packages]` to `Service[$service_name]`'s `require` list so all baseline plugin binaries and node-specific custom scripts are guaranteed on disk before `nagios-nrpe-server` starts.
+     - Added `Enum['running', 'stopped'] $service_ensure = 'running'` and `Boolean $service_enable = true` parameters (aligned with `common` and `nagios` modules) while preserving Puppet 8 `Service#refresh` runtime safety when intentionally stopped.
+     - Expanded `puppet/tests/test_nrpe_module.sh` to **20/20** adding Test 20 (JSON catalog DAG completeness & stopped-service compilation).
+  2. **Test Terminology & Documentation Drift Cleanup**:
+     - Replaced ambiguous "Repeated compilation idempotency" wording on `--noop` compile tests (`test_common_module.sh` Test 14, `test_nrpe_module.sh` Test 18, `test_nagios_module.sh` Test 18) with accurate "Repeat catalog compilation determinism (cycle-free DAG)" labels, reserving convergence/idempotency claims strictly for `--detailed-exitcodes` fixture runs (`exit 2 -> exit 0`) and clearly deferring live OS/systemd convergence to Approval Boundary B.
+     - Updated stale counts and descriptions in `project_docs/PROJECT_STATUS.md`, `project_docs/IMPLEMENTATION_PLAN.md` (including fixing stale 5A.4 admin `policy-rc.d` probe description to reflect `0c37d99`'s non-execution fail-closed guard), and `project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md` (status matrix and `common` class reference).
+- **Integrated Phase 5A.5 Validation Suite (`puppet/tests/test_phase5a_convergence.sh`, 8/8 PASS)**:
+  - Verified `puppet parser validate` on all 10 manifests (`site.pp` + `common`, `nrpe`, `nagios`) and Hiera v5 fail-closed production baseline.
+  - Confirmed fail-closed `app-server` gate without operator credential, plus deterministic 4-node JSON catalog compilation (`puppet-server`, `app-server` via isolated temp Hiera fixture, `cicd-server`, and `default` fallback) with zero duplicate resource declarations.
+  - Verified strict cross-node resource isolation, Nagios `services.cfg` $\leftrightarrow$ NRPE `nrpe.cfg` command parity & `127.0.0.1:8080` loopback binding, cycle-free `--graph` `expanded_relationships.dot` DFS reachability across all three fleet nodes, sandboxed `--detailed-exitcodes` (`2 -> 0`) + `validate_cmd` failure isolation + Puppet 8 `Service#refresh` skipped-when-stopped check, and zero hardcoded EC2 IPs.
+- **Full Regression Validation (Boundary A)**:
+  - Phase 5A suites: `test_puppet_architecture.sh` (15/15), `test_common_module.sh` (14/14), `test_nrpe_module.sh` (20/20), `test_nagios_module.sh` (26/26), `test_phase5a_convergence.sh` (8/8) — **83/83 checks PASS**.
+  - Phase 4 Ansible regression suites (`ansible/tests/test_*.sh`): **208/208 checks PASS** across all 8 suites.
+  - `puppet parser validate`, 3-node catalog compilation, and `git diff --check` clean. Live EC2 package/systemd convergence remains gated behind Approval Boundary B.
+- **Outcome**: Phase 5A validation and consolidation complete under Approval Boundary A; staged changes ready for user review before commit.

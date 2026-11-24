@@ -12,7 +12,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PUPPET_DIR="${PROJECT_ROOT}/puppet"
 
 PASSED_COUNT=0
-TOTAL_COUNT=19
+TOTAL_COUNT=20
 
 echo "=============================================================================="
 echo "Running Test Suite: Checkpoint 5A.3 (NRPE Puppet Module)"
@@ -317,7 +317,9 @@ assert 'notify       => Service[$service_name],' in content or 'notify => Servic
 
 # Service dependencies
 assert 'require    => [' in content or 'require => [' in content
+assert 'Package[$plugin_packages],' in content, 'Service must require monitoring plugin packages'
 assert 'File[$config_file],' in content
+assert 'before  => Service[$service_name],' in content, 'Custom check scripts must deploy before NRPE service starts'
 EOF
 echo "PASS (linear DAG dependency chain established with explicit require & notify)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
@@ -460,9 +462,9 @@ echo "PASS (site.pp compiles for all three fleet nodes with correct role targeti
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 18. Repeated Compilation Idempotency (Zero Dependency Cycles)
+# 18. Repeat Catalog Compilation Determinism (Zero Dependency Cycles)
 # ------------------------------------------------------------------------------
-echo -n "[Test 18/${TOTAL_COUNT}] Repeated compilation idempotency (cycle-free DAG)... "
+echo -n "[Test 18/${TOTAL_COUNT}] Repeat catalog compilation determinism (cycle-free DAG)... "
 export PUPPET_DIR
 python3 - << 'EOF'
 import os, subprocess
@@ -545,6 +547,70 @@ assert 'check_puppetserver.sh' not in combined3, 'Non-configured check_puppetser
 assert 'check_jenkins.sh' not in combined3, 'Non-configured check_jenkins.sh must NOT be present'
 EOF
 echo "PASS (unexpected certnames receive zero custom checks; explicit overrides honored)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 20. Catalog DAG Completeness & Stopped-Service Refresh Safety
+# ------------------------------------------------------------------------------
+echo -n "[Test 20/${TOTAL_COUNT}] Catalog DAG ordering & stopped-service refresh safety... "
+export PUPPET_DIR
+python3 - << 'EOF'
+import json, os, subprocess, tempfile
+
+puppet_dir = os.environ['PUPPET_DIR']
+
+def compile_catalog(node, manifest_path=None):
+    cmd = [
+        'puppet', 'catalog', 'find', node,
+        '--terminus=compiler',
+        '--certname', node,
+        f'--modulepath={puppet_dir}/modules',
+        f'--hiera_config={puppet_dir}/hiera.yaml',
+        '--manifest', manifest_path or f'{puppet_dir}/manifests/site.pp',
+        '--color=false',
+        '--render-as=json',
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode == 0, f'Catalog compile failed for {node}: {res.stderr}'
+    return json.loads(res.stdout[res.stdout.index('{'):])
+
+def find_res(cat, rtype, title):
+    for r in cat.get('resources', []):
+        if r['type'] == rtype and r['title'] == title:
+            return r
+    raise AssertionError(f'Missing {rtype}[{title}] in catalog')
+
+# 1. Verify full dependency chain into Service[nagios-nrpe-server] on puppet-server and cicd-server
+for node, scripts in [
+    ('puppet-server', ['/usr/lib/nagios/plugins/check_puppetserver.sh']),
+    ('cicd-server', ['/usr/lib/nagios/plugins/check_jenkins.sh', '/usr/lib/nagios/plugins/check_docker.sh']),
+]:
+    cat = compile_catalog(node)
+    svc = find_res(cat, 'Service', 'nagios-nrpe-server')
+    req = svc['parameters'].get('require', [])
+    assert 'Package[nagios-nrpe-server]' in req, f'{node}: Service must require nrpe package'
+    assert 'Package[monitoring-plugins-basic]' in req, f'{node}: Service must require monitoring plugins package'
+    assert 'File[/etc/nagios/nrpe.cfg]' in req, f'{node}: Service must require nrpe.cfg'
+    for script in scripts:
+        fres = find_res(cat, 'File', script)
+        before = fres['parameters'].get('before', [])
+        if isinstance(before, str):
+            before = [before]
+        assert 'Service[nagios-nrpe-server]' in before, f'{node}: {script} must enforce before => Service[nagios-nrpe-server]'
+
+# 2. Verify intentionally stopped NRPE service compiles cleanly with intact edges
+with tempfile.TemporaryDirectory() as tmpdir:
+    stopped_pp = os.path.join(tmpdir, 'stopped.pp')
+    with open(stopped_pp, 'w') as f:
+        f.write("class { 'nrpe::server': service_ensure => 'stopped', service_enable => false }\n")
+    cat_stopped = compile_catalog('cicd-server', stopped_pp)
+svc_stopped = find_res(cat_stopped, 'Service', 'nagios-nrpe-server')
+assert svc_stopped['parameters']['ensure'] == 'stopped'
+assert svc_stopped['parameters']['enable'] is False
+cfg_stopped = find_res(cat_stopped, 'File', '/etc/nagios/nrpe.cfg')
+assert cfg_stopped['parameters']['notify'] == 'Service[nagios-nrpe-server]'
+EOF
+echo "PASS (NRPE DAG edges complete and stopped-service configuration verified)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo "=============================================================================="
