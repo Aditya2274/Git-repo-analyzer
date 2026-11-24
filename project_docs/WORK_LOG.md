@@ -880,9 +880,9 @@
     - Eliminated legacy host-matching warnings (`Could not match supplied host pattern, ignoring: webservers`).
   - **Repository Hygiene & Cleanup**:
     - Removed untracked obsolete learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `ansible/templates/app.conf.j2`, `ansible/files/demo.txt`) that targeted `hosts: local` and generated warnings.
-    - Resulting production playbook suite: exactly 7 production playbooks (`site.yml`, `enroll-puppet-agents.yml`, `test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`).
+    - Resulting playbook suite: exactly 7 playbooks (2 authoritative operational playbooks: `site.yml`, `enroll-puppet-agents.yml`; 5 diagnostic role runners: `test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`).
   - **Static & Syntax Validation**:
-    - All 7 production playbooks verified with `ansible-playbook --syntax-check` with zero warnings and zero errors (exit code 0).
+    - All 7 playbooks verified with `ansible-playbook --syntax-check` with zero warnings and zero errors (exit code 0).
     - Terraform configuration formatting verified with `terraform fmt -check` (exit code 0).
     - `bash -n` verified across all test scripts.
     - `git diff --check` verified clean (0 whitespace or formatting errors).
@@ -925,8 +925,157 @@
     - `project_docs/WORK_LOG.md`: Logged this comprehensive architectural documentation task.
   - **Static & Syntax Validation**:
     - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
-    - `ansible-playbook --syntax-check` on all 7 production playbooks: 0 errors, 0 warnings.
+    - `ansible-playbook --syntax-check` on all 7 playbooks (2 authoritative operational playbooks, 5 diagnostic role runners): 0 errors, 0 warnings.
     - Shell syntax (`bash -n`) across all test scripts: Clean.
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git pushes executed.
 - **Outcome**: Architectural roles, lifecycle interactions, and resource ownership of Ansible and Puppet fully formalized, validated, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Documentation Review & Alignment: Boundary B Deployment Runbook
+
+- **Task**: Perform narrowly scoped documentation review of the Boundary B deployment runbook and readiness checklist to resolve teardown approval conflicts, clarify master vs. individual playbook execution paths, improve Terraform provisioning approval gates, and clarify retained AWS costs.
+- **Objective**: Harmonize deployment documentation with architectural invariants (ADR 011 and ADR 012), eliminate conflicting error handling, and define one unambiguous, authoritative operational execution path for live infrastructure deployment, strictly under Approval Boundary A.
+- **Actions Completed**:
+  - **Resolved Teardown Approval Conflict (Step 3 / Step 14 Alignment)**:
+    - Replaced ambiguous partial provisioning failure instruction (which previously suggested executing `terraform destroy`) with an explicit halt-and-preserve protocol.
+    - Mandated that upon any partial failure during `terraform apply`: execution halts immediately, Terraform state is preserved in the S3 remote backend, partially created resources are inspected/reported via `terraform state list`, zero automatic destruction is performed, and separate explicit operator authorization is required before any remediation or teardown.
+  - **Resolved Master vs. Individual Playbook Execution Path (ADR 012 Alignment)**:
+    - Formalized `ansible/playbooks/site.yml` as the canonical master orchestration playbook executing all 5 Phase 4 roles across the fleet (`common`, `puppet_server`, `puppet_agent` [gated stopped/disabled], `docker`, `nginx`).
+    - Clarified that `ansible/playbooks/enroll-puppet-agents.yml` is the dedicated multi-node orchestration playbook for Checkpoint 4.5 executing the 9-step CA enrollment, individual CSR signing, supervised first catalog application, and agent daemon activation.
+    - Clarified that the individual `test-*.yml` playbooks were authored during development for isolated component testing; their `test-` prefix reflects this origin, but they are retained as modular diagnostic runners for targeted troubleshooting, not the primary live deployment path.
+    - Confirmed that executing `site.yml` followed by `enroll-puppet-agents.yml` represents the authoritative 2-playbook live deployment path, guaranteeing that Puppet Agents are never activated before CA enrollment.
+  - **Improved Terraform Provisioning Approval Protocol**:
+    - Expanded provisioning sequence from an informal execution to a structured five-stage approval and provisioning workflow aligned with Stage 1 of the detailed runbook: (1) Identity & Session Verification (`aws sts get-caller-identity`), (2) Initialization & Configuration Validation (`terraform init` / `validate`), (3) Deterministic Planning & Human Inspection (`terraform plan -out=tfplan`; verifying 3 EC2 instances, 3 SGs, 50 GB gp3), (4) Explicit Provisioning Approval Gate (written operator authorization of plan & costs), and (5) Interactive Infrastructure Provisioning (`terraform apply tfplan` strictly without `-auto-approve`, governed by the partial-failure halt protocol).
+  - **Clarified Retained AWS Costs**:
+    - Documented that while `terraform destroy` terminates all 3 EC2 instances, deletes the 50 GB gp3 EBS root volumes, releases public IPv4 addresses, and removes security groups (eliminating the estimated active fleet running cost of approximately $0.0773/hour), actual AWS account charges may remain from persistent resources (such as the S3 state backend) or external account services.
+    - Explicitly identified the persistent Terraform S3 remote state bucket (`git-repo-analyzer-terraform-state-2026`) as a permanent retained resource that survives teardown and must never be deleted, replaced, or modified.
+  - **Updated Canonical Documentation**:
+    - `project_docs/IMPLEMENTATION_PLAN.md`: Updated Section 6 checklist, inserted Section 7 (Authoritative Boundary B Deployment Runbook, 15 steps), updated Section 8 (Ephemeral vs. Persistent Lifecycle & Retained AWS Costs).
+    - `project_docs/PROJECT_STATUS.md`: Synchronized Section 4 Pre-Deployment Readiness Checklist items 6, 8, and 9.
+    - `project_docs/ARCHITECTURE_DECISIONS.md`: Updated ADR 011 lifecycle steps, partial failure halt protocol, authoritative 2-playbook path, and retained cost definitions.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git commits or pushes made without explicit reporting.
+- **Outcome**: Boundary B deployment runbook reviewed, corrected, and codified in canonical documentation.
+
+---
+
+## 2026-11-24: Phase 4/5 — Technical Accuracy Review: Ansible and Puppet Architectural Specification
+
+- **Task**: Perform targeted technical accuracy review of `project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md` to correct implementation status claims, reconcile comparison analyses, resolve application deployment contradictions, correct Puppet service supervision claims, eliminate resource ownership ambiguities, and qualify performance/cost claims.
+- **Objective**: Ensure the architectural specification strictly reflects Approval Boundary A status, cleanly distinguishes implemented automation from live-deployed behavior, accurately contrasts Ansible and Puppet operating paradigms without overstatement, and establishes unambiguous resource handovers.
+- **Actions Completed**:
+  - **Corrected Implementation Status Claims**:
+    - Explicitly clarified that Phase 4 automation represents locally implemented and fixture-tested code under Approval Boundary A, and that live AWS provisioning, EC2 SSH execution, and live Puppet CA enrollment remain pending Boundary B.
+    - Updated Table 3.2 to clearly separate implemented automation (`Checkpoint 4.3–4.5`) from planned steady-state ownership (`Phase 5+`).
+  - **Refined Ansible-Only Comparison**:
+    - Acknowledged that Ansible is capable of desired-state enforcement and drift management through repeated playbook execution, scheduled automation (cron), AWX / Ansible Automation Platform (AAP), or distributed `ansible-pull`.
+    - Articulated the engineering justification for selecting Puppet: its agent-based periodic convergence model provides a self-contained, out-of-the-box 30-minute loop without requiring external cluster infrastructure, establishing a clear separation between initial bootstrap (SSH) and continuous desired-state enforcement (mTLS).
+  - **Refined Puppet-Only Comparison**:
+    - Removed absolute statements regarding bootstrapping on bare EC2. Clarified that Puppet can be bootstrapped via cloud-init, user-data, or custom AMIs.
+    - Articulated why Ansible was selected for this project's initial workflow: SSH-based fleet access, dynamic Terraform inventory resolution, EC2 console host-key verification, ordered multi-node orchestration, automated Java/JVM tuning, controlled CSR signing, and supervised catalog execution.
+  - **Resolved Application Deployment Contradiction**:
+    - Defined clear operational boundaries between Application Build Execution (CI/CD on EC2 3), Deployment Orchestration (Ansible coordinating release staging and smoke checks), and Persistent Configuration Ownership (Puppet exclusively managing systemd units, environment files, and reverse proxies).
+    - Established that deployment workflows must never independently overwrite resources exclusively managed by Puppet.
+  - **Corrected Service Supervision Claims**:
+    - Clarified that Puppet reconciles desired service state during periodic catalog runs (configured every 30 minutes).
+    - Explicitly distinguished three operational tiers: local process crash supervision (`systemd`, standard daemon supervision for Phase 4 services like NGINX; planned 5-second restart delay for Phase 5B backend service), desired-state enforcement (`Puppet`, 30-minute catalog convergence), and availability monitoring (`Nagios Core / NRPE`, 1–5 minute probe intervals and alerting).
+  - **Resolved Resource Ownership Ambiguities**:
+    - Documented explicit steady-state owners and handovers across all 13 infrastructure resources, ensuring every resource has exactly one steady-state owner.
+  - **Qualified Performance and Cost Claims**:
+    - Marked fleet deployment duration as an engineering target estimate (approximately 10–15 minutes, subject to live network/package speeds), noting that human review and approval gates (Steps 4 and 14) are mandatory.
+    - Marked hourly running cost ($0.0773/hour) as a provisional estimate subject to AWS usage, regional rates, and credit rules.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git commits or pushes made without prior reporting.
+- **Outcome**: Architectural specification updated with complete technical accuracy, verified, and reported for user review.
+
+---
+
+## 2026-11-24: Phase 4 — Final Documentation Closure & Phase 5A Readiness Review
+
+- **Task**: Perform final documentation corrections and repository checks to distinguish authoritative operational playbooks from diagnostic role runners, clarify systemd restart configuration as planned Phase 5B behavior, preserve architecture and governance invariants, and formulate the Phase 5A implementation sequence.
+- **Objective**: Ensure complete documentation consistency, verify that zero cloud or remote operations occurred under Approval Boundary A, and prepare a structured, modular local implementation sequence for Phase 5A.
+- **Actions Completed**:
+  - **Corrected Playbook Validation Terminology**:
+    - Consistently distinguished the 2 authoritative operational playbooks (`ansible/playbooks/site.yml` and `ansible/playbooks/enroll-puppet-agents.yml`) from the 5 diagnostic/development role runners (`test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) across all documentation files (`PROJECT_STATUS.md`, `IMPLEMENTATION_PLAN.md`, `WORK_LOG.md`).
+    - Clarified that while all 7 playbooks undergo syntax validation, only `site.yml` and `enroll-puppet-agents.yml` serve as authoritative operational playbooks.
+  - **Clarified systemd Restart Behavior**:
+    - Refined `project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md` to explicitly distinguish between running Phase 4 service supervision (such as NGINX) and the planned Phase 5B backend systemd unit configuration (`git-repo-analyzer-backend.service`), ensuring that `Restart=always` and `RestartSec=5s` are described as planned configuration rather than existing verified service behavior.
+  - **Preserved Approved Architecture & Governance**:
+    - Preserved 3-EC2 architecture, Terraform ownership, Ansible bootstrap/orchestration, Puppet steady-state management, Docker execution, Jenkins CI/CD, NGINX reverse proxy, Nagios Core / NRPE monitoring, and explicit approval boundaries (Boundary A vs. Boundary B).
+    - Zero modifications to Terraform, Ansible, Puppet, application code, or infrastructure configurations.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `ansible-playbook --syntax-check` on all 7 playbooks: 0 errors, 0 warnings across both authoritative operational playbooks and diagnostic runners.
+    - `terraform fmt -check` across all modules: Clean (exit code 0).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI calls, zero Terraform remote operations (`init`, `plan`, `apply`, `destroy`), zero EC2 provisioning, zero SSH connections, zero remote Ansible execution, zero live CA signing, and zero Git commits/pushes.
+- **Outcome**: Phase 4 documentation fully closed and aligned; Phase 5A local implementation sequence formulated.
+
+---
+
+## 2026-11-24: Phase 4/5A — Final Technical Verification Before Phase 4 Closure & Phase 5A
+
+- **Task**: Investigate prior failed tool action, verify Ubuntu 24.04 package metadata and dependencies for Phase 5A, verify Puppet Agent ownership transition sequence, strengthen Phase 5A validation design, and perform final documentation and Git inspection.
+- **Objective**: Ensure complete transparency on execution events, eliminate invalid package assumptions before Phase 5A authoring, formalize the 4-step Puppet Agent ownership lifecycle, establish a 6-tier local validation design, and inspect repository status under Approval Boundary A.
+- **Actions Completed**:
+  - **Investigated Failed Tool Execution**:
+    - Identified exact failed action: `edit_file` on `project_docs/WORK_LOG.md` during batch execution at step 2836 (error logged at step 2840).
+    - Failure cause: `Target` omitted the intermediate header line `  - **Static & Syntax Validation**:`. The tool safely rejected the edit without modifying the file.
+    - Resolution: Immediately corrected in step 2843 with full context matching; edit succeeded. Zero impact on validation results (`git diff --check`, `terraform fmt -check`, and `ansible-playbook --syntax-check` all passed cleanly).
+  - **Verified Ubuntu 24.04 Package Dependencies**:
+    - Verified against local Ubuntu 24.04 package repository:
+      - `nagios4` (4.4.6) metapackage pulling `nagios4-core`, `nagios4-cgi`, `nagios4-common` (systemd unit: `nagios4.service`).
+      - `nagios-nrpe-server` (4.1.0) with systemd unit: `nagios-nrpe-server.service` (not `nrpe.service`).
+      - `monitoring-plugins-basic` (2.3.5) providing plugin executables under `/usr/lib/nagios/plugins/` (`check_disk`, `check_load`, `check_procs`, `check_http`, `check_tcp`).
+      - `apache2` (2.4.58) and `apache2-utils` (providing `htpasswd`).
+      - **Authentication module finding**: Verified that `libapache2-mod-auth-basic` does NOT exist in Ubuntu 24.04. Apache 2.4 incorporates basic authentication natively via built-in modules (`mod_auth_basic`, `mod_authn_file`).
+  - **Codified Puppet Agent Ownership Transition Sequence**:
+    - Codified 4-step transition sequence in `project_docs/IMPLEMENTATION_PLAN.md`: (1) Ansible bootstrap with service gated off, (2) Ansible supervised CA enrollment & initial catalog execution, (3) Puppet `common` module assuming steady-state desired-state ownership of `puppet.conf` and `puppet.service`, (4) Ansible permanently relinquishing management.
+  - **Strengthened Phase 5A Validation Design**:
+    - Defined 6-tier local testing design: (1) Manifest syntax validation, (2) Style & linting (`puppet-lint`), (3) Catalog compilation testing (mock facts), (4) Node-specific resource targeting, (5) Dependency ordering (DAG / cycle detection), (6) Idempotency testing.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: 7/7 playbooks clean across 2 authoritative operational playbooks and 5 diagnostic runners.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero SSH connections, zero live Puppet CA operations, and zero Git commits or pushes.
+- **Outcome**: Technical verifications completed, Phase 5A plan strengthened with verified package names and validation tiers, ready for authorization.
+
+---
+
+## 2026-11-24: Phase 4 Correction — Ansible-to-Puppet Ownership Handover & Repeated site.yml Execution Resolution
+
+- **Task**: Investigate operational ownership conflict between Phase 4 bootstrap defaults and post-enrollment Puppet Agent steady-state desired state during repeated `site.yml` executions; evaluate architectural approaches; implement safest minimal lifecycle-aware service guard; strengthen idempotency testing definitions; update canonical documentation; and expand regression test suite.
+- **Objective**: Ensure that re-running canonical master playbook `site.yml` after enrollment/handover does not stop or disable the Puppet Agent daemon, preserve Phase 4 safety gating defaults for pre-enrollment nodes, and maintain strict boundary separation between Ansible bootstrap and Puppet continuous desired-state enforcement under Approval Boundary A.
+- **Actions Completed**:
+  - **Investigated Operational Ownership Conflict**:
+    - Identified root cause: `ansible/roles/puppet_agent/tasks/service.yml` previously applied `state: stopped` and `enabled: false` unconditionally from role defaults. If `site.yml` was executed post-enrollment, Ansible would force the active agent back to stopped/disabled, conflicting with Puppet's steady-state desired state (`ensure => running, enable => true`).
+  - **Evaluated Architectural Alternatives**:
+    - *Alternative A (External CLI Variable)*: Passing `-e puppet_agent_service_state=started` or `-e puppet_skip_service=true`. Rejected: error-prone, violates declarative idempotency, and accidental omission stops active agents.
+    - *Alternative B (Playbook Bifurcation)*: Splitting `site.yml` into bootstrap vs. maintenance variants. Rejected: violates single-master playbook architectural requirement and breaks automation interfaces.
+    - *Alternative C (Lifecycle-Aware Node-State Guard — Chosen)*: In `service.yml`, stat check verifies whether a valid signed certificate exists at `{{ puppet_ssl_dir }}/certs/{{ puppet_agent_certname }}.pem`. Pre-enrollment nodes enforce `stopped`/`disabled` defaults; enrolled nodes skip service enforcement with an explicit skip notice, preserving handover. Includes `puppet_agent_force_bootstrap: true` escape hatch for operator recovery.
+  - **Implemented Lifecycle-Aware Service Guard**:
+    - Updated `ansible/roles/puppet_agent/tasks/service.yml` with certificate existence check (`puppet_agent_is_enrolled`).
+    - Gated systemd service task on `not puppet_agent_is_enrolled or puppet_agent_force_bootstrap`.
+    - Added debug skip notification task when enrolled.
+    - Added `puppet_agent_force_bootstrap: false` default variable to `ansible/roles/puppet_agent/defaults/main.yml`.
+  - **Strengthened Idempotency & Validation Hierarchy**:
+    - Updated Phase 5A documentation in `IMPLEMENTATION_PLAN.md` to distinguish 4 explicit testing levels: (1) Static fixture-based idempotency tests, (2) Puppet catalog compilation tests, (3) Actual local catalog application (exit code 2), and (4) Repeated catalog application demonstrating zero unintended changes (exit code 0).
+    - Enforced policy that true idempotency is claimed strictly upon verified Level 4 execution.
+  - **Expanded & Executed Regression Test Suite**:
+    - Added 9 new dedicated test assertions to `ansible/tests/test_puppet_agent_role.sh` (tests 38–46) covering `force_bootstrap` default, certificate detection, pre-enrollment enforcement, post-enrollment skipping, force override, stopped/disabled default preservation, handover activation compatibility, and handler guard stability.
+    - Total test count for Checkpoint 4.4 expanded from 37 to 46 (46/46 PASS).
+    - Full Phase 4 regression test suite executed across all 8 suites: **200/200 checks passing (100% pass rate)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: All 7 playbooks clean (2 authoritative operational playbooks, 5 diagnostic role runners).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, and zero Git commits or pushes.
+- **Outcome**: Ansible-to-Puppet ownership handover conflict resolved cleanly with lifecycle guard; 200/200 regression tests passing; Phase 4 ready for final closure.

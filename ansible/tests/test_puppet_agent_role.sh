@@ -23,7 +23,7 @@ TEST_TMP="$(mktemp -d /tmp/test_puppet_agent_audit.XXXXXX)"
 trap 'rm -rf "${TEST_TMP}"' EXIT
 
 PASSED_COUNT=0
-TOTAL_COUNT=37
+TOTAL_COUNT=46
 
 echo "=============================================================================="
 echo "Running Isolated Fixture Test Suite: Checkpoint 4.4 (Puppet Agent Role)"
@@ -32,7 +32,7 @@ echo "==========================================================================
 # ------------------------------------------------------------------------------
 # 1. Target OS Compatibility Validation
 # ------------------------------------------------------------------------------
-echo -n "[Test 1/37] Target OS compatibility validation (Ubuntu 24.04 Noble)... "
+echo -n "[Test 1/46] Target OS compatibility validation (Ubuntu 24.04 Noble)... "
 python3 -c "
 def check_os(distro, version):
     return distro == 'Ubuntu' and version == '24.04'
@@ -47,7 +47,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 2. Puppet 8 Release Repository Package URL Verification
 # ------------------------------------------------------------------------------
-echo -n "[Test 2/37] Puppet 8 release repository package URL reachability... "
+echo -n "[Test 2/46] Puppet 8 release repository package URL reachability... "
 RELEASE_URL="https://apt.puppet.com/puppet8-release-noble.deb"
 HTTP_CODE="$(curl -s -o /dev/null -w "%{http_code}" -I "${RELEASE_URL}")"
 if [[ "${HTTP_CODE}" == "200" ]]; then
@@ -61,7 +61,7 @@ fi
 # ------------------------------------------------------------------------------
 # 3. Vendor Package Candidate Detection
 # ------------------------------------------------------------------------------
-echo -n "[Test 3/37] Vendor package candidate detection logic (apt.puppet.com)... "
+echo -n "[Test 3/46] Vendor package candidate detection logic (apt.puppet.com)... "
 python3 -c "
 # Validate policy check logic: vendor repository must be verified
 sample_policy = '''
@@ -82,7 +82,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 4. Distro Package Rejection via APT Priority Pinning
 # ------------------------------------------------------------------------------
-echo -n "[Test 4/37] Distro package rejection via APT priority pinning (900 > 500)... "
+echo -n "[Test 4/46] Distro package rejection via APT priority pinning (900 > 500)... "
 python3 -c "
 pref_content = '''Package: puppet-agent puppet-tools
 Pin: origin apt.puppet.com
@@ -100,7 +100,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 5. Executable Path Verification (/opt/puppetlabs/bin/puppet)
 # ------------------------------------------------------------------------------
-echo -n "[Test 5/37] Executable path verification (/opt/puppetlabs/bin/puppet)... "
+echo -n "[Test 5/46] Executable path verification (/opt/puppetlabs/bin/puppet)... "
 python3 -c "
 vendor_bin = '/opt/puppetlabs/bin/puppet'
 distro_bin = '/usr/bin/puppet'
@@ -114,7 +114,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 6. Application Node Configuration (app-server)
 # ------------------------------------------------------------------------------
-echo -n "[Test 6/37] Application node configuration receives certname app-server... "
+echo -n "[Test 6/46] Application node configuration receives certname app-server... "
 APP_CONF="${TEST_TMP}/puppet_app.conf"
 python3 -c "
 import configparser
@@ -139,7 +139,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 7. CI/CD Node Configuration (cicd-server)
 # ------------------------------------------------------------------------------
-echo -n "[Test 7/37] CI/CD node configuration receives certname cicd-server... "
+echo -n "[Test 7/46] CI/CD node configuration receives certname cicd-server... "
 CICD_CONF="${TEST_TMP}/puppet_cicd.conf"
 python3 -c "
 import configparser
@@ -164,7 +164,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 8. Server Hostname Configuration (puppet-server)
 # ------------------------------------------------------------------------------
-echo -n "[Test 8/37] Both nodes configure server = puppet-server... "
+echo -n "[Test 8/46] Both nodes configure server = puppet-server... "
 python3 -c "
 import configparser
 for path in ['${APP_CONF}', '${CICD_CONF}']:
@@ -178,7 +178,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 9. Catalog Run Interval Configuration (30m)
 # ------------------------------------------------------------------------------
-echo -n "[Test 9/37] Both nodes configure runinterval = 30m... "
+echo -n "[Test 9/46] Both nodes configure runinterval = 30m... "
 python3 -c "
 import configparser
 for path in ['${APP_CONF}', '${CICD_CONF}']:
@@ -192,7 +192,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 10. Unrelated Configuration Preservation in puppet.conf
 # ------------------------------------------------------------------------------
-echo -n "[Test 10/37] Preservation of unrelated configuration options in puppet.conf... "
+echo -n "[Test 10/46] Preservation of unrelated configuration options in puppet.conf... "
 MOCK_EXISTING_CONF="${TEST_TMP}/puppet_preserve.conf"
 cat <<'EOF' > "${MOCK_EXISTING_CONF}"
 # Pre-existing custom configuration
@@ -230,7 +230,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 11. Private Server Address Resolution Preflight
 # ------------------------------------------------------------------------------
-echo -n "[Test 11/37] Private server address resolution (puppet-server matches private IP)... "
+echo -n "[Test 11/46] Private server address resolution (puppet-server matches private IP)... "
 python3 -c "
 # Validate resolution logic
 inventory_private_ip = '10.0.0.10'
@@ -245,7 +245,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 12. TCP 8140 Connectivity Success Scenario
 # ------------------------------------------------------------------------------
-echo -n "[Test 12/37] TCP 8140 connectivity preflight success scenario... "
+echo -n "[Test 12/46] TCP 8140 connectivity preflight success scenario... "
 python3 -c "
 import socket, threading, time
 
@@ -277,7 +277,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 13. TCP 8140 Connectivity Failure Handling with Actionable Diagnostic
 # ------------------------------------------------------------------------------
-echo -n "[Test 13/37] TCP 8140 connectivity failure produces actionable diagnostic... "
+echo -n "[Test 13/46] TCP 8140 connectivity failure produces actionable diagnostic... "
 python3 -c "
 import socket
 
@@ -304,7 +304,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 14. Missing Certificate State Permits CSR Submission
 # ------------------------------------------------------------------------------
-echo -n "[Test 14/37] Missing certificate permits controlled CSR submission... "
+echo -n "[Test 14/46] Missing certificate permits controlled CSR submission... "
 MOCK_SSL_FRESH="${TEST_TMP}/ssl_fresh"
 mkdir -p "${MOCK_SSL_FRESH}/certs" "${MOCK_SSL_FRESH}/private_keys" "${MOCK_SSL_FRESH}/certificate_requests"
 
@@ -326,7 +326,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 15. Existing Valid Certificate Preservation (Zero Regeneration)
 # ------------------------------------------------------------------------------
-echo -n "[Test 15/37] Existing valid certificate is preserved intact... "
+echo -n "[Test 15/46] Existing valid certificate is preserved intact... "
 MOCK_SSL_VALID="${TEST_TMP}/ssl_valid"
 mkdir -p "${MOCK_SSL_VALID}/certs" "${MOCK_SSL_VALID}/private_keys"
 
@@ -367,7 +367,7 @@ fi
 # ------------------------------------------------------------------------------
 # 16. Conflicting Certname Mismatch Fails Safely
 # ------------------------------------------------------------------------------
-echo -n "[Test 16/37] Conflicting certname fails safely without destructive reset... "
+echo -n "[Test 16/46] Conflicting certname fails safely without destructive reset... "
 MOCK_SSL_CONFLICT="${TEST_TMP}/ssl_conflict"
 mkdir -p "${MOCK_SSL_CONFLICT}/certs" "${MOCK_SSL_CONFLICT}/private_keys"
 
@@ -395,7 +395,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 17. Inconsistent SSL State Fails Safely (Missing Key / Corrupted Modulus)
 # ------------------------------------------------------------------------------
-echo -n "[Test 17/37] Inconsistent SSL state fails safely (missing key or modulus mismatch)... "
+echo -n "[Test 17/46] Inconsistent SSL state fails safely (missing key or modulus mismatch)... "
 MOCK_SSL_INCONSISTENT="${TEST_TMP}/ssl_inconsistent"
 mkdir -p "${MOCK_SSL_INCONSISTENT}/certs" "${MOCK_SSL_INCONSISTENT}/private_keys"
 
@@ -417,7 +417,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 18. CSR Identity Verification
 # ------------------------------------------------------------------------------
-echo -n "[Test 18/37] CSR identity verification (subject CN strictly matches certname)... "
+echo -n "[Test 18/46] CSR identity verification (subject CN strictly matches certname)... "
 MOCK_SSL_CSR="${TEST_TMP}/ssl_csr"
 mkdir -p "${MOCK_SSL_CSR}/certificate_requests" "${MOCK_SSL_CSR}/private_keys"
 
@@ -440,7 +440,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 19. Autosign Security Configuration Strictly Absent/Disabled
 # ------------------------------------------------------------------------------
-echo -n "[Test 19/37] Autosign configuration strictly absent/disabled on agents... "
+echo -n "[Test 19/46] Autosign configuration strictly absent/disabled on agents... "
 python3 -c "
 import configparser
 for path in ['${APP_CONF}', '${CICD_CONF}']:
@@ -454,7 +454,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 20. Zero CA Signing Commands Executed in Agent Role
 # ------------------------------------------------------------------------------
-echo -n "[Test 20/37] Zero CA signing commands in agent role (ca sign prohibited)... "
+echo -n "[Test 20/46] Zero CA signing commands in agent role (ca sign prohibited)... "
 python3 -c "
 import os, glob
 agent_tasks = glob.glob('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/*.yml')
@@ -471,7 +471,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 21. No Private Key Copied Between Agent Nodes
 # ------------------------------------------------------------------------------
-echo -n "[Test 21/37] Independent cryptographic identity (zero key copying between nodes)... "
+echo -n "[Test 21/46] Independent cryptographic identity (zero key copying between nodes)... "
 python3 -c "
 import os, glob
 agent_tasks = glob.glob('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/*.yml')
@@ -487,7 +487,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 22. No Destructive SSL Cleanup in Agent Tasks
 # ------------------------------------------------------------------------------
-echo -n "[Test 22/37] No destructive SSL cleanup in agent tasks (rm -rf ssl prohibited)... "
+echo -n "[Test 22/46] No destructive SSL cleanup in agent tasks (rm -rf ssl prohibited)... "
 python3 -c "
 import glob
 agent_tasks = glob.glob('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/*.yml')
@@ -503,7 +503,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 23. Service Defaults to Stopped and Disabled (Checkpoint 4.4 Invariant)
 # ------------------------------------------------------------------------------
-echo -n "[Test 23/37] Service defaults to stopped and disabled... "
+echo -n "[Test 23/46] Service defaults to stopped and disabled... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/defaults/main.yml') as f:
@@ -518,14 +518,15 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 24. Service Task Enforces Disabled and Stopped State During Checkpoint 4.4
 # ------------------------------------------------------------------------------
-echo -n "[Test 24/37] Service task enforces disabled and stopped state during Checkpoint 4.4... "
+echo -n "[Test 24/46] Service task enforces disabled and stopped state during Checkpoint 4.4... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/service.yml') as f:
     tasks = yaml.safe_load(f)
-task = tasks[0]
-assert 'systemd' in task or 'ansible.builtin.systemd' in task
-mod = task.get('systemd', task.get('ansible.builtin.systemd'))
+# Find the systemd service management task (may not be first due to lifecycle guard)
+svc_tasks = [t for t in tasks if 'ansible.builtin.systemd' in t]
+assert len(svc_tasks) >= 1, 'Must have at least one systemd task'
+mod = svc_tasks[0]['ansible.builtin.systemd']
 assert mod['name'] == \"{{ puppet_agent_service_name | default('puppet') }}\"
 assert mod['enabled'] == \"{{ puppet_agent_service_enabled | default(false) }}\"
 assert mod['state'] == \"{{ puppet_agent_service_state | default('stopped') }}\"
@@ -536,7 +537,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 25. Configuration Handlers Guarded Against Starting or Restarting Gated Service
 # ------------------------------------------------------------------------------
-echo -n "[Test 25/37] Configuration handlers guarded against starting or restarting gated service... "
+echo -n "[Test 25/46] Configuration handlers guarded against starting or restarting gated service... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/handlers/main.yml') as f:
@@ -554,7 +555,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 26. Handler Execution Cannot Bypass Service Gate (Truth Table Evaluation)
 # ------------------------------------------------------------------------------
-echo -n "[Test 26/37] Handler execution cannot bypass service gate across all states... "
+echo -n "[Test 26/46] Handler execution cannot bypass service gate across all states... "
 python3 -c "
 # Simulate handler conditions across all 4 lifecycle states:
 def handler_condition(state, enabled):
@@ -580,7 +581,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 27. Explicit Overrides Supported for Checkpoint 4.5 Handover
 # ------------------------------------------------------------------------------
-echo -n "[Test 27/37] Explicit overrides supported for Checkpoint 4.5 handover... "
+echo -n "[Test 27/46] Explicit overrides supported for Checkpoint 4.5 handover... "
 python3 -c "
 import configparser
 
@@ -599,7 +600,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 28. Preflight Strict Mode Defaults to Requiring Reachable Server (Correction B)
 # ------------------------------------------------------------------------------
-echo -n "[Test 28/37] Preflight strict mode defaults to requiring reachable server... "
+echo -n "[Test 28/46] Preflight strict mode defaults to requiring reachable server... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/defaults/main.yml') as f:
@@ -627,7 +628,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 29. Server Reachable + Successful Remote CSR Submission Branch
 # ------------------------------------------------------------------------------
-echo -n "[Test 29/37] Server reachable + successful CSR submission branch... "
+echo -n "[Test 29/46] Server reachable + successful CSR submission branch... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -656,7 +657,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 30. Real Remote Submission Failures Are Not Suppressed
 # ------------------------------------------------------------------------------
-echo -n "[Test 30/37] Real remote submission failures are not suppressed (no failed_when: false)... "
+echo -n "[Test 30/46] Real remote submission failures are not suppressed (no failed_when: false)... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -672,7 +673,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 31. Server Unreachable in Strict Mode Fails Fast
 # ------------------------------------------------------------------------------
-echo -n "[Test 31/37] Server unreachable in strict mode fails fast in CSR task... "
+echo -n "[Test 31/46] Server unreachable in strict mode fails fast in CSR task... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -691,7 +692,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 32. Server Unreachable in Explicit Offline Mode Generates Local CSR Only
 # ------------------------------------------------------------------------------
-echo -n "[Test 32/37] Server unreachable in offline mode generates local CSR only... "
+echo -n "[Test 32/46] Server unreachable in offline mode generates local CSR only... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -716,7 +717,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 33. Offline Generation Distinguished and Never Claims Pending CA Approval
 # ------------------------------------------------------------------------------
-echo -n "[Test 33/37] Offline CSR generation never claims pending CA approval... "
+echo -n "[Test 33/46] Offline CSR generation never claims pending CA approval... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -734,7 +735,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 34. Remote Submission Reports Pending Approval Only on Verified rc==0
 # ------------------------------------------------------------------------------
-echo -n "[Test 34/37] Remote submission reports pending approval only on verified rc=0... "
+echo -n "[Test 34/46] Remote submission reports pending approval only on verified rc=0... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -754,7 +755,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 35. Pre-existing CSR on Disk Preserved and Not Resubmitted
 # ------------------------------------------------------------------------------
-echo -n "[Test 35/37] Pre-existing CSR on disk is preserved and not resubmitted... "
+echo -n "[Test 35/46] Pre-existing CSR on disk is preserved and not resubmitted... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -776,7 +777,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 36. Existing Valid Certificate Preserved and All CSR Actions Skipped
 # ------------------------------------------------------------------------------
-echo -n "[Test 36/37] Existing valid certificate preserves state and skips all CSR actions... "
+echo -n "[Test 36/46] Existing valid certificate preserves state and skips all CSR actions... "
 python3 -c "
 import yaml
 with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
@@ -799,10 +800,187 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 37. Ansible Playbook Syntax and YAML Validation
 # ------------------------------------------------------------------------------
-echo -n "[Test 37/37] Ansible playbook syntax and YAML validation... "
+echo -n "[Test 37/46] Ansible playbook syntax and YAML validation... "
 ansible-playbook -i "${ANSIBLE_DIR}/inventory/hosts.ini" --syntax-check "${ANSIBLE_DIR}/playbooks/test-puppet-agent.yml" >/dev/null 2>&1
 ansible-playbook -i "${ANSIBLE_DIR}/inventory/hosts.ini" --syntax-check "${ANSIBLE_DIR}/playbooks/site.yml" >/dev/null 2>&1
 echo "PASS (all playbooks and imported roles passed ansible-playbook --syntax-check)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ==============================================================================
+# Lifecycle-Aware Service Guard Tests (Post-Enrollment Ownership Protection)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 38. puppet_agent_force_bootstrap default is false
+# ------------------------------------------------------------------------------
+echo -n "[Test 38/46] puppet_agent_force_bootstrap defaults to false... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/defaults/main.yml') as f:
+    defaults = yaml.safe_load(f)
+
+assert 'puppet_agent_force_bootstrap' in defaults, 'puppet_agent_force_bootstrap must be defined in defaults'
+assert defaults['puppet_agent_force_bootstrap'] is False, 'puppet_agent_force_bootstrap must default to false'
+"
+echo "PASS (puppet_agent_force_bootstrap defaults to false)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 39. service.yml checks for signed certificate to detect enrollment state
+# ------------------------------------------------------------------------------
+echo -n "[Test 39/46] service.yml detects enrollment state from signed certificate... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/service.yml') as f:
+    tasks = yaml.safe_load(f)
+
+task_names = [t.get('name', '') for t in tasks]
+
+# Must have a stat check for the certificate
+stat_tasks = [t for t in tasks if 'ansible.builtin.stat' in str(t) and 'certs' in str(t.get('ansible.builtin.stat', {}).get('path', ''))]
+assert len(stat_tasks) >= 1, 'service.yml must include stat check for signed certificate'
+
+# Must set puppet_agent_is_enrolled fact
+fact_tasks = [t for t in tasks if 'puppet_agent_is_enrolled' in str(t)]
+assert len(fact_tasks) >= 1, 'service.yml must set puppet_agent_is_enrolled fact'
+"
+echo "PASS (service.yml checks signed certificate to determine enrollment state)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 40. Pre-enrollment: service enforcement applies when cert absent
+# ------------------------------------------------------------------------------
+echo -n "[Test 40/46] Pre-enrollment: service enforcement applies when no certificate... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/service.yml') as f:
+    tasks = yaml.safe_load(f)
+
+# Find the systemd service management task
+svc_tasks = [t for t in tasks if 'ansible.builtin.systemd' in t]
+assert len(svc_tasks) >= 1, 'Must have systemd service task'
+
+svc_task = svc_tasks[0]
+when_cond = svc_task.get('when', '')
+when_str = str(when_cond)
+
+# The condition must check that the agent is NOT enrolled
+assert 'puppet_agent_is_enrolled' in when_str, 'Service task must gate on enrollment state'
+assert 'not' in when_str.lower() or '!' in when_str, 'Service task must only apply when NOT enrolled'
+"
+echo "PASS (service enforcement applies only when agent is not enrolled)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 41. Post-enrollment: service enforcement is skipped (ownership preserved)
+# ------------------------------------------------------------------------------
+echo -n "[Test 41/46] Post-enrollment: skip message reports ownership transfer... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/service.yml') as f:
+    tasks = yaml.safe_load(f)
+
+# Find the debug skip-message task
+debug_tasks = [t for t in tasks if 'ansible.builtin.debug' in t and 'handover' in str(t.get('ansible.builtin.debug', {}).get('msg', '')).lower()]
+assert len(debug_tasks) >= 1, 'Must have debug task reporting ownership transfer skip'
+
+skip_task = debug_tasks[0]
+when_cond = str(skip_task.get('when', ''))
+assert 'puppet_agent_is_enrolled' in when_cond, 'Skip message must require enrolled state'
+"
+echo "PASS (post-enrollment skip message correctly reports ownership transfer)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 42. puppet_agent_force_bootstrap overrides the enrollment guard
+# ------------------------------------------------------------------------------
+echo -n "[Test 42/46] puppet_agent_force_bootstrap overrides enrollment guard... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/service.yml') as f:
+    tasks = yaml.safe_load(f)
+
+# The systemd task must include force_bootstrap override
+svc_tasks = [t for t in tasks if 'ansible.builtin.systemd' in t]
+assert len(svc_tasks) >= 1
+svc_when = str(svc_tasks[0].get('when', ''))
+assert 'puppet_agent_force_bootstrap' in svc_when, 'Service task must include force_bootstrap override condition'
+"
+echo "PASS (force_bootstrap override correctly bypasses enrollment guard)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 43. service.yml preserves stopped/disabled defaults when not enrolled
+# ------------------------------------------------------------------------------
+echo -n "[Test 43/46] Bootstrap defaults preserved: stopped and disabled... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/defaults/main.yml') as f:
+    defaults = yaml.safe_load(f)
+
+assert defaults['puppet_agent_service_state'] == 'stopped', 'Default service state must be stopped'
+assert defaults['puppet_agent_service_enabled'] is False, 'Default service enabled must be false'
+
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/service.yml') as f:
+    tasks = yaml.safe_load(f)
+
+svc_tasks = [t for t in tasks if 'ansible.builtin.systemd' in t]
+mod = svc_tasks[0]['ansible.builtin.systemd']
+# The service task must reference the default variables
+assert \"puppet_agent_service_enabled\" in str(mod['enabled']), 'Must reference puppet_agent_service_enabled'
+assert \"puppet_agent_service_state\" in str(mod['state']), 'Must reference puppet_agent_service_state'
+"
+echo "PASS (bootstrap defaults: stopped/disabled preserved for pre-enrollment)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 44. handover.yml enrollment activation is unaffected by guard
+# ------------------------------------------------------------------------------
+echo -n "[Test 44/46] Enrollment handover.yml still activates service on rc in [0,2]... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/handover.yml') as f:
+    tasks = yaml.safe_load(f)
+
+# Step 8 must still explicitly enable and start the service
+svc_tasks = [t for t in tasks if 'ansible.builtin.systemd' in t and t.get('ansible.builtin.systemd', {}).get('enabled') is True]
+assert len(svc_tasks) >= 1, 'handover.yml must still contain explicit service activation task'
+svc_task = svc_tasks[0]
+assert svc_task['ansible.builtin.systemd']['state'] == 'started', 'Must start the service'
+assert svc_task['ansible.builtin.systemd']['enabled'] is True, 'Must enable the service'
+
+# Must be guarded by catalog exit code
+when_str = str(svc_task.get('when', ''))
+assert '[0, 2]' in when_str or 'in [0, 2]' in when_str, 'Must be guarded by catalog exit code [0, 2]'
+"
+echo "PASS (enrollment handover still explicitly activates service on clean catalog exit)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 45. Handler restart guard is unmodified
+# ------------------------------------------------------------------------------
+echo -n "[Test 45/46] Handler restart guard remains functional... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/handlers/main.yml') as f:
+    handlers = yaml.safe_load(f)
+
+handler = handlers[0]
+conds = handler.get('when', [])
+assert any(\"puppet_agent_service_state | default('stopped') == 'started'\" in str(c) for c in conds), 'Handler must guard on service state'
+assert any(\"puppet_agent_service_enabled | default(false) | bool\" in str(c) for c in conds), 'Handler must guard on service enabled'
+"
+echo "PASS (handler restart guard unmodified)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 46. Ansible playbook syntax re-validation post lifecycle guard
+# ------------------------------------------------------------------------------
+echo -n "[Test 46/46] Post-modification playbook syntax re-validation... "
+ansible-playbook -i "${ANSIBLE_DIR}/inventory/hosts.ini" --syntax-check "${ANSIBLE_DIR}/playbooks/test-puppet-agent.yml" >/dev/null 2>&1
+ansible-playbook -i "${ANSIBLE_DIR}/inventory/hosts.ini" --syntax-check "${ANSIBLE_DIR}/playbooks/site.yml" >/dev/null 2>&1
+ansible-playbook -i "${ANSIBLE_DIR}/inventory/hosts.ini" --syntax-check "${ANSIBLE_DIR}/playbooks/enroll-puppet-agents.yml" >/dev/null 2>&1
+echo "PASS (all three playbooks pass syntax-check with lifecycle guard in place)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo "=============================================================================="

@@ -132,11 +132,12 @@ flowchart TD
      - Service management task enables and starts `puppetserver`, verifies TCP port 8140 availability via `wait_for`, and checks CA health via `puppetserver ca status`.
      - Verified locally via isolated fixture test suite `ansible/tests/test_puppet_server_role.sh` (20/20 PASS).
   4. **Checkpoint 4.4: Puppet Agent Installation (EC2 2 & EC2 3)**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (37/37 Tests Passed; Service Lifecycle Corrected)**. Live host application pending Boundary B.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (46/46 Tests Passed; Service Lifecycle Corrected & Handover Protected)**. Live host application pending Boundary B.
      - **Corrective History & Audit Iteration**:
        - *Initial Implementation (`a6289d8`)*: Configured agent installation, certname configuration, and CSR submission, but left service daemon active (`state: started`, `enabled: true`), defaulted reachability to non-strict (`require_server_reachable: false`), and suppressed CSR CLI failure (`failed_when: false`), causing misleading "pending CA approval" notices on unreachable servers and risking background catalog application races.
        - *Audit Follow-up (`61f0bb8`)*: Enforced strict reachability (`require_server_reachable: true` by default), distinguished remote submission (`puppet ssl submit_request`, failing fast on `rc != 0`) from offline generation (`puppet ssl generate_request`), and stopped the daemon (`state: stopped`).
        - *Final Service Lifecycle Correction*: Independent review noted that a systemd-enabled service (`enabled: true`) can start automatically after a host reboot even if stopped, violating lifecycle gating. Checkpoint 4.4 defaults were updated to both `puppet_agent_service_state: "stopped"` and `puppet_agent_service_enabled: false`. Handlers strictly require both `state == 'started'` and `enabled == true`. The service remains disabled and stopped throughout Checkpoint 4.4.
+       - *Lifecycle-Aware Handover Protection*: To prevent repeated executions of `site.yml` from stopping or disabling the agent post-handover, `service.yml` implements a certificate-state guard. If a valid signed certificate is present, service enforcement is skipped to preserve Puppet's steady-state ownership, with an explicit override `puppet_agent_force_bootstrap: true` for manual operator recovery.
      - Implemented dedicated Ansible role `ansible/roles/puppet_agent/` with modular task structure: `preflight.yml`, `repository.yml`, `install.yml`, `config.yml`, `csr.yml`, `service.yml`, `defaults/main.yml`, and `handlers/main.yml`.
      - Preflight task validates target OS (`Ubuntu 24.04 LTS Noble`), inventory targeting (`app-server` on EC2 2, `cicd-server` on EC2 3), resolves `puppet-server` against expected private IP from inventory, and tests TCP 8140 reachability with actionable diagnostics. Strict mode defaults to `puppet_agent_require_server_reachable: true` (failing fast in live runs).
      - Repository task installs official `puppet8-release-noble.deb` and enforces APT priority pinning (`/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` @ 900 > 500) to reject Ubuntu Universe's distro package. No Jammy fallback is needed or used (native Noble `puppet-agent` package published by vendor).
@@ -149,8 +150,8 @@ flowchart TD
        - Generates local CSR via `/opt/puppetlabs/bin/puppet ssl generate_request` in explicit offline mode without network transmission.
        - Verifies that local CSR exists and subject CN strictly matches expected certname (`app-server` or `cicd-server`).
        - Enforces strict security boundaries: zero autosigning, zero CA signing (signing belongs exclusively to Checkpoint 4.5), zero CA private key copying, zero key sharing between nodes, and zero destructive SSL removal.
-     - Service task manages `puppet` systemd unit as both disabled and stopped (`enabled: false`, `state: "stopped"`), with handler guard requiring both `state == 'started'` and `enabled == true`.
-     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (37/37 PASS). All 5 project test suites pass (86/86 checks).
+     - Service task manages `puppet` systemd unit as both disabled and stopped (`enabled: false`, `state: "stopped"`), with handler guard requiring both `state == 'started'` and `enabled == true`, protected by a post-enrollment certificate state guard.
+     - Created test playbook `ansible/playbooks/test-puppet-agent.yml` and comprehensive fixture test suite `ansible/tests/test_puppet_agent_role.sh` (46/46 PASS). All project test suites pass (200/200 checks).
   5. **Checkpoint 4.5: Puppet CA Verification & Strict CSR Enrollment**:
      - *Status*: **Complete at Local Implementation & Fixture Validation Level (45/45 Tests Passed; 9-Step Handover Orchestrated)**. Live host application pending Boundary B.
      - Implemented complete 9-step enrollment and handover workflow across `ansible/roles/puppet_server/`, `ansible/roles/puppet_agent/`, and `ansible/playbooks/enroll-puppet-agents.yml`:
@@ -216,7 +217,7 @@ flowchart TD
      - Authored isolated fixture test suite `ansible/tests/test_docker_role.sh` (30/30 PASS).
      - Full project regression test baseline: 161/161 checks passing across all 7 test suites.
   7. **Checkpoint 4.7: NGINX Bootstrap Baseline (EC2 2)**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (30/30 Tests Passed; 191/191 Full Suite Regression)**. Live host application pending Boundary B.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (30/30 Tests Passed; 200/200 Full Suite Regression)**. Live host application pending Boundary B.
      - Implemented modular, idempotent, and secure Ansible role `ansible/roles/nginx/`:
        - **Targeting & Preflight (`tasks/preflight.yml`)**: Enforces strict dual-condition targeting: requires both canonical inventory hostname (`app-server` / EC2 2) and inventory group (`application`) via disjunctive fail logic (`(inventory_hostname != target_host) or (target_group not in group_names)`), halting immediately if executed against `puppet-server` or `cicd-server`. Validates Ubuntu 24.04 LTS (Noble) target and supported 64-bit CPU architecture (`amd64`/`x86_64`/`arm64`).
        - **Package Installation (`tasks/install.yml`)**: Declares official Ubuntu distribution package `nginx` with `state: present` and bounded cache validity (`cache_valid_time: 3600`) via `ansible.builtin.apt`. Strictly excludes arbitrary external repositories or version pinning.
@@ -225,12 +226,12 @@ flowchart TD
        - **Verification Tasks (`tasks/verify.yml`)**: Validates `/usr/sbin/nginx` binary existence, checks `nginx -v` version, executes `nginx -t` syntax test, and outputs summary diagnostics with `changed_when: false`.
      - Updated test playbook `ansible/playbooks/test-nginx.yml` targeting canonical `hosts: application` with `become: true`.
      - Authored comprehensive fixture test suite `ansible/tests/test_nginx_role.sh` (30/30 PASS), including reversion sensitivity checks confirming detection of defective OR-permitting logic.
-     - Full project regression test baseline: 191/191 checks passing across all 8 test suites.
+     - Full project regression test baseline: 200/200 checks passing across all 8 test suites.
    8. **Checkpoint 4.8: Phase 4 Local Consolidation & Boundary B Pre-flight Verification**:
-     - *Status*: **Complete at Local Implementation & Fixture Validation Level (191/191 Full Suite Regression, 7/7 Production Playbooks Syntax Clean, Terraform Format Clean)**. Ready for separately authorized Boundary B live deployment.
+     - *Status*: **Complete at Local Implementation & Fixture Validation Level (200/200 Full Suite Regression, 7/7 Playbooks Syntax Clean, Terraform Format Clean)**. Ready for separately authorized Boundary B live deployment.
      - Refactored master fleet orchestration playbook [`ansible/playbooks/site.yml`](file:///home/aditya-2274/Git-repo-analyzer/ansible/playbooks/site.yml) to execute modular roles across canonical inventory groups (`hosts: all` $\to$ `common`, `hosts: puppet_server` $\to$ `puppet_server`, `hosts: puppet_agents` $\to$ `puppet_agent`, `hosts: cicd` $\to$ `docker`, `hosts: application` $\to$ `nginx`), enforcing strict target isolation and eliminating legacy `webservers` warnings.
-     - Cleaned up obsolete untracked learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `app.conf.j2`, `demo.txt`), leaving exactly 7 production playbooks that all pass `ansible-playbook --syntax-check` with zero warnings.
-     - Verified all 8 Phase 4 regression test suites pass with 100% success (191/191 checks).
+     - Cleaned up obsolete untracked learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `app.conf.j2`, `demo.txt`), leaving exactly 7 playbooks (2 authoritative operational playbooks: `site.yml`, `enroll-puppet-agents.yml`; 5 diagnostic role runners: `test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) that all pass `ansible-playbook --syntax-check` with zero warnings.
+     - Verified all 8 Phase 4 regression test suites pass with 100% success (200/200 checks).
      - Verified Terraform configuration formatting with `terraform fmt -check` (clean, exit 0).
      - Authored comprehensive Boundary B deployment runbook and readiness checklist covering prerequisite verification, Terraform provisioning, dynamic inventory sync, host-key verification, Ansible bootstrap sequence, service verification, and teardown procedures.
 - **Completion Criteria:**
@@ -249,27 +250,44 @@ flowchart TD
 - **Prerequisites:** Phase 4 completion (Puppet agents communicating with Puppet Server).
 - **Subtasks:**
   1. **Puppet Environment Structure (`/etc/puppetlabs/code/environments/production/`)**:
-     - Set up `manifests/site.pp` and standard module paths (`modules/common`, `modules/monitoring`, `modules/nrpe`).
+     - Set up `manifests/site.pp` and standard module paths (`modules/common`, `modules/nagios`, `modules/nrpe`).
   2. **Foundational Node Configurations (`site.pp`)**:
-     - `node 'puppet-server'`: Manage base packages, Puppet Server service monitoring, and local firewall sanity.
-     - `node 'app-server'`: Manage base packages, monitoring prerequisites (compilation tools for Nagios plugins), and baseline directories.
-     - `node 'cicd-server'`: Manage base packages, Docker daemon service monitoring, and baseline directories.
-  3. **NRPE Daemon Deployment via Puppet**:
+     - `node 'puppet-server'`: Manage base packages, Puppet Server service monitoring, and `/etc/hosts` private DNS drift enforcement.
+     - `node 'app-server'`: Manage base packages, Nagios Core prerequisites (`apache2`, `apache2-utils`, `libgd3`), Apache loopback on `127.0.0.1:8080`, and baseline directories.
+     - `node 'cicd-server'`: Manage base packages, NRPE daemon, and baseline directories.
+  3. **Puppet Agent Ownership Transition Sequence**:
+     - **Step 1 (Ansible Bootstrap)**: Ansible installs `puppet-agent` (8.10.x), configures `puppet.conf` with certname and server, and enforces `puppet_agent_service_enabled: false` and `puppet_agent_service_state: stopped` (preventing premature connection).
+     - **Step 2 (Ansible Supervised Enrollment)**: Ansible verifies TCP 8140 reachability, submits agent CSRs, signs certificates on EC2 1 with strict allowlisting, executes initial catalog run (`puppet agent -t --detailed-exitcodes`), verifies exit codes 0 or 2, and only then enables and starts `puppet.service`.
+     - **Step 3 (Puppet Steady-State Ownership)**: In Phase 5A, Puppet's `common` module assumes exclusive steady-state desired-state ownership of `/etc/puppetlabs/puppet/puppet.conf` (`runinterval = 30m`) and `service { 'puppet': ensure => running, enable => true }`.
+     - **Step 4 (Ansible Handover)**: Ansible permanently relinquishes management of `puppet.conf` and `puppet.service`. Ansible owns zero agent configuration resources post-enrollment.
+  4. **NRPE Daemon Deployment via Puppet**:
      - Deploy Puppet module `nrpe` targeting EC2 1 and EC2 3.
-     - Install `nagios-nrpe-server` and `nagios-plugins`.
-     - Configure `/etc/nagios/nrpe.cfg`: restrict `allowed_hosts` strictly to `app-server` private IP (`<private-ip-2>`).
-     - Deploy base NRPE check definitions: `check_disk`, `check_load`, `check_procs`.
-     - Start and enable `nagios-nrpe-server` service; verify port 5666 responds to EC2 2.
-  4. **Nagios Core Prerequisites Deployment (EC2 2)**:
-     - Install Nagios build dependencies (`build-essential`, `libgd-dev`, `apache2`, `apache2-utils`).
-     - Configure Apache loopback virtual host binding strictly to `127.0.0.1:8080`.
-     - Configure HTTP Basic Authentication file (`/etc/nagios/htpasswd.users`) for `nagiosadmin`.
-  5. **Formalize Ansible Handover Boundary**:
-     - Tag baseline files as Puppet-managed (`# Managed by Puppet - Do not edit manually or with Ansible`).
+     - Install verified packages: `nagios-nrpe-server` (4.1.0) and `monitoring-plugins-basic` (2.3.5) providing plugin executables under `/usr/lib/nagios/plugins/`.
+     - Configure `/etc/nagios/nrpe.cfg`: restrict `allowed_hosts` strictly to `app-server` private IP.
+     - Deploy base NRPE check definitions pointing to verified executables: `/usr/lib/nagios/plugins/check_disk`, `/usr/lib/nagios/plugins/check_load`, `/usr/lib/nagios/plugins/check_procs`.
+     - Start and enable systemd service `nagios-nrpe-server.service` (verified service name in Ubuntu 24.04).
+  5. **Nagios Core Prerequisites Deployment (EC2 2)**:
+     - Install verified packages: `apache2`, `apache2-utils`, `monitoring-plugins-basic`.
+     - Built-in Apache Authentication: Use Apache's built-in `mod_auth_basic` and `mod_authn_file` modules provided by `apache2` (the legacy package `libapache2-mod-auth-basic` does not exist in Ubuntu 24.04).
+     - Configure Apache loopback virtual host binding strictly to `127.0.0.1:8080` (accessible exclusively via operator SSH tunnel `ssh -L 8080:127.0.0.1:8080`).
+     - Configure HTTP Basic Authentication file (`/etc/nagios/htpasswd.users`) using `htpasswd` for `nagiosadmin`.
+  6. **Six-Tier Validation & Idempotency Testing Design (Local Testing Under Approval Boundary A)**:
+     - *Tier 1: Manifest Syntax Validation*: `puppet parser validate` across `site.pp` and all manifests (grammar/syntax checks only; does not verify catalog compilation).
+     - *Tier 2: Lint Validation*: `puppet-lint --fail-on-warnings` validating Puppet style guidelines and indentation.
+     - *Tier 3: Catalog Compilation Validation*: Automated mock catalog compilation verifying variable resolution, resource uniqueness, and parameter types without syntax-alone assumptions.
+     - *Tier 4: Node-Specific Resource Targeting*: Distinct validation ensuring `puppet-server`, `app-server`, and `cicd-server` node blocks compile only their authorized modules.
+     - *Tier 5: Dependency Ordering (DAG & Cycle Detection)*: Validation of `Package -> File ~> Service` chains and relationship metaparameters (`before`, `require`, `notify`, `subscribe`) to guarantee zero circular dependency cycles.
+     - *Tier 6: Idempotency Testing & Execution Hierarchy*:
+       - **Level 1 — Static Fixture-Based Idempotency Tests**: Code analysis verifying declarative resource states (`ensure => present`, `ensure => running`) and absence of unconditioned `exec` resources.
+       - **Level 2 — Puppet Catalog Compilation Tests**: AST and dependency graph verification with mock node facts, proving the catalog compiles deterministically.
+       - **Level 3 — Actual Local Catalog Application**: Applying compiled catalogs against local test fixtures/targets and verifying detailed exit code `2` (clean changes successfully applied).
+       - **Level 4 — Repeated Catalog Application (Demonstrated Idempotency)**: Executing a consecutive catalog application against the converged state and verifying detailed exit code `0` (clean, zero changes applied, zero failures).
+       > [!IMPORTANT]
+       > **Strict Idempotency Claim Policy**: Actual convergence or idempotency must never be claimed merely because parser validation passes or catalogs compile. True idempotency is only claimed after Level 4 repeated catalog execution has been performed and verified with exit code 0.
 - **Completion Criteria:**
   - Puppet catalog compiles cleanly and enforces base desired state on all nodes.
-  - NRPE daemon active on EC2 1 and EC2 3, strictly accepting queries from EC2 2.
-  - Apache loopback active on EC2 2 on port 8080 with basic authentication configured.
+  - NRPE daemon configuration verified for EC2 1 and EC2 3, strictly accepting queries from EC2 2.
+  - Apache loopback configured for EC2 2 on port 8080 with basic authentication.
   - Zero application service or reverse proxy configuration deployed yet (deferred to Phase 5B).
 
 ---
@@ -567,21 +585,204 @@ Before executing `terraform apply` or provisioning live AWS resources under Boun
     - Estimated Net Remaining Credit Balance: **$107.98** (reflecting $114.68 active balance minus $6.70 in estimated unbilled month-to-date usage from Cost Explorer).
     - Any billing projections or usage charges beyond this explicit snapshot are marked as unverified estimates.
   - Expiration dates verified as separate and distinct timelines.
-- [ ] **6. Terraform Plan Inspection**: `terraform plan` output thoroughly reviewed to confirm exactly 3 EC2 instances, 3 security groups, and 50 GB total gp3 storage are created. Zero unintended resource replacements.
+- [ ] **6. Terraform Planning & Five-Stage Provisioning Approval**: Follow the structured five-stage provisioning workflow codified in Stage 1 of the Boundary B runbook: (1) Identity verification, (2) terraform init / validate, (3) terraform plan -var="allowed_ssh_cidr=$(curl -s https://checkip.amazonaws.com)/32" -out=tfplan, (4) human inspection and explicit approval of planned resources (exactly 3 EC2 instances, 3 security groups, 50 GB gp3 storage), and (5) terraform apply tfplan without -auto-approve. Zero unintended resource replacements.
 - [ ] **7. Session Cost Estimate Review**: On-demand fleet running rate reviewed (~$0.0773/hour across compute, storage, and 3 public IPs; ~$0.31 for a 4-hour demonstration session).
-- [ ] **8. Teardown Preparedness**: Operator prepared to run `terraform destroy` immediately upon demonstration conclusion under ADR 011.
-- [ ] **9. Explicit Owner Approval (Boundary B)**: Written authorization received from project owner prior to running `terraform apply`.
+- [ ] **8. Teardown Preparedness & Retained Cost Awareness**: Operator prepared to run `terraform destroy` without `-auto-approve` immediately upon demonstration conclusion under ADR 011. Acknowledged that while `terraform destroy` terminates all 3 EC2 instances, attached EBS volumes, and public IPv4 allocations (eliminating the estimated active fleet running cost of approximately $0.0773/hour), actual AWS account charges may remain: the persistent S3 remote state bucket `git-repo-analyzer-terraform-state-2026` is a permanently retained resource that survives teardown and must never be deleted, replaced, or modified. Any external account-level resources or historical usage also remain subject to standard billing.
+- [ ] **9. Explicit Owner Approval & Partial Failure Halt Protocol (Boundary B)**: Written authorization received from project owner prior to running `terraform apply tfplan` (strictly without `-auto-approve`). Approval for Boundary A (Implementation) does not imply approval for Boundary B (AWS Provisioning). If a partial provisioning failure occurs: halt execution immediately, preserve Terraform state in S3, inspect and report partially created resources (`terraform state list`), do NOT automatically destroy resources, and require separate explicit operator authorization before any cleanup or teardown.
 
 ---
 
-## 7. Ephemeral vs. Persistent Lifecycle & Data Management
+## 7. Authoritative Boundary B Deployment Runbook
+
+> [!CAUTION]
+> **Approval Boundary B Policy**: The commands in this runbook interact with live AWS infrastructure and create billable cloud resources. **DO NOT execute any step in this runbook without separate, explicit user authorization.**
+
+### Execution Sequence Architecture
+
+```text
+                                  [ Approval Boundary B Entry ]
+                                                │
+                                    (Explicit User Approval)
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 1: Terraform Infrastructure Provisioning & Approval                                     │
+│   1. Identity Verification ──► 2. terraform init / validate ──► 3. terraform plan -out=tfplan │
+│   ──► 4. Human Review & Explicit Approval ──► 5. terraform apply tfplan (No Auto-Approve)     │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 2: Inventory & Cryptographic SSH Trust                                                  │
+│   6. bash sync_terraform_inventory.sh ──► 7. bash verify_ssh_host_keys.sh (Strict Fingerprints)   │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 3: Authoritative 2-Playbook Ansible Bootstrap & Puppet Handover                         │
+│   8. Master Fleet Bootstrap (site.yml: common, puppet_server, puppet_agent, docker, nginx)   │
+│                                                │                                              │
+│   9. Controlled CA Enrollment Playbook (enroll-puppet-agents.yml: 9-step supervised handover) │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 4: Live Verification, Demonstration & Teardown Gate                                     │
+│   10. Fleet Connectivity & Health Check ──► 11. Export Run Logs ──► 12. Demonstration Session │
+│   ──► 13. Pre-Teardown Artifact Export ──► 14. Explicit Teardown Approval                     │
+│   ──► 15. terraform destroy (Retains Permanent S3 State Backend)                              │
+└───────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Step 1: Pre-Deployment Authorization & Session Verification
+- **Purpose**: Ensure explicit human authorization and active session awareness before provisioning billable resources.
+- **Procedure**: Request operator confirmation. Verify AWS CLI caller identity:
+  ```bash
+  aws sts get-caller-identity
+  ```
+- **Expected Result**: Valid AWS Account ID and ARN (`arn:aws:iam::704475327786:user/terraform-admin`) returned.
+- **Failure Condition**: Missing or expired AWS credentials $\to$ Halt immediately.
+
+#### Step 2: Terraform Initialization & Configuration Validation
+- **Purpose**: Verify backend connectivity and validate configuration syntax without modifying state.
+- **Command**:
+  ```bash
+  cd terraform && terraform init && terraform validate && terraform fmt -check
+  ```
+- **Expected Result**: `Success! The configuration is valid.` Backend initialized with S3 state bucket.
+- **Failure Condition**: Validation or backend error $\to$ Correct syntax/connectivity before proceeding.
+
+#### Step 3: Terraform Planning & Human Inspection
+- **Purpose**: Generate a deterministic execution plan with the operator's public `/32` IP for security group ingress.
+- **Command**:
+  ```bash
+  cd terraform
+  terraform plan -var="allowed_ssh_cidr=$(curl -s https://checkip.amazonaws.com)/32" -out=tfplan
+  ```
+- **Expected Result**: Plan output shows exactly 3 instances (`puppet-server`, `app-server`, `cicd-server`), 3 security groups, and 50 GB gp3 storage to create; 0 to change; 0 to destroy.
+- **Human Inspection Gate**: Operator verifies:
+  1. Operator public IP `/32` matches intended workstation.
+  2. Exactly 3 EC2 instances created in public subnets of the Default VPC.
+  3. Total EBS storage allocated equals exactly 50 GB (15 GB + 15 GB + 20 GB).
+  4. Security group ingress rules strictly restrict SSH (22) to operator `/32`, HTTP/HTTPS (80/443) exclusively to EC2 2, and internal ports (8140, 8080, 5666) to appropriate security groups.
+  5. Zero unintended resource destructions or replacements.
+
+#### Step 4: Explicit Provisioning Approval Gate
+- **Purpose**: Enforce the human-in-the-loop cost governance gate before applying changes.
+- **Procedure**: Operator reviews the plan output and estimated running costs (~$0.0773/hour across fleet) and grants explicit authorization.
+- **Failure Condition**: Operator denies authorization $\to$ Abort; discard `tfplan`.
+
+#### Step 5: Infrastructure Provisioning (`terraform apply`)
+- **Purpose**: Provision the approved 3-node fleet using the inspected execution plan without auto-approval bypass.
+- **Command**:
+  ```bash
+  cd terraform && terraform apply tfplan
+  ```
+- **Expected Result**: Exactly 3 instances created with public IPv4 and private IPs. State saved to remote S3 backend.
+- **Failure Condition & Strict Halt Protocol**:
+  - Quota exhaustion, subnet collision, or AWS API error $\to$ **HALT IMMEDIATELY**.
+  - **Do NOT automatically execute `terraform destroy`**. Automatic destruction violates the teardown approval gate (Step 14).
+  - Preserve Terraform state intact in the S3 remote backend.
+  - Inspect and report partially created resources via `terraform state list` and `terraform show`.
+  - Require separate, explicit operator authorization before any cleanup, remediation, or destruction commands are executed.
+
+#### Step 6: Dynamic Inventory Generation
+- **Purpose**: Ingest live EC2 public and private IP addresses from Terraform state into Ansible inventory.
+- **Command**:
+  ```bash
+  bash ansible/scripts/sync_terraform_inventory.sh
+  ```
+- **Expected Result**: [`ansible/inventory/hosts.ini`](file:///home/aditya-2274/Git-repo-analyzer/ansible/inventory/hosts.ini) atomically updated with live IP addresses; validated with `ansible-inventory --list`.
+- **Failure Condition**: Empty or malformed Terraform output $\to$ Baseline inventory preserved; script aborts cleanly.
+
+#### Step 7: Cryptographic SSH Host-Key Verification
+- **Purpose**: Establish cryptographic SSH trust against EC2 console fingerprints, mitigating MITM risks without blind TOFU.
+- **Command**:
+  ```bash
+  bash ansible/scripts/verify_ssh_host_keys.sh
+  ```
+- **Expected Result**: Host keys verified against EC2 system console output and recorded into [`ansible/known_hosts`](file:///home/aditya-2274/Git-repo-analyzer/ansible/known_hosts) (mode `0600`).
+- **Failure Condition**: Console output delayed $\to$ Automatic bounded retry (up to 360s); mismatch triggers immediate MITM alert and aborts.
+
+#### Step 8: Master Fleet Bootstrap (`ansible/playbooks/site.yml`)
+- **Purpose**: Execute canonical master orchestration playbook across the 3-node fleet in strict dependency order:
+  - Play 1 (`hosts: all`): Apply common baseline (APT record locks, dynamic `/etc/hosts` private DNS, swapfiles).
+  - Play 2 (`hosts: puppet_server`): Bootstrap Puppet Server 8, tune JVM heap (`-Xms1g -Xmx1g`), initialize CA (State A), start service on TCP 8140.
+  - Play 3 (`hosts: puppet_agents`): Install Puppet Agent 8 on EC2 2 & 3, set `server = puppet-server`, submit initial CSRs, and enforce gated stopped/disabled service state per ADR 012.
+  - Play 4 (`hosts: cicd`): Bootstrap Docker Engine and Compose plugin on EC2 3, configure log rotation (`10m`/`3`), restrict daemon to local UNIX socket, add `ubuntu` user to `docker` group.
+  - Play 5 (`hosts: application`): Bootstrap NGINX on EC2 2, configure baseline security (`server_tokens off;`), deploy default port 80 virtual host with `/healthz`, and pre-validate syntax via `nginx -t`.
+- **Command**:
+  ```bash
+  ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml
+  ```
+- **Operational Execution Note**:
+  - `site.yml` is the **authoritative master orchestration playbook** for live deployment.
+  - The individual playbooks (`test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) were authored during development for isolated component testing. Their `test-` naming reflects their initial test harness origin, but they are retained as modular diagnostic runners for targeted troubleshooting if a single role fails. They are not the primary deployment path.
+- **Expected Result**: All 5 plays complete with `failed=0`; all baseline packages, services, and configs deployed.
+- **Failure Condition**: Task failure on any play $\to$ Playbook halts; inspect error log and address before proceeding.
+
+#### Step 9: Controlled Puppet CA Enrollment & Supervised Handover (`ansible/playbooks/enroll-puppet-agents.yml`)
+- **Purpose**: Execute the 9-step controlled CA enrollment sequence across 3 dedicated plays:
+  - Play 1 (`hosts: puppet_agents`): Verify TCP 8140 reachability from agents to Puppet Server.
+  - Play 2 (`hosts: puppet_server`): Inspect pending CSRs, verify allowlisted certnames (`app-server`, `cicd-server`), reject unknown CSRs, and perform individual signing via `puppetserver ca sign`.
+  - Play 3 (`hosts: puppet_agents`): Verify SSL certificate presence, execute supervised initial catalog run (`timeout 300 puppet agent -t --detailed-exitcodes`), validate exit code 0 or 2, and activate/enable the agent systemd service strictly upon catalog success (ADR 012).
+- **Command**:
+  ```bash
+  ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/enroll-puppet-agents.yml
+  ```
+- **Expected Result**: Both agents enrolled, initial catalog successfully applied, `puppet` systemd service active and enabled.
+- **Failure Condition**: Unrecognized CSR or catalog exit code 1 or 4 $\to$ Playbook halts; agent daemons remain disabled.
+
+#### Step 10: Fleet Connectivity & Baseline Health Verification
+- **Purpose**: Validate end-to-end functionality across the provisioned fleet.
+- **Commands**:
+  ```bash
+  ansible -i ansible/inventory/hosts.ini all -m ping
+  curl -I "http://$(terraform -chdir=terraform output -raw application_public_ip)/healthz"
+  ```
+- **Expected Result**: All 3 nodes respond `pong`; `/healthz` returns HTTP 200 `OK`.
+
+#### Step 11: Export Run Logs & Diagnostic Artifacts
+- **Purpose**: Persist deployment logs for auditability and compliance.
+- **Procedure**: Capture Ansible execution logs into timestamped files in `/tmp/deployment-logs/`.
+
+#### Step 12: Ephemeral Demonstration & Assessment Execution
+- **Purpose**: Perform repository analysis, test analyzer container execution, and demonstrate platform capabilities.
+- **Procedure**: Execute demonstration workloads within the approved session time window under ADR 011.
+
+#### Step 13: Pre-Teardown Artifact Export Gate
+- **Purpose**: Save generated analysis reports, charts, and audit metrics before ephemeral infrastructure is destroyed.
+- **Procedure**: Export required files from EC2 instances to local disk or Git repository.
+
+#### Step 14: Explicit Infrastructure Teardown Approval Gate
+- **Purpose**: Prevent unintended cloud charges while ensuring that no destruction occurs without operator consent.
+- **Procedure**: Confirm with operator that the demonstration session is complete and authorization is granted for teardown.
+- **Failure Condition**: Operator requests session extension $\to$ Retain fleet; reschedule teardown approval gate.
+
+#### Step 15: Ephemeral Infrastructure Teardown (`terraform destroy`)
+- **Purpose**: Terminate all EC2 instances, release public IPv4 allocations, and remove security groups.
+- **Command**:
+  ```bash
+  cd terraform && terraform destroy
+  ```
+  *(Execute interactively without `-auto-approve`; require operator confirmation prompt `yes`).*
+- **Expected Result**: All 3 EC2 instances destroyed; attached 50 GB gp3 EBS volumes deleted; estimated active fleet running cost (approximately $0.0773/hour) is eliminated. However, actual AWS account charges may remain from persistent resources (such as the S3 state backend) or external account-level services.
+- **Clarification on Retained AWS Costs**:
+  - `terraform destroy` terminates all ephemeral compute, storage, and networking resources managed by Terraform.
+  - **However, it does not necessarily eliminate all AWS account costs.**
+  - **Persistent S3 Remote State Backend (`git-repo-analyzer-terraform-state-2026`)**: The S3 remote state bucket and its versioned history remain active in AWS region `ap-south-1`. This bucket is a permanent resource that must **never** be deleted, replaced, or modified. Its minimal storage cost (typically <$0.01/month) is absorbed by active promotional credits ($107.98 net remaining).
+  - Any external account-level resources (such as AWS KMS keys, Route 53 zones, or other non-Terraform resources) remain governed by standard account billing.
+
+---
+
+## 8. Ephemeral vs. Persistent Lifecycle & Data Management (Retained AWS Costs)
 
 Under **ADR 011**, all compute and host storage is ephemeral, designed for rapid demonstration and complete teardown:
 
 | Category | Component / Data Item | Persistence Status | Storage Location & Retention Policy |
 | :--- | :--- | :--- | :--- |
 | **Persistent** | Codebase & Configurations | **Permanent** | Version-controlled in Git repository. |
-| **Persistent** | Terraform Remote State | **Permanent** | S3 bucket `git-repo-analyzer-terraform-state-2026`. Never destroyed. |
+| **Persistent** | Terraform Remote State | **Permanent** | S3 bucket `git-repo-analyzer-terraform-state-2026`. Retained permanently. Never destroyed or modified. |
 | **Ephemeral** | EC2 Virtual Machines | **Destroyed** | Terminated on `terraform destroy`. |
 | **Ephemeral** | EBS Root Volumes (50 GB) | **Destroyed** | Deleted on termination (`delete_on_termination = true`). |
 | **Ephemeral** | Puppet CA Keys & Database | **Destroyed** | Destroyed with EC2 1. Reinitialized on next apply. |
@@ -592,7 +793,7 @@ Under **ADR 011**, all compute and host storage is ephemeral, designed for rapid
 
 ---
 
-## 8. Technical Status Classification: Detailed Verification Evidence
+## 9. Technical Status Classification: Detailed Verification Evidence
 
 To ensure absolute documentation honesty, all technical claims are classified into explicit evidence tiers:
 

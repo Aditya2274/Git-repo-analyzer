@@ -39,3 +39,8 @@ puppet_catalog_timeout: 300
 # Service management
 puppet_agent_service_enabled: false
 puppet_agent_service_state: "stopped"
+
+# Lifecycle guard: Set to true to force bootstrap defaults on an enrolled agent.
+# This overrides the post-enrollment ownership guard in service.yml.
+# Use only for deliberate operator recovery; never set in normal orchestration.
+puppet_agent_force_bootstrap: false

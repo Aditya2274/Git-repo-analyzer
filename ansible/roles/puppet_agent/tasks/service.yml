@@ -1,9 +1,54 @@
 ---
 # Puppet Agent systemd service management
+#
+# LIFECYCLE-AWARE SERVICE GUARD:
+#
+# This task implements an ownership-aware service management strategy to prevent
+# repeated site.yml execution from reversing the Phase 4.5 enrollment handover.
+#
+# Lifecycle Stages:
+#   Stage 1 (Initial Bootstrap): No signed certificate exists on disk.
+#     -> Enforce puppet_agent_service_state (default: stopped) and
+#        puppet_agent_service_enabled (default: false).
+#     -> This prevents premature agent connection before CA verification.
+#
+#   Stage 2+ (Post-Enrollment): A valid signed certificate exists on disk.
+#     -> The enrollment playbook (enroll-puppet-agents.yml / handover.yml)
+#        has already activated and enabled the service.
+#     -> Skip service enforcement entirely to avoid conflicting with
+#        Puppet's desired-state ownership of its own agent daemon.
+#     -> This preserves the handover: Puppet's common module exclusively
+#        manages puppet.conf and puppet.service in Phase 5A+.
+#
+# Override: Set puppet_agent_force_bootstrap: true to force the bootstrap
+# defaults even on an enrolled agent (operator-only recovery scenario).
 
-- name: Manage Puppet Agent systemd service
+- name: Determine Puppet Agent enrollment state from signed certificate
+  ansible.builtin.stat:
+    path: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certs/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+  register: puppet_agent_cert_check
+
+- name: Set Puppet Agent enrollment fact
+  ansible.builtin.set_fact:
+    puppet_agent_is_enrolled: "{{ puppet_agent_cert_check.stat.exists | default(false) }}"
+
+- name: "Manage Puppet Agent service (pre-enrollment bootstrap: stopped/disabled)"
   ansible.builtin.systemd:
     name: "{{ puppet_agent_service_name | default('puppet') }}"
     enabled: "{{ puppet_agent_service_enabled | default(false) }}"
     state: "{{ puppet_agent_service_state | default('stopped') }}"
   register: puppet_agent_service_status
+  when: >-
+    not (puppet_agent_is_enrolled | bool)
+    or (puppet_agent_force_bootstrap | default(false) | bool)
+
+- name: "Report lifecycle-aware service skip (post-enrollment: ownership transferred)"
+  ansible.builtin.debug:
+    msg: >-
+      Puppet Agent on {{ inventory_hostname }} has a valid signed certificate.
+      Service management skipped to preserve Phase 4.5 enrollment handover.
+      The Puppet Agent service lifecycle is now owned by Puppet's common module (Phase 5A+).
+      To override this guard, set puppet_agent_force_bootstrap: true.
+  when:
+    - puppet_agent_is_enrolled | bool
+    - not (puppet_agent_force_bootstrap | default(false) | bool)

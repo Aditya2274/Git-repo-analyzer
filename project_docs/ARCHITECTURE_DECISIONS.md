@@ -244,19 +244,19 @@ This Architecture Decision Record (ADR) logs all approved architectural, infrast
 - **Context:** The Git Repository Analyzer is an educational, demonstration, and assessment system. It is not a permanent public web service requiring 24/7 availability. Running three EC2 instances continuously would exhaust account promotional credits unnecessarily.
 - **Decision:** Implement an on-demand, ephemeral infrastructure lifecycle structured across 10 sequential operational steps:
   1. **Explicit Owner Approval (Boundary B):** Review estimated session costs and verify AWS account credits.
-  2. **Terraform Apply:** Provision the 3 EC2 instances, security groups, and 50 GB gp3 storage.
-  3. **Ansible Bootstrap:** Verify authentic host keys, configure `/etc/hosts`, swapfiles, and install base packages, Docker, and Puppet binaries.
-  4. **Puppet CA & Enrollment:** Cryptographically verify CA, submit agent CSRs, and perform controlled per-certname signing.
+  2. **Terraform Five-Stage Provisioning Workflow & Apply:** Follow the structured five-stage provisioning procedure codified in Stage 1 of the deployment runbook: (1) session identity verification, (2) terraform init and validate, (3) deterministic planning (terraform plan -out=tfplan), (4) human review and explicit operator approval of planned resources (exactly 3 EC2 instances, 3 security groups, 50 GB gp3 storage), and (5) interactive infrastructure provisioning (terraform apply tfplan executed without -auto-approve). If a partial provisioning failure occurs: halt execution immediately, preserve Terraform state in S3, inspect and report partially created resources (terraform state list), do not automatically destroy resources, and require separate explicit operator authorization before any cleanup.
+  3. **Ansible Master Fleet Bootstrap:** Execute `ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml` as the canonical master orchestration playbook to configure common baseline, Puppet Server 8, Puppet Agents (stopped and disabled per ADR 012), Docker CE, and baseline NGINX. (Individual `test-*.yml` playbooks exist strictly for modular diagnostic targeting).
+  4. **Puppet CA & Enrollment:** Execute `ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/enroll-puppet-agents.yml` to verify reachability, inspect pending CSRs, perform controlled individual signing on EC2 1, execute supervised catalog application (`puppet agent -t --detailed-exitcodes`), validate exit codes 0 or 2, and activate agent systemd daemons.
   5. **Application Deployment:** Deploy Node.js runtime, backend systemd service (user `gitrepo`), React static build, and NGINX reverse proxy.
   6. **Jenkins & Analyzer Integration:** Start Jenkins controller, configure pipeline, and test Docker analyzer container execution with sandboxing.
   7. **Monitoring Validation:** Start Nagios Core and NRPE daemons; verify telemetry over SSH tunnel.
   8. **Demonstration & Testing:** Perform live analysis of public repositories and review generated reports and metrics.
   9. **Artifact Export:** Export required reports, charts, and audit metrics to local disk or Git repository before teardown.
-  10. **Terraform Destroy:** Terminate all three EC2 instances, release public IPv4 addresses, and delete EBS root volumes (`delete_on_termination = true`).
-- **Data Boundaries (Persistent vs. Ephemeral):**
-  - **Persistent Infrastructure (Survives Teardown):**
+  10. **Ephemeral Infrastructure Teardown:** Confirm explicit operator approval, then execute `terraform destroy` without `-auto-approve` to terminate all three EC2 instances, release public IPv4 addresses, and delete EBS root volumes (`delete_on_termination = true`).
+- **Data Boundaries (Persistent vs. Ephemeral) & Retained AWS Costs:**
+  - **Persistent Infrastructure & Retained AWS Costs (Survives Teardown):**
     - Git repository codebase, configuration files, playbooks, manifests, and documentation.
-    - S3 remote state bucket (`git-repo-analyzer-terraform-state-2026`). The bucket must never be destroyed during session teardowns.
+    - S3 remote state bucket (`git-repo-analyzer-terraform-state-2026`). While `terraform destroy` eliminates the estimated active EC2 fleet running cost (approximately $0.0773/hour), actual AWS account charges may remain: the persistent S3 state bucket and its versioned objects remain in `ap-south-1`. This bucket is a permanently retained resource and must **never** be deleted, replaced, or modified. External account-level resources and historical usage also remain subject to standard AWS billing, with promotional credits ($107.98 net remaining) offsetting ongoing storage costs.
   - **Ephemeral Infrastructure (Destroyed on Teardown):**
     - All 3 EC2 instances and attached EBS root volumes (50 GB total).
     - Puppet CA private keys, certificate database, and agent certificates.
