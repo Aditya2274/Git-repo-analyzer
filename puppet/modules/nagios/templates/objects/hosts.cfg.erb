@@ -1,0 +1,49 @@
+# ==============================================================================
+# Nagios Hosts Configuration: hosts.cfg
+# Managed by Puppet: nagios::objects
+# ==============================================================================
+
+# Base Host Template
+define host {
+    name                            generic-host
+    notifications_enabled           1
+    event_handler_enabled           1
+    flap_detection_enabled          1
+    process_perf_data               0
+    retain_status_information      1
+    retain_nonstatus_information   1
+    check_command                   check-host-alive
+    max_check_attempts              3
+    check_interval                  5
+    retry_interval                  1
+    check_period                    24x7
+    notification_interval           60
+    notification_period             24x7
+    notification_options            d,u,r
+    contact_groups                  admins
+    register                        0
+}
+
+# Host 1: puppet-server (Dedicated Puppet Server & CA - EC2 1)
+define host {
+    use                             generic-host
+    host_name                       puppet-server
+    alias                           Puppet Server & CA (EC2 1)
+    address                         puppet-server
+}
+
+# Host 2: app-server (Application & Monitoring Server - EC2 2, Localhost)
+define host {
+    use                             generic-host
+    host_name                       app-server
+    alias                           Application & Monitoring Server (EC2 2)
+    address                         127.0.0.1
+}
+
+# Host 3: cicd-server (CI/CD Pipeline & Analysis Server - EC2 3)
+define host {
+    use                             generic-host
+    host_name                       cicd-server
+    alias                           CI/CD & Analysis Server (EC2 3)
+    address                         cicd-server
+}

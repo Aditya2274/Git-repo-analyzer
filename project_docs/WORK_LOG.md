@@ -1328,3 +1328,56 @@
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform operations, zero remote SSH connections, zero live Puppet/CA operations, zero Git pushes.
 - **Outcome**: Fallback cleanly eliminated; security regression verified; test coverage expanded to 19 checks. Ready for commit.
+
+---
+
+## 2026-11-25: Phase 5A — Checkpoint 5A.4: Nagios Core and Monitoring Configuration Implementation
+
+- **Task**: Implement, configure, secure, and validate Checkpoint 5A.4 of the Git Repository Analyzer project, deploying the Nagios module exclusively to `app-server`.
+- **Objective**: Implement `nagios::server`, `nagios::objects`, and `nagios::web` classes; manage Ubuntu 24.04 packages (`nagios4`, `monitoring-plugins-basic` without duplicate `nagios-nrpe-plugin`); deploy authoritative object definitions (`hosts.cfg`, `commands.cfg`, `services.cfg`, `contacts.cfg`, `timeperiods.cfg`); configure Apache loopback virtual host (`127.0.0.1:8080`) with HTTP Basic Authentication (`/etc/nagios4/htpasswd.users` mode `0640`); enforce strict validation ordering and secret safety guardrails; validate via automated test suite.
+- **Actions Completed**:
+  - **Implemented Nagios Server Module (`puppet/modules/nagios/manifests/server.pp`)**:
+    - Installed packages `nagios4` and `monitoring-plugins-basic` (avoided package duplication with `nrpe::client` which manages `nagios-nrpe-plugin`).
+    - Managed directory `/etc/nagios4` (mode `0755`, owner `root:nagios`).
+    - Managed configuration files: `/etc/nagios4/nagios.cfg`, `/etc/nagios4/cgi.cfg`, and `/etc/nagios4/resource.cfg` (`$USER1$=/usr/lib/nagios/plugins`).
+    - Enforced pre-start/reload configuration validation: `exec { 'nagios4_configtest': command => '/usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg', refreshonly => true, onlyif => '/usr/bin/test -x /usr/sbin/nagios4', notify => Service['nagios4'] }`.
+    - Managed systemd service `nagios4.service` with strict dependency chain: `Package['nagios4'] -> File['/etc/nagios4'] -> Class['nagios::objects'] -> Exec['nagios4_configtest'] -> Service['nagios4']`.
+  - **Implemented Nagios Object Definitions (`puppet/modules/nagios/manifests/objects.pp` & Templates)**:
+    - Managed `/etc/nagios4/conf.d` directory (`0755`, `root:nagios`).
+    - Configured `hosts.cfg`: Defined all three fleet nodes: `puppet-server` (`puppet-server`), `app-server` (`127.0.0.1`), and `cicd-server` (`cicd-server`), plus `generic-host` template.
+    - Configured `commands.cfg`: Defined `check-host-alive`, `check_nrpe` (`$USER1$/check_nrpe -H $HOSTADDRESS$ -c $ARG1$ -t 30` with zero arbitrary arguments), local checks (`check_local_disk`, `check_local_load`, `check_local_procs`, `check_local_users`, `check_http_port`), and notification commands (`notify-host-by-email`, `notify-service-by-email`).
+    - Configured `services.cfg`: Accurately mapped node-specific checks:
+      - `puppet-server`: `NRPE Connectivity` and `Puppet Server Service` (`check_nrpe!check_puppetserver`). Zero Jenkins/Docker checks.
+      - `cicd-server`: `NRPE Connectivity`, `Jenkins Service` (`check_nrpe!check_jenkins`), and `Docker Service` (`check_nrpe!check_docker`). Zero Puppet Server check.
+      - `app-server`: Local health checks (`Root Filesystem Disk Space`, `Current CPU Load`, `Total Running Processes`, `NGINX Web Server Port 80`).
+    - Configured `contacts.cfg`: Defined `nagiosadmin` contact and `admins` contact group.
+    - Configured `timeperiods.cfg`: Defined `24x7`, `workhours`, and `none`.
+  - **Implemented Apache Loopback & Web Security (`puppet/modules/nagios/manifests/web.pp` & Templates)**:
+    - Installed packages `apache2` and `apache2-utils`.
+    - Managed `/etc/apache2/ports.conf` bound strictly to loopback: `Listen 127.0.0.1:8080`. Public ports 80/443 are strictly omitted to prevent conflicts with NGINX.
+    - Managed virtual host `/etc/apache2/sites-available/nagios.conf` bound strictly to `<VirtualHost 127.0.0.1:8080>`, configuring CGIs, assets, and HTTP Basic Authentication.
+    - Disabled default site: ensured `/etc/apache2/sites-enabled/000-default.conf` is `absent`.
+    - Managed htpasswd file `/etc/nagios4/htpasswd.users` with restrictive ownership and permissions (`0640`, `root:www-data`).
+    - Enforced pre-start validation: `exec { 'apache2_configtest': command => '/usr/sbin/apache2ctl configtest', refreshonly => true, onlyif => '/usr/bin/test -x /usr/sbin/apache2ctl', notify => Service['apache2'] }`.
+    - Managed systemd service `apache2.service`.
+  - **Enforced Secret-Handling & Guardrails**:
+    - Parameterized `nagios::web::admin_password_hash` in Hiera (`common.yaml`).
+    - Added `enforce_production_secret` parameter. In production mode, compiler fails fast if default placeholder `$apr1$demo$hashedpassword` is supplied. In development mode, emits explicit warning notify resource `nagios_placeholder_credential_warning`.
+    - Documented operator instructions for generating authentic password hash (`htpasswd -nb -B nagiosadmin <password>` or `openssl passwd -6`) before live deployment.
+  - **Enforced Strict Node Targeting (`puppet/modules/nagios/manifests/init.pp`)**:
+    - Class `nagios` asserts `$trusted['certname'] == 'app-server'`. Attempting to include `nagios` on `puppet-server`, `cicd-server`, or unexpected certnames fails fast.
+  - **Created Dedicated Test Suite (`puppet/tests/test_nagios_module.sh`)**:
+    - Created 18 automated validation checks covering package declarations, service management, path verification, host definitions, NRPE command boundaries, node service mapping, isolation of Jenkins/Docker checks, isolation of Puppet Server check, Apache packages/vhost, loopback port 8080 binding, Basic Auth configuration, htpasswd permissions (0640), placeholder detection guardrail, Nagios validation ordering, Apache validation ordering, service startup dependencies, fleet target isolation, and repeated compilation idempotency.
+    - Test results: **18/18 checks passed (100% PASS)**.
+  - **Executed Architectural & Regression Test Suites**:
+    - `puppet/tests/test_nagios_module.sh`: **18/18 checks passed (100% PASS)**.
+    - `puppet/tests/test_nrpe_module.sh`: **19/19 checks passed (100% PASS)**.
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 checks passed (100% PASS)**.
+    - `puppet/tests/test_common_module.sh`: **14/14 checks passed (100% PASS)**.
+    - Total: **66/66 Puppet tests passed across all suites**.
+  - **Code Quality and Formatting**:
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean DSL syntax.
+    - `git diff --check`: 0 whitespace errors, 0 merge conflicts.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform operations, zero remote SSH connections, zero live Puppet/CA operations, zero Git pushes.
+- **Outcome**: Checkpoint 5A.4 fully implemented, secured, and validated; ready for commit.
