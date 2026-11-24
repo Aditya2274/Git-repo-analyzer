@@ -4,72 +4,11 @@ set -eu
 POLICY_FILE="<%= @policy_file %>"
 PID_FILE="<%= @pid_file %>"
 MARKER="<%= @marker %>"
-SUPPRESSED_SERVICES="<%= @suppressed_services.join(' ') %>"
 
-verify_admin_policy() {
-  if [ -L "${POLICY_FILE}" ] && [ ! -e "${POLICY_FILE}" ]; then
-    echo "ERROR: Existing administrator-managed policy '${POLICY_FILE}' is a broken symlink; cannot guarantee startup suppression for Nagios Core or Apache2. Operator must inspect and resolve '${POLICY_FILE}' before installation." >&2
-    return 1
-  fi
-
-  if [ ! -f "${POLICY_FILE}" ]; then
-    echo "ERROR: Existing administrator-managed policy '${POLICY_FILE}' is not a regular file; behavior cannot be reliably determined. Operator must resolve '${POLICY_FILE}' before installation." >&2
-    return 1
-  fi
-
-  if [ ! -r "${POLICY_FILE}" ] || [ ! -x "${POLICY_FILE}" ]; then
-    echo "ERROR: Existing administrator-managed policy '${POLICY_FILE}' is not both readable and executable (invoke-rc.d/deb-systemd-invoke ignore non-executable policies and would start services). Operator must fix permissions or resolve '${POLICY_FILE}' before installation." >&2
-    return 1
-  fi
-
-  for svc in ${SUPPRESSED_SERVICES}; do
-    for pass in 1 2; do
-      for mode in unit_start service_start paren_start paren_start_rl2 unit_restart service_restart; do
-        case "${mode}" in
-          unit_start)
-            probe_unit="${svc}"; probe_act="start"; probe_rl="" ;;
-          service_start)
-            probe_unit="${svc}.service"; probe_act="start"; probe_rl="" ;;
-          paren_start)
-            probe_unit="${svc}"; probe_act="(start)"; probe_rl="" ;;
-          paren_start_rl2)
-            probe_unit="${svc}"; probe_act="(start)"; probe_rl="2" ;;
-          unit_restart)
-            probe_unit="${svc}.service"; probe_act="restart"; probe_rl="" ;;
-          service_restart)
-            probe_unit="${svc}"; probe_act="(restart)"; probe_rl="" ;;
-        esac
-
-        rc=0
-        if [ -n "${probe_rl}" ]; then
-          /usr/bin/timeout 3 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-            "${POLICY_FILE}" "${probe_unit}" "${probe_act}" "${probe_rl}" < /dev/null >/dev/null 2>&1 || rc=$?
-        else
-          /usr/bin/timeout 3 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-            "${POLICY_FILE}" "${probe_unit}" "${probe_act}" < /dev/null >/dev/null 2>&1 || rc=$?
-        fi
-
-        if [ "${rc}" -eq 0 ] || [ "${rc}" -eq 104 ]; then
-          echo "ERROR: Existing administrator-managed policy '${POLICY_FILE}' PERMITS premature startup/restart for '${svc}' (probe '${probe_unit} ${probe_act}' exited ${rc}, expected 101). Refusing to install Nagios/Apache packages. Operator must adjust or remove '${POLICY_FILE}' before installation." >&2
-          return 1
-        elif [ "${rc}" -eq 124 ]; then
-          echo "ERROR: Existing administrator-managed policy '${POLICY_FILE}' timed out probing '${probe_unit} ${probe_act}'; behavior cannot be reliably determined. Operator must resolve '${POLICY_FILE}' before installation." >&2
-          return 1
-        elif [ "${rc}" -ne 101 ]; then
-          echo "ERROR: Existing administrator-managed policy '${POLICY_FILE}' behavior cannot be reliably determined for '${svc}' (probe '${probe_unit} ${probe_act}' exited ambiguous/non-101 status ${rc}). Operator must resolve '${POLICY_FILE}' before installation." >&2
-          return 1
-        fi
-      done
-    done
-  done
-
-  return 0
-}
-
-# Inspect any pre-existing policy-rc.d before touching anything or installing packages.
+# Preflight inspection before creating temporary policy or installing packages.
 if [ -e "${POLICY_FILE}" ] || [ -L "${POLICY_FILE}" ]; then
-  if [ -f "${POLICY_FILE}" ] && [ ! -L "${POLICY_FILE}" ] && /usr/bin/grep -qF "# ${MARKER}" "${POLICY_FILE}" 2>/dev/null; then
-    # Existing Puppet-managed temporary policy: check recorded Puppet process lifecycle
+  if [ ! -L "${POLICY_FILE}" ] && [ -f "${POLICY_FILE}" ] && /usr/bin/grep -qF "# ${MARKER}" "${POLICY_FILE}" 2>/dev/null; then
+    # Existing Puppet-managed temporary policy: validate recorded Puppet PID lifecycle
     if [ -f "${PID_FILE}" ]; then
       EXISTING_PID="$(/usr/bin/cat "${PID_FILE}" 2>/dev/null || true)"
       if [ -n "${EXISTING_PID}" ] && [ "${EXISTING_PID}" != "${PPID}" ] && kill -0 "${EXISTING_PID}" 2>/dev/null; then
@@ -81,9 +20,10 @@ if [ -e "${POLICY_FILE}" ] || [ -L "${POLICY_FILE}" ]; then
     fi
     # Stale/dead PID or current process: fall through to refresh PID and scoped Puppet policy cleanly.
   else
-    # Administrator-managed policy: verify safely without modifying, overwriting, or deleting it.
-    verify_admin_policy
-    exit 0
+    # Existing administrator-managed policy (executable, non-executable, symlink, etc.):
+    # NEVER execute, probe, infer behavior, overwrite, modify, rename, or delete it.
+    echo "ERROR: An existing administrator-managed policy exists at '${POLICY_FILE}'. Puppet cannot verify startup suppression safely without executing administrator-owned code, so package installation is aborted. Operator must inspect and manually resolve '${POLICY_FILE}' before retrying Nagios installation." >&2
+    exit 1
   fi
 fi
 

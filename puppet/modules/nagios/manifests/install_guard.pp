@@ -1,8 +1,7 @@
 # ==============================================================================
 # Class: nagios::install_guard
 # Purpose: Manages a narrowly scoped, temporary /usr/sbin/policy-rc.d lifecycle
-#          around Nagios Core and Apache2 package installation on Ubuntu 24.04,
-#          with fail-closed preflight verification of any existing policy.
+#          around Nagios Core and Apache2 package installation on Ubuntu 24.04.
 # Target: app-server (EC2 2) exclusively.
 #
 # Lifecycle:
@@ -12,10 +11,10 @@
 #          (0755) + active Puppet PID file.
 #        - Puppet-marked policy exists: inspects recorded PID lifecycle; fails
 #          if another live Puppet process holds it, or refreshes if stale.
-#        - Administrator-managed policy exists: preserves it unmodified and
-#          runs repeatable preflight probes establishing that BOTH nagios4 and
-#          apache2 deterministically return 101 (denied). Fails before package
-#          installation if startup is permitted or behavior is indeterminable.
+#        - Administrator-managed policy exists (regular file or symlink without
+#          Puppet marker): NEVER executed, inferred from, modified, renamed, or
+#          deleted. Fails closed before any package installation with a clear
+#          diagnostic instructing the operator to resolve it manually.
 #   2. Package install: Puppet-managed guard returns 101 strictly for nagios4
 #      and apache2 while parent Puppet PID is live (unrelated services exit 0;
 #      crashed Puppet exits fail-open cleanly).
@@ -61,7 +60,7 @@ class nagios::install_guard (
     command   => template('nagios/disable_policy_rc_d.sh.erb'),
     provider  => 'shell',
     path      => ['/usr/sbin', '/usr/bin', '/sbin', '/bin'],
-    onlyif    => "/usr/bin/test -f '${pid_file}' || ( /usr/bin/test -f '${policy_file}' && ! /usr/bin/test -L '${policy_file}' && /usr/bin/grep -qF '# ${marker}' '${policy_file}' )",
+    onlyif    => "/usr/bin/test -f '${pid_file}' || ( ! /usr/bin/test -L '${policy_file}' && /usr/bin/test -f '${policy_file}' && /usr/bin/grep -qF '# ${marker}' '${policy_file}' )",
     logoutput => 'on_failure',
   }
 }
