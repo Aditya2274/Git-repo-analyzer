@@ -1381,3 +1381,35 @@
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform operations, zero remote SSH connections, zero live Puppet/CA operations, zero Git pushes.
 - **Outcome**: Checkpoint 5A.4 fully implemented, secured, and validated; ready for commit.
+
+---
+
+## 2026-11-25: Phase 5A.4 — Targeted Hardening: Fail-Closed Credentials & First-Install Startup Ordering
+
+- **Task**: Apply two targeted hardening corrections to Checkpoint 5A.4 (production credential enforcement and first-installation package startup suppression / ordering) without altering the canonical architecture or beginning Phase 5A.5.
+- **Root Causes Identified**:
+  1. **Default Permissive Secret Handling**: `nagios::web::enforce_production_secret` defaulted to `false` and `common.yaml` / `web.pp` carried `$apr1$demo$hashedpassword`, risking accidental live deployment with a placeholder credential if an operator forgot to enable enforcement.
+  2. **Package-Triggered Premature Service Startup & Validation Gaps**: On Ubuntu 24.04, `apt-get install nagios4` (which depends on `nagios4-cgi` -> `apache2` recommendation) and `apt-get install apache2` trigger Debian maintainer scripts (`deb-systemd-invoke` / `invoke-rc.d`) during `Package` execution before Puppet writes `ports.conf` (`127.0.0.1:8080`), Nagios objects, or `htpasswd.users`, risking port 80 collision with NGINX or unconfigured daemon startup. Additionally, `refreshonly => true` validators alone would not re-run on retry if files were already on disk from a previously failed validation, and `nagios4_configtest_before_start` needed explicit dependency edges from `nagios.cfg`, `cgi.cfg`, and `resource.cfg` (caught via Puppet `--graph` DAG analysis).
+- **Actions Completed**:
+  - **Correction A — Fail-Closed Credential Enforcement (`nagios::web`, `nagios`, `common.yaml`)**:
+    - Switched `nagios::web::enforce_production_secret` default to `true` (and `nagios::enforce_production_secret` default to `undef` so Hiera/subclass defaults enforce `true` cleanly).
+    - Removed `$apr1$demo$hashedpassword` default from `web.pp` (`admin_password_hash = undef`) and removed the active placeholder key from `puppet/hieradata/common.yaml` (setting `nagios::web::enforce_production_secret: true` and documenting interactive hash generation).
+    - Enforced compilation failure on absent, empty/whitespace, colon/newline-containing, malformed (non-bcrypt/APR1/SHA-2), or placeholder credentials, with operator instructions (`htpasswd -B -C 12 -n nagiosadmin` — zero `htpasswd -b` plaintext CLI flags).
+    - Test/dev mode (`enforce_production_secret => false`) requires explicit override and explicit non-empty credential while emitting a loud Puppet security warning notify.
+  - **Correction B — Safe Startup Suppression & 9-Step Ordering (`nagios::install_guard`, `server.pp`, `web.pp`, `init.pp`)**:
+    - Added `puppet/modules/nagios/manifests/install_guard.pp` and templates `enable_policy_rc_d.sh.erb` / `disable_policy_rc_d.sh.erb`.
+    - Creates `/usr/sbin/policy-rc.d` (mode `0755`) + `/run/puppet-nagios-pkg-install.pid` strictly when target packages (`nagios4`, `monitoring-plugins-basic`, `apache2`, `apache2-utils`) are not yet installed AND no unrelated administrator-managed `policy-rc.d` exists.
+    - Scopes blocking (`exit 101`) exclusively to `nagios4` and `apache2` while the recorded Puppet parent PID is live; all unrelated daemons return `exit 0`; crashed/aborted runs immediately fail open (`exit 0`) once Puppet exits; explicit cleanup deletes only Puppet-marked files (`# PUPPET-MANAGED-TEMP-POLICY-RC-D: git-repo-analyzer-nagios`). Zero modifications or deletions of admin-managed `policy-rc.d`; zero masking; steady-state runs execute zero guard actions.
+    - Ordered full 9-step lifecycle cleanly: `enable_policy_rc_d` -> packages (`nagios4` -> `apache2`) -> `disable_policy_rc_d` -> `/etc/nagios4` & base configs -> `nagios::objects` -> Apache configs & `htpasswd.users` -> dual refresh (`refreshonly => true`) and pre-start (`unless => systemctl is-active`) configtest gates (`/usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg` & `/usr/sbin/apache2ctl configtest`) -> `Service['nagios4']` & `Service['apache2']`.
+  - **Test Suite Updates (`test_nagios_module.sh`, `test_common_module.sh`, `test_nrpe_module.sh`)**:
+    - Expanded `puppet/tests/test_nagios_module.sh` from 18 to **24 checks** adding: parser + ERB `sh -n` validation (Test 19), compiled Puppet `--graph` `expanded_relationships.dot` DFS reachability checks (Test 20), sandboxed `/tmp` `puppet apply` behavioral verification of scoped `policy-rc.d` blocking and cleanup (Test 21), admin `policy-rc.d` preservation and steady-state 0-change idempotency (Test 22), failed-install PID fail-open and orphan recovery cleanup (Test 23), and mocked validation failure blocking & steady-state zero-restart verification (Test 24). Upgraded Test 13 & Test 17 to prove fail-closed compilation on absent/empty/malformed/placeholder credentials.
+    - Updated `test_common_module.sh` Test 13 and `test_nrpe_module.sh` Test 17 so `app-server` `site.pp` compilation tests pass a temporary synthetic Hiera test-only fixture rather than weakening fail-closed production Hiera.
+  - **Validation Results & Limitations**:
+    - `puppet/tests/test_nagios_module.sh`: **24/24 PASS**
+    - `puppet/tests/test_nrpe_module.sh`: **19/19 PASS**
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 PASS**
+    - `puppet/tests/test_common_module.sh`: **14/14 PASS**
+    - Combined suite: **72/72 checks PASS**. `puppet parser validate` clean; `git diff --check` clean.
+    - Scope distinction: Behavior verified via static checks, ERB rendering, compiled Puppet `--graph` analysis, `--noop` catalog compilation for all 3 nodes, and sandboxed non-root `/tmp` `puppet apply` simulations; real Ubuntu `apt-get install nagios4`/`apache2` and live systemd convergence occur during Phase 8 after EC2 provisioning.
+    - Strictly compliant with Approval Boundary A (no AWS, SSH, remote execution, or git push).
+- **Outcome**: Both hardening corrections completed, verified (72/72 total checks passed), and ready for commit.

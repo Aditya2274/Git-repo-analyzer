@@ -413,35 +413,48 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 echo -n "[Test 17/${TOTAL_COUNT}] Fleet site.pp compilation across all three nodes... "
 export PUPPET_DIR
 python3 - << 'EOF'
-import os, subprocess
+import os, subprocess, tempfile
 
 puppet_dir = os.environ['PUPPET_DIR']
-for node in ['puppet-server', 'app-server', 'cicd-server']:
-    cmd = [
-        'puppet', 'apply', '--noop',
-        f'--modulepath={puppet_dir}/modules',
-        f'--hiera_config={puppet_dir}/hiera.yaml',
-        '--certname', node,
-        f'{puppet_dir}/manifests/site.pp'
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    assert res.returncode == 0, f'Compilation failed for node {node}: {res.stderr}'
-    combined = res.stdout + res.stderr
-    if node == 'puppet-server':
-        assert 'Service[nagios-nrpe-server]' in combined, 'puppet-server must manage NRPE service'
-        assert 'File[/etc/nagios/nrpe.cfg]' in combined, 'puppet-server must manage nrpe.cfg'
-        assert 'File[/usr/lib/nagios/plugins/check_puppetserver.sh]' in combined, 'puppet-server must manage check_puppetserver.sh'
-        assert 'check_jenkins.sh' not in combined, 'puppet-server must NOT manage check_jenkins.sh'
-        assert 'check_docker.sh' not in combined, 'puppet-server must NOT manage check_docker.sh'
-    elif node == 'cicd-server':
-        assert 'Service[nagios-nrpe-server]' in combined, 'cicd-server must manage NRPE service'
-        assert 'File[/etc/nagios/nrpe.cfg]' in combined, 'cicd-server must manage nrpe.cfg'
-        assert 'File[/usr/lib/nagios/plugins/check_jenkins.sh]' in combined, 'cicd-server must manage check_jenkins.sh'
-        assert 'File[/usr/lib/nagios/plugins/check_docker.sh]' in combined, 'cicd-server must manage check_docker.sh'
-        assert 'check_puppetserver.sh' not in combined, 'cicd-server must NOT manage check_puppetserver.sh'
-    elif node == 'app-server':
-        assert 'Package[nagios-nrpe-plugin]' in combined, 'app-server must manage nagios-nrpe-plugin'
-        assert 'Service[nagios-nrpe-server]' not in combined, 'app-server must NOT manage NRPE server'
+with tempfile.TemporaryDirectory() as tmpdir:
+    app_hiera = os.path.join(tmpdir, 'hiera.yaml')
+    app_override = os.path.join(tmpdir, 'test_app_override.yaml')
+    with open(app_override, 'w') as f:
+        f.write("---\nnagios::web::admin_password_hash: '$2y$12$TESTONLYHASHVALUEFORTESTING00000000000000000000000000'\n")
+    with open(app_hiera, 'w') as f:
+        f.write(
+            f"---\nversion: 5\nhierarchy:\n"
+            f"  - name: 'Test app override'\n    path: '{app_override}'\n"
+            f"  - name: 'Common data'\n    path: '{puppet_dir}/hieradata/common.yaml'\n"
+        )
+
+    for node in ['puppet-server', 'app-server', 'cicd-server']:
+        hiera_cfg = app_hiera if node == 'app-server' else f'{puppet_dir}/hiera.yaml'
+        cmd = [
+            'puppet', 'apply', '--noop',
+            f'--modulepath={puppet_dir}/modules',
+            f'--hiera_config={hiera_cfg}',
+            '--certname', node,
+            f'{puppet_dir}/manifests/site.pp'
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        assert res.returncode == 0, f'Compilation failed for node {node}: {res.stderr}'
+        combined = res.stdout + res.stderr
+        if node == 'puppet-server':
+            assert 'Service[nagios-nrpe-server]' in combined, 'puppet-server must manage NRPE service'
+            assert 'File[/etc/nagios/nrpe.cfg]' in combined, 'puppet-server must manage nrpe.cfg'
+            assert 'File[/usr/lib/nagios/plugins/check_puppetserver.sh]' in combined, 'puppet-server must manage check_puppetserver.sh'
+            assert 'check_jenkins.sh' not in combined, 'puppet-server must NOT manage check_jenkins.sh'
+            assert 'check_docker.sh' not in combined, 'puppet-server must NOT manage check_docker.sh'
+        elif node == 'cicd-server':
+            assert 'Service[nagios-nrpe-server]' in combined, 'cicd-server must manage NRPE service'
+            assert 'File[/etc/nagios/nrpe.cfg]' in combined, 'cicd-server must manage nrpe.cfg'
+            assert 'File[/usr/lib/nagios/plugins/check_jenkins.sh]' in combined, 'cicd-server must manage check_jenkins.sh'
+            assert 'File[/usr/lib/nagios/plugins/check_docker.sh]' in combined, 'cicd-server must manage check_docker.sh'
+            assert 'check_puppetserver.sh' not in combined, 'cicd-server must NOT manage check_puppetserver.sh'
+        elif node == 'app-server':
+            assert 'Package[nagios-nrpe-plugin]' in combined, 'app-server must manage nagios-nrpe-plugin'
+            assert 'Service[nagios-nrpe-server]' not in combined, 'app-server must NOT manage NRPE server'
 EOF
 echo "PASS (site.pp compiles for all three fleet nodes with correct role targeting)"
 PASSED_COUNT=$((PASSED_COUNT + 1))

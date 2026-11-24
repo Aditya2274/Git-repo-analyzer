@@ -257,19 +257,32 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 echo -n "[Test 13/${TOTAL_COUNT}] Master site.pp catalog compilation for all nodes... "
 export PUPPET_DIR
 python3 - << 'EOF'
-import os, subprocess
+import os, subprocess, tempfile
 
 puppet_dir = os.environ['PUPPET_DIR']
-for node in ['puppet-server', 'app-server', 'cicd-server']:
-    cmd = [
-        'puppet', 'apply', '--noop',
-        f'--modulepath={puppet_dir}/modules',
-        f'--hiera_config={puppet_dir}/hiera.yaml',
-        '--certname', node,
-        f'{puppet_dir}/manifests/site.pp'
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    assert res.returncode == 0, f'Catalog compilation for node {node} failed: {res.stderr}'
+with tempfile.TemporaryDirectory() as tmpdir:
+    app_hiera = os.path.join(tmpdir, 'hiera.yaml')
+    app_override = os.path.join(tmpdir, 'test_app_override.yaml')
+    with open(app_override, 'w') as f:
+        f.write("---\nnagios::web::admin_password_hash: '$2y$12$TESTONLYHASHVALUEFORTESTING00000000000000000000000000'\n")
+    with open(app_hiera, 'w') as f:
+        f.write(
+            f"---\nversion: 5\nhierarchy:\n"
+            f"  - name: 'Test app override'\n    path: '{app_override}'\n"
+            f"  - name: 'Common data'\n    path: '{puppet_dir}/hieradata/common.yaml'\n"
+        )
+
+    for node in ['puppet-server', 'app-server', 'cicd-server']:
+        hiera_cfg = app_hiera if node == 'app-server' else f'{puppet_dir}/hiera.yaml'
+        cmd = [
+            'puppet', 'apply', '--noop',
+            f'--modulepath={puppet_dir}/modules',
+            f'--hiera_config={hiera_cfg}',
+            '--certname', node,
+            f'{puppet_dir}/manifests/site.pp'
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        assert res.returncode == 0, f'Catalog compilation for node {node} failed: {res.stderr}'
 EOF
 echo "PASS (site.pp compiles successfully for all three fleet nodes)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
