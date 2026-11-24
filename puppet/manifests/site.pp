@@ -21,20 +21,20 @@ Exec {
 }
 
 # ------------------------------------------------------------------------------
-# Node 1: puppet-server (Central Configuration Management & Monitoring)
+# Node 1: puppet-server (Dedicated Puppet Server & CA, Monitored Target)
 # ------------------------------------------------------------------------------
 node 'puppet-server' {
   class { 'common': }
-  -> class { 'nrpe::client': }
-  -> class { 'nagios': }
+  -> class { 'nrpe::server': }
 }
 
 # ------------------------------------------------------------------------------
-# Node 2: app-server (Application Server & NRPE Endpoint)
+# Node 2: app-server (Application Server, Monitoring Hub & Nagios Core)
 # ------------------------------------------------------------------------------
 node 'app-server' {
   class { 'common': }
-  -> class { 'nrpe::server': }
+  -> class { 'nrpe::client': }
+  -> class { 'nagios': }
 }
 
 # ------------------------------------------------------------------------------

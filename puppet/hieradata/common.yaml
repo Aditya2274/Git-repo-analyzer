@@ -9,11 +9,13 @@ common::manage_puppet_agent: true
 common::puppet_agent_service: 'puppet'
 common::packages:
   - 'curl'
+  - 'wget'
   - 'git'
   - 'htop'
   - 'unzip'
   - 'tar'
   - 'jq'
+  - 'ca-certificates'
 
 # NRPE configuration parameters
 nrpe::server::server_port: 5666

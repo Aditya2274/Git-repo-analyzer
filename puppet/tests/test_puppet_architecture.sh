@@ -131,7 +131,7 @@ PASSED_COUNT=$((PASSED_COUNT + 1))
 # ------------------------------------------------------------------------------
 # 8. Node Classification: puppet-server
 # ------------------------------------------------------------------------------
-echo -n "[Test 8/15] Node classification: puppet-server (common + nagios + nrpe::client)... "
+echo -n "[Test 8/15] Node classification: puppet-server (common + nrpe::server)... "
 python3 -c "
 with open('${PUPPET_DIR}/manifests/site.pp') as f:
     content = f.read()
@@ -139,17 +139,17 @@ with open('${PUPPET_DIR}/manifests/site.pp') as f:
 assert \"node 'puppet-server'\" in content, 'site.pp must define node puppet-server'
 block = content.split(\"node 'puppet-server'\")[1].split(\"node 'app-server'\")[0]
 assert 'common' in block, 'puppet-server must include common'
-assert 'nagios' in block, 'puppet-server must include nagios'
-assert 'nrpe::client' in block, 'puppet-server must include nrpe::client'
-assert 'nrpe::server' not in block, 'puppet-server must not include nrpe::server'
+assert 'nrpe::server' in block, 'puppet-server must include nrpe::server'
+assert 'nagios' not in block, 'puppet-server must not include nagios'
+assert 'nrpe::client' not in block, 'puppet-server must not include nrpe::client'
 "
-echo "PASS (puppet-server classified with common, nagios, and nrpe::client)"
+echo "PASS (puppet-server classified with common and nrpe::server)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
 # 9. Node Classification: app-server
 # ------------------------------------------------------------------------------
-echo -n "[Test 9/15] Node classification: app-server (common + nrpe::server)... "
+echo -n "[Test 9/15] Node classification: app-server (common + nagios + nrpe::client)... "
 python3 -c "
 with open('${PUPPET_DIR}/manifests/site.pp') as f:
     content = f.read()
@@ -157,10 +157,11 @@ with open('${PUPPET_DIR}/manifests/site.pp') as f:
 assert \"node 'app-server'\" in content, 'site.pp must define node app-server'
 block = content.split(\"node 'app-server'\")[1].split(\"node 'cicd-server'\")[0]
 assert 'common' in block, 'app-server must include common'
-assert 'nrpe::server' in block, 'app-server must include nrpe::server'
-assert 'nagios' not in block, 'app-server must not include nagios'
+assert 'nagios' in block, 'app-server must include nagios'
+assert 'nrpe::client' in block, 'app-server must include nrpe::client'
+assert 'nrpe::server' not in block, 'app-server must not include nrpe::server'
 "
-echo "PASS (app-server classified with common and nrpe::server)"
+echo "PASS (app-server classified with common, nagios, and nrpe::client)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------

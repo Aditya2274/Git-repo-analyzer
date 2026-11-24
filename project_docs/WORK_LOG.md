@@ -1161,3 +1161,65 @@
   - **Operational Boundary Compliance**:
     - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes, and zero staging or committing of files.
 - **Outcome**: Checkpoint 5A.1 fully implemented and validated (15/15 checks passed); ready for Checkpoint 5A.2.
+
+---
+
+## 2026-11-24: Phase 5A — Pre-Checkpoint 5A.2 Architectural Reconciliation & Verification
+
+- **Task**: Resolve four pre-Checkpoint 5A.2 architectural, ownership, and Git status queries before proceeding to Checkpoint 5A.2.
+- **Objective**: Reconcile Nagios Core placement between Puppet manifests, Terraform security groups, and canonical documentation; verify Puppet Agent identity and CA initialization on `puppet-server`; formally confirm configuration placeholder boundaries; verify Git push non-execution and explain the 14-line ADR 011 diff.
+- **Actions Completed**:
+  - **Reconciled Nagios Core Placement & Topology**:
+    - Inspected `terraform/modules/ec2/main.tf`: confirmed `app_monitoring_sg` (EC2 2) has ingress on ports 80/443/22, while `puppet_server_sg` (EC2 1) and `cicd_analysis_sg` (EC2 3) allow ingress on port 5666 strictly from `app_monitoring_sg.id`.
+    - Confirmed `AGENTS.md` (lines 112, 132, 214) and ADR 005/006 mandate Nagios Core exclusively on EC2 2 (`app-server`), with EC2 1 dedicated to Puppet Server/CA ("No Nagios Core").
+    - Realigned `puppet/manifests/site.pp`:
+      - `node 'puppet-server'`: `class { 'common': } -> class { 'nrpe::server': }`
+      - `node 'app-server'`: `class { 'common': } -> class { 'nrpe::client': } -> class { 'nagios': }`
+      - `node 'cicd-server'`: `class { 'common': } -> class { 'nrpe::server': }`
+    - Updated `puppet/tests/test_puppet_architecture.sh` (Tests 8 and 9) to validate the reconciled topology.
+  - **Verified Puppet Agent Identity on `puppet-server`**:
+    - Inspected `ansible/roles/puppet_server/templates/puppet.conf.j2` and `ca.yml`: confirmed `puppet-server` is configured with `certname = puppet-server` and `server = puppet-server`.
+    - Confirmed CA initialization (`puppetserver ca setup --certname puppet-server`) automatically establishes the host certificate for `puppet-server`.
+    - Confirmed `common` module's steady-state management of `service { 'puppet': ensure => running, enable => true }` applies cleanly to the local agent daemon (`puppet.service`), distinct from `puppetserver.service`.
+    - Confirmed Phase 4 bootstrap safeguards (`puppet_agent_is_enrolled` cryptographic guard) remain intact.
+  - **Documented Configuration Placeholders & Staged Implementation Boundaries**:
+    - Confirmed `nagios::web::admin_password_hash` (`$apr1$demo$hashedpassword`) is explicitly a synthetic development placeholder to be substituted with a secure secret prior to live deployment.
+    - Confirmed full NRPE check definitions/templates and Nagios object/virtual-host definitions will be implemented in Checkpoints 5A.3 and 5A.4.
+  - **Verified Git Operation & ADR 011 Diff**:
+    - Confirmed zero `git push` commands were executed by the agent.
+    - Inspected commit `36c31e6` diff in `project_docs/ARCHITECTURE_DECISIONS.md`: confirmed the 14-line diff (7 additions, 7 deletions) strictly restored the canonical commit `2212683` baseline, removing unrelated additions made in `f0532b0`.
+  - **Validated Syntax & Architecture**:
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean.
+    - `bash puppet/tests/test_puppet_architecture.sh`: 15/15 checks passed (100% PASS).
+    - `git diff --check`: 0 whitespace errors.
+- **Outcome**: Architectural alignment confirmed; all 4 items resolved; ready for Checkpoint 5A.2.
+
+---
+
+## 2026-11-24: Phase 5A — Checkpoint 5A.2: Common Puppet Module Implementation & Validation
+
+- **Task**: Implement Checkpoint 5A.2 of Phase 5A (Puppet Configuration Management). Refine and fully implement the `common` Puppet module to establish an idempotent baseline across all three EC2 instances (`puppet-server`, `app-server`, `cicd-server`).
+- **Objective**: Manage baseline packages, configure system timezone idempotently, manage the steady-state Puppet Agent systemd service without interfering with `puppetserver.service`, enforce explicit linear dependency ordering, ensure safe repeated application, and validate via isolated tests under Approval Boundary A.
+- **Actions Completed**:
+  - **Refined `common` Class Definition (`puppet/modules/common/manifests/init.pp`)**:
+    - Strongly typed class parameters: `Array[String[1]] $packages`, `String[1] $timezone`, `Boolean $manage_puppet_agent`, `String[1] $puppet_agent_service`.
+    - Declared declarative package baseline: `package { $packages: ensure => present }` (`curl`, `wget`, `git`, `htop`, `unzip`, `tar`, `jq`, `ca-certificates`).
+    - Configured timezone idempotently: `/etc/timezone` file resource (`0644`, `root:root`) and `/etc/localtime` symlink targeting `/usr/share/zoneinfo/${timezone}` with `force => true`.
+    - Enforced explicit linear dependency ordering: `Package[$packages] -> File['/etc/timezone'] -> File['/etc/localtime'] -> Service[$puppet_agent_service]`.
+    - Implemented steady-state Puppet Agent service management: `service { $puppet_agent_service: ensure => running, enable => true, hasstatus => true, hasrestart => true }`.
+    - Protected `puppetserver.service` isolation: managed exclusively `puppet.service` without declaring or touching the JVM master service on `puppet-server`.
+    - Provided `manage_puppet_agent` toggle for maintenance or testing.
+  - **Resolved Duplicate Package Declaration**:
+    - Identified potential duplicate declaration on `app-server` where both `nrpe::client` and `nagios::server` declared `package { 'nagios-nrpe-plugin': }`.
+    - Scoped `nagios-nrpe-plugin` exclusively to `nrpe::client`, removing it from `nagios::server`'s plugin list and keeping `monitoring-plugins-basic`.
+  - **Authored Dedicated Checkpoint 5A.2 Validation Suite (`puppet/tests/test_common_module.sh`)**:
+    - Created 14 automated validation checks covering file presence, Puppet parser syntax, AST typing, package declarations, timezone file & symlink attributes, linear dependency chaining, service properties, isolation from `puppetserver`, conditional toggle behavior, `--noop` catalog compilation, Hiera v5 parameter binding, master `site.pp` fleet compilation across all three nodes, and cycle-free repeat application.
+    - Test results: **14/14 checks passed (100% pass rate)**.
+  - **Executed Architectural Regression Suite (`puppet/tests/test_puppet_architecture.sh`)**:
+    - Re-verified all 15 checks in `test_puppet_architecture.sh`: **15/15 checks passed (100% pass rate)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes.
+- **Outcome**: Checkpoint 5A.2 fully implemented and validated (14/14 tests in common module suite, 15/15 tests in architecture suite); ready for Checkpoint 5A.3.

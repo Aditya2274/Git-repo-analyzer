@@ -7,7 +7,6 @@ class nagios::server (
   String[1]        $service_name    = 'nagios4',
   Array[String[1]] $plugin_packages = [
     'monitoring-plugins-basic',
-    'nagios-nrpe-plugin',
   ],
 ) {
   package { $package_name:

@@ -258,8 +258,12 @@ flowchart TD
      - Verified all manifests via `puppet parser validate` with 100% syntax compliance.
      - Authored and executed dedicated test suite `puppet/tests/test_puppet_architecture.sh` (15/15 checks passed).
   2. **Checkpoint 5A.2: Common Module**:
-     - *Status*: **In Progress (Baseline Class Implemented; Refinement Scheduled)**.
-     - Responsibilities: baseline system packages, timezone configuration, and steady-state Puppet Agent service management (`service { 'puppet': ensure => running, enable => true }`) post-enrollment.
+     - *Status*: **Complete at Local Implementation & Verification Level (14/14 Tests Passed)**.
+     - Responsibilities: baseline system packages (`curl`, `wget`, `git`, `htop`, `unzip`, `tar`, `jq`, `ca-certificates`), timezone configuration (`/etc/timezone` and `/etc/localtime` symlink), and steady-state Puppet Agent service management (`service { 'puppet': ensure => running, enable => true }`) post-enrollment.
+     - Enforces explicit linear dependency ordering: `Package[$packages] -> File['/etc/timezone'] -> File['/etc/localtime'] -> Service[$puppet_agent_service]`.
+     - Preserves isolation: manages exclusively `puppet.service` without declaring or interfering with `puppetserver.service` on EC2 1.
+     - Supports `manage_puppet_agent` toggle for maintenance or testing.
+     - Validated via `puppet apply --noop`, Hiera v5 parameter binding, fleet-wide `site.pp` compilation across all three nodes, and dedicated test suite `puppet/tests/test_common_module.sh` (14/14 checks passed).
   3. **Checkpoint 5A.3: NRPE Module**:
      - *Status*: **In Progress (Server & Client Classes Implemented; Templates Scheduled)**.
      - Responsibilities: `nrpe::server` on monitored targets (`nagios-nrpe-server`, `monitoring-plugins-basic`, `allowed_hosts`, `check_*` definitions); `nrpe::client` on monitoring host (`nagios-nrpe-plugin`).
