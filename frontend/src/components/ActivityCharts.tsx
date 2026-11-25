@@ -1,0 +1,250 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { AnalysisApiClient, apiClient } from '../api/client';
+import { AnalysisResultsResponse } from '../types/analysis';
+
+export interface ActivityChartsProps {
+  results: AnalysisResultsResponse;
+  api?: AnalysisApiClient;
+}
+
+interface ChartArtifactCardProps {
+  title: string;
+  subtitle: string;
+  chartApiPath: string | null;
+  commitHistoryAvailable: boolean;
+  api: AnalysisApiClient;
+}
+
+function ChartArtifactCard({
+  title,
+  subtitle,
+  chartApiPath,
+  commitHistoryAvailable,
+  api,
+}: ChartArtifactCardProps): React.ReactElement {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  const retryLoad = useCallback(() => {
+    setReloadNonce((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    let activeUrl: string | null = null;
+    const controller = new AbortController();
+
+    if (!chartApiPath) {
+      setBlobUrl(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setBlobUrl(null);
+
+    api
+      .fetchChartBlobUrl(chartApiPath, controller.signal)
+      .then((objectUrl) => {
+        activeUrl = objectUrl;
+        setBlobUrl(objectUrl);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Unable to load chart image artifact.');
+        setLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+      if (activeUrl) {
+        URL.revokeObjectURL(activeUrl);
+      }
+    };
+  }, [api, chartApiPath, reloadNonce]);
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+      <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+
+      <div className="mt-4">
+        {!chartApiPath ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+            {commitHistoryAvailable
+              ? 'Chart artifact was not provided for this analysis.'
+              : 'Chart data unavailable: analyzer skips commit charts on repositories with zero commits.'}
+          </div>
+        ) : loading ? (
+          <div
+            role="status"
+            className="flex h-56 items-center justify-center rounded-lg border border-slate-100 bg-slate-50 text-sm text-slate-500"
+          >
+            Loading chart image...
+          </div>
+        ) : error ? (
+          <div
+            role="alert"
+            className="flex h-56 flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 text-center text-sm text-red-800"
+          >
+            <p>{error}</p>
+            <button
+              type="button"
+              onClick={retryLoad}
+              className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
+            >
+              Retry Chart Load
+            </button>
+          </div>
+        ) : blobUrl ? (
+          <img
+            src={blobUrl}
+            alt={title}
+            className="h-auto w-full rounded-lg border border-slate-100 bg-white object-contain"
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function shortenFileName(filePath: string): string {
+  const parts = filePath.split('/');
+  return parts.length > 2 ? `.../${parts.slice(-2).join('/')}` : filePath;
+}
+
+export function ActivityCharts({ results, api = apiClient }: ActivityChartsProps): React.ReactElement {
+  const { metrics, charts } = results;
+  const { hotspots, busFactor, repository } = metrics;
+
+  const hotspotChartData = hotspots.topHotspots.map((h) => ({
+    label: shortenFileName(h.file),
+    fullPath: h.file,
+    hotspotScore: h.hotspotScore,
+  }));
+
+  const authorDoaData = busFactor.authorSummary.map((a) => ({
+    author: a.author,
+    fileCount: a.fileCount,
+    maxDoa: a.maxDoa,
+  }));
+
+  return (
+    <section aria-label="Charts and visual analytics" className="space-y-6">
+      {/* Backend Raster PNG Artifacts */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">Analyzer Activity Charts (PNG Artifacts)</h2>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Raster PNGs fetched via <code className="font-mono">/api/analyses/:id/charts/:name</code> without fabricating client series.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <ChartArtifactCard
+            title="Commits Per Author (PNG Artifact)"
+            subtitle="Generated by ai/chartGenerator.js across Git shortlog"
+            chartApiPath={charts.commitsPerAuthor}
+            commitHistoryAvailable={repository.commitHistoryAvailable}
+            api={api}
+          />
+          <ChartArtifactCard
+            title="Daily Commit Activity (PNG Artifact)"
+            subtitle="Generated by ai/chartGenerator.js from Git commit dates"
+            chartApiPath={charts.dailyActivity}
+            commitHistoryAvailable={repository.commitHistoryAvailable}
+            api={api}
+          />
+        </div>
+      </div>
+
+      {/* Structured metrics.json Recharts Visualizations */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">
+          Structured Metrics Charts (<code className="font-mono text-base">metrics.json</code>)
+        </h2>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Interactive Recharts graphs strictly backed by structured arrays present in <code className="font-mono">metrics.json</code>.
+        </p>
+
+        {hotspotChartData.length === 0 && authorDoaData.length === 0 ? (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-600 shadow-sm">
+            No structured hotspot or file-ownership datasets are available to chart for this repository.
+          </div>
+        ) : (
+          <div className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {hotspotChartData.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-900">
+                  {hotspots.windowDays}-Day Hotspot Scores
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Exponential-decay churn volatility across top modified files in the last {hotspots.windowDays} days
+                </p>
+                <div className="mt-4 h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hotspotChartData} margin={{ top: 8, right: 16, left: 0, bottom: 24 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 11, fill: '#475569' }}
+                        interval={0}
+                        angle={-15}
+                        textAnchor="end"
+                        height={50}
+                      />
+                      <YAxis tick={{ fontSize: 11, fill: '#475569' }} />
+                      <Tooltip />
+                      <Bar dataKey="hotspotScore" name="Hotspot Score" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {authorDoaData.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-900">
+                  Primary File Ownership by Author (DOA)
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Number of tracked files where each author leads Degree of Authorship (not total commit count)
+                </p>
+                <div className="mt-4 h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={authorDoaData} margin={{ top: 8, right: 16, left: 0, bottom: 24 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="author"
+                        tick={{ fontSize: 11, fill: '#475569' }}
+                        interval={0}
+                        angle={-15}
+                        textAnchor="end"
+                        height={50}
+                      />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#475569' }} />
+                      <Tooltip />
+                      <Bar dataKey="fileCount" name="Owned Files (DOA)" fill="#0f766e" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}

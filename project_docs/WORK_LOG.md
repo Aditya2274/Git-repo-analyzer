@@ -1487,3 +1487,20 @@
 - **Verification**:
   - `npm run typecheck`, `npm run build`, and `npm test` passed cleanly (`21/21` across all Checkpoint 6.1 & 6.2 suites including `MockJenkinsClient`, mocked-HTTP `LiveJenkinsClient`, `ArtifactIngestor`, `/api/analyses*` API E2E, and restart recovery). `dist/server.js` smoke check and `git diff --check` clean.
 - **Outcome**: Checkpoint 6.2 complete under Approval Boundary A; Phase 6 remains in progress awaiting Checkpoint 6.3 (`frontend/`).
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.3: Frontend Implementation
+
+- **Task**: Implement Checkpoint 6.3 of Phase 6 (`frontend/`) under Architecture Decision Option A (strict freeze on existing `analyze2.sh`, `ai/*`, `Dockerfile`, `Jenkinsfile`, `backend/`, and all Terraform/Ansible/Puppet files) under Approval Boundary A.
+- **Implemented (`frontend/`)**:
+  - Project scaffold & build tooling (`frontend/package.json`, `frontend/tsconfig.json`, `frontend/tsconfig.node.json`, `frontend/vite.config.ts`, `frontend/tailwind.config.js`, `frontend/postcss.config.js`, `frontend/index.html`, `frontend/src/vite-env.d.ts`, `frontend/.env.example`, `frontend/.gitignore`, `frontend/src/index.css`) targeting relative `/api` routes cleanly in both Vite dev proxy (`http://127.0.0.1:3000`) and future production NGINX reverse proxy without hardcoded IPs.
+  - Typed API contracts & fetch client (`frontend/src/types/analysis.ts`, `frontend/src/api/client.ts`) matching Phase 6.1/6.2 backend envelopes (`/api/health`, `POST /api/analyses`, `GET /api/analyses/:id`, `GET /api/analyses/:id/results`, `/api/analyses/:id/charts/:name`), including PNG content-type verification and structured `ApiClientError` handling.
+  - Resilient polling hook (`frontend/src/hooks/useAnalysisPolling.ts`) backing off from `2s` up to a `10s` interval ceiling, enforcing a `10m` maximum timeout, handling transient connection blips with retry capability, and stopping cleanly on terminal states (`COMPLETED`, `FAILED`, `CANCELLED`).
+  - React dashboard components (`frontend/src/App.tsx`, `frontend/src/components/{RepoInputForm,AnalysisProgress,MetricCards,ActivityCharts,MarkdownReport}.tsx`): client sanity URL checks + duplicate submission prevention + bookmarkable `?analysisId=` & session-local history pills, truthful status progression without fake `%` bars or internal Jenkins IDs, accurate `metrics.json` labels (`30`-day hotspot churn window, DOA ownership, branch drift without fabricated all-time commit counts), raster PNG artifact rendering with zero-commit/error fallbacks (no broken `<img>`), Recharts visuals strictly from `metrics.json`, and safe `react-markdown` + `remark-gfm` rendering without raw HTML (`rehype-raw` omitted).
+  - Unit & workflow tests (`frontend/test/{setup.ts,apiClient.test.ts,repoInputForm.test.tsx,analysisPolling.test.tsx,resultsAndMarkdown.test.tsx,appWorkflow.test.tsx}`).
+- **Verification**:
+  - `npm run typecheck` (`tsc --noEmit`), `npm run build` (`vite build` -> `dist/`), and `npm test` (`5` files, `14` tests passed).
+  - Built bundle scan (`frontend/dist/`) confirmed zero secrets, zero Jenkins URLs/tokens/IDs, and zero Vite dev/HMR tokens.
+  - Local E2E verification against real compiled `backend/dist/server.js` (`JENKINS_MOCK_MODE=true`) via both Vite proxy (`:5173`) and static `dist/` + `/api/` proxy (`:4173`) with headless Chrome DOM inspection confirmed `200 UP`, `400 VALIDATION_ERROR`, `404 NOT_FOUND`, `QUEUED -> BUILDING -> COMPLETED`, results ingestion, valid PNG chart bytes, and rendered UI DOM (`Backend API: UP`, metrics, blob PNG images, Recharts SVG). `git diff --check` clean.
+- **Outcome**: Checkpoint 6.3 complete under Approval Boundary A; Phase 6 remains in progress awaiting Checkpoint 6.4.
