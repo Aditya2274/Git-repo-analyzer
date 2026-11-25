@@ -1457,3 +1457,18 @@
   - Phase 4 Ansible regression suites (`ansible/tests/test_*.sh`): **208/208 checks PASS** across all 8 suites.
   - `puppet parser validate`, 3-node catalog compilation, and `git diff --check` clean. Live EC2 package/systemd convergence remains gated behind Approval Boundary B.
 - **Outcome**: Phase 5A validation and consolidation complete under Approval Boundary A; staged changes ready for user review before commit.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.1: Backend Core, Security Validation & Persistent Store
+
+- **Task**: Implement Checkpoint 6.1 of Phase 6 under Approval Boundary A without creating `frontend/` or modifying analyzer, Docker, Jenkins, Terraform, Ansible, or Puppet files.
+- **Implemented (`backend/`)**:
+  - Project & strict TypeScript build setup (`backend/package.json`, `backend/tsconfig.json`, `backend/tsconfig.build.json`, `backend/.gitignore`, `backend/.env.example`) with `strict`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`.
+  - Centralized Zod environment validation (`backend/src/config/env.ts`) supporting dev and production settings, blocking `SSRF_CHECK_DNS=false` in production, and conditionalizing Jenkins URL/credentials on `JENKINS_MOCK_MODE=false`.
+  - Defense-in-depth SSRF validation (`backend/src/validators/ipGuard.ts`, `backend/src/validators/repoValidator.ts`): separate IPv4/IPv6 `net.BlockList` guards rejecting loopback, RFC 1918, link-local/`169.254.169.254`, CGNAT, multicast, reserved, zone-scoped, mapped, and tunneled addresses; strict HTTPS + `github.com`-only URL syntax validation; multi-address DNS resolution check; pinned socket lookup (`createPinnedLookup`) + `socket.remoteAddress` check defeating DNS rebinding; manual multi-hop redirect re-validation defeating redirect SSRF.
+  - Lightweight atomic disk store (`backend/src/services/analysisStore.ts`): serialized writes via internal mutex, same-directory temp file + `fsync` + atomic `rename`, orphan temp cleanup, explicit corruption errors, preserved `COMPLETED`/`FAILED`/`CANCELLED` history, and restart recovery transitioning undispatched/expired `QUEUED`/`BUILDING` jobs to `FAILED` while preserving valid resumable in-flight handles for Checkpoint 6.2.
+  - Reserved pure `IJenkinsClient` interface (`backend/src/services/jenkinsClient.ts`) and Express HTTP shell (`backend/src/app.ts`, `backend/src/routes/health.ts`, `backend/src/server.ts`, `backend/src/utils/errors.ts`) exposing `GET /api/health`, security headers, CORS validation, and standard `{ error: { code, message, details } }` JSON errors.
+- **Verification**:
+  - `npm run typecheck`, `npm run build`, `npm test` (12/12 tests passing across validator/SSRF, persistent store/recovery/atomic failure preservation, env/health/CORS/error suites), production `node dist/server.js` smoke check, and `git diff --check` clean under Approval Boundary A.
+- **Outcome**: Checkpoint 6.1 complete and awaiting review prior to Checkpoint 6.2; Phase 6 remains in progress.

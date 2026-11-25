@@ -1,0 +1,24 @@
+{
+  "name": "git-repo-analyzer-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Express + TypeScript API for AI-Powered Git Repository Analyzer",
+  "main": "dist/server.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "test": "tsc -p tsconfig.json && node --test dist-test/test/*.test.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.3"
+  }
+}
