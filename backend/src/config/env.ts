@@ -61,6 +61,8 @@ const RawEnvSchema = z.object({
   JENKINS_USER: z.string().trim().optional(),
   JENKINS_API_TOKEN: z.string().trim().optional(),
   JENKINS_JOB_NAME: z.string().trim().min(1).default('git-repo-analyzer'),
+  JENKINS_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(500).max(60000).default(5000),
+  POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60000).default(1500),
 });
 
 export interface AppConfig {
@@ -71,12 +73,14 @@ export interface AppConfig {
   corsOrigins: string[];
   ssrfCheckDns: boolean;
   analysisTimeoutMs: number;
+  pollIntervalMs: number;
   jenkins: {
     mockMode: boolean;
     url: string | null;
     user: string | null;
     apiToken: string | null;
     jobName: string;
+    requestTimeoutMs: number;
   };
 }
 
@@ -132,12 +136,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     corsOrigins,
     ssrfCheckDns,
     analysisTimeoutMs: raw.ANALYSIS_TIMEOUT_MS,
+    pollIntervalMs: raw.POLL_INTERVAL_MS,
     jenkins: {
       mockMode: jenkinsMockMode,
       url: jenkinsUrl,
       user: jenkinsUser,
       apiToken: jenkinsApiToken,
       jobName: raw.JENKINS_JOB_NAME,
+      requestTimeoutMs: raw.JENKINS_REQUEST_TIMEOUT_MS,
     },
   };
 }

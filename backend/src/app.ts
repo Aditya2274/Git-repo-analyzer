@@ -1,20 +1,23 @@
 import cors from 'cors';
 import express, { Express, NextFunction, Request, Response } from 'express';
 import { AppConfig } from './config/env';
+import { createAnalysesRouter } from './routes/analyses';
 import { createHealthRouter } from './routes/health';
+import { AnalysisManager } from './services/analysisManager';
 import { FileAnalysisStore } from './services/analysisStore';
 import { AppError, CorsForbiddenError, NotFoundError, formatErrorResponse } from './utils/errors';
 
 export interface AppDependencies {
   config: AppConfig;
   store: FileAnalysisStore;
+  analysisManager?: AnalysisManager;
 }
 
 /**
  * Creates the Express application with centralized security headers, strict CORS
- * origin validation, canonical /api/health endpoint, and standard JSON error handling.
+ * origin validation, canonical API endpoints, and standard JSON error handling.
  */
-export function createApp({ config, store }: AppDependencies): Express {
+export function createApp({ config, store, analysisManager }: AppDependencies): Express {
   const app = express();
 
   app.disable('x-powered-by');
@@ -50,6 +53,9 @@ export function createApp({ config, store }: AppDependencies): Express {
   app.use(express.json({ limit: '64kb' }));
 
   app.use('/api', createHealthRouter(store));
+  if (analysisManager) {
+    app.use('/api', createAnalysesRouter(analysisManager));
+  }
 
   app.use((req: Request, _res: Response, next: NextFunction) => {
     next(new NotFoundError(`Route ${req.method} ${req.originalUrl} was not found`));

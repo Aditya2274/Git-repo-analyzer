@@ -1472,3 +1472,18 @@
 - **Verification**:
   - `npm run typecheck`, `npm run build`, `npm test` (12/12 tests passing across validator/SSRF, persistent store/recovery/atomic failure preservation, env/health/CORS/error suites), production `node dist/server.js` smoke check, and `git diff --check` clean under Approval Boundary A.
 - **Outcome**: Checkpoint 6.1 complete and awaiting review prior to Checkpoint 6.2; Phase 6 remains in progress.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.2: Jenkins Client Abstraction & Analysis API
+
+- **Task**: Implement `IJenkinsClient`, `MockJenkinsClient`, `LiveJenkinsClient`, isolated artifact ingestion, background polling lifecycle with restart recovery, and canonical `/api/analyses*` endpoints under Approval Boundary A (leaving `frontend/`, analyzer scripts, `Jenkinsfile`, and infra untouched).
+- **Implemented (`backend/`)**:
+  - Extended `backend/src/services/jenkinsClient.ts`, `backend/src/types/analysis.ts`, `backend/src/config/env.ts`, `backend/src/app.ts`, and `backend/src/server.ts`.
+  - Added deterministic `MockJenkinsClient` (`backend/src/services/mockJenkinsClient.ts`) simulating queue (`2s`) -> build (`5s`) -> terminal outcomes (`SUCCESS`, `FAILURE`, `ABORTED`) with analyzer-compatible `metrics.json`, `summary.md`, and PNG fixtures (including zero-commit omission).
+  - Added `LiveJenkinsClient` (`backend/src/services/liveJenkinsClient.ts`) with same-origin controller URL enforcement, manual redirect checks preventing credential leakage, CSRF crumb handling, bounded response reads, Zod response validation, traversal rejection on artifact paths, and secret redaction across error paths.
+  - Added isolated `ArtifactIngestor` (`backend/src/services/artifactIngestion.ts`) validating analyzer `metrics.json` schema, UTF-8 `summary.md`, PNG magic bytes, non-zero-commit chart completeness, and non-executable atomic PNG caching (`<DATA_DIR>/artifacts/<analysisId>/`), refusing to fabricate missing artifacts.
+  - Added `AnalysisManager` (`backend/src/services/analysisManager.ts`) & routes (`backend/src/routes/analyses.ts`) for `POST /api/analyses` (`202`), `GET /api/analyses/:id` (`QUEUED|BUILDING|COMPLETED|FAILED|CANCELLED`, internal Jenkins IDs stripped), `GET /api/analyses/:id/results` (`409` while incomplete, `200` when ready), and `GET /api/analyses/:id/charts/:name` (strict allowlist preventing path traversal), plus restart resumption without duplicate `triggerJob` calls. (Single-process file store assumption preserved per ADR 001/009.)
+- **Verification**:
+  - `npm run typecheck`, `npm run build`, and `npm test` passed cleanly (`21/21` across all Checkpoint 6.1 & 6.2 suites including `MockJenkinsClient`, mocked-HTTP `LiveJenkinsClient`, `ArtifactIngestor`, `/api/analyses*` API E2E, and restart recovery). `dist/server.js` smoke check and `git diff --check` clean.
+- **Outcome**: Checkpoint 6.2 complete under Approval Boundary A; Phase 6 remains in progress awaiting Checkpoint 6.3 (`frontend/`).
