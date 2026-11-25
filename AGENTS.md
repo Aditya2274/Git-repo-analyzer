@@ -487,7 +487,7 @@ Ansible and Puppet must have clearly separated responsibilities governed by an e
 | **Puppet Server & CA** | Installs & tunes JVM heap | - | Ansible installs packages, tunes JVM, starts `puppetserver`. |
 | **Puppet Agent & Enrollment**| Installs agent & CSR submit | - | Ansible oversees controlled CSR signing; hands over to agent. |
 | **NGINX Virtual Host & Config**| Installs baseline package | **Exclusively Owns** | Ansible installs package; Puppet manages virtual hosts and proxies. |
-| **Node.js 20 LTS Runtime** | - | **Exclusively Owns** | Puppet deploys and manages Node.js runtime on EC2 2. |
+| **Node.js 24 LTS Runtime** | - | **Exclusively Owns** | Puppet deploys and manages Node.js 24 LTS runtime on EC2 2. |
 | **Backend Systemd Service** | - | **Exclusively Owns** | Puppet deploys `git-repo-analyzer-backend.service` and env files. |
 | **Nagios Core & Plugins** | - | **Exclusively Owns** | Puppet compiles, configures, and manages Nagios on EC2 2. |
 | **NRPE Daemon & Checks** | - | **Exclusively Owns** | Puppet configures `nrpe.cfg` and check scripts on EC2 1 & EC2 3. |
@@ -865,7 +865,7 @@ Do not attempt to implement the entire project in one operation.
 
 ## Phase 5B — Puppet-Managed Application Configuration
 - Author Puppet manifests to deploy finalized application contracts on EC2 2:
-  - Deploy Node.js 20 LTS runtime.
+  - Deploy Node.js 24 LTS runtime.
   - Deploy backend systemd service unit (`git-repo-analyzer-backend.service`) and environment file (`/etc/git-repo-analyzer/backend.env`).
   - Deploy NGINX production virtual host serving React static assets and reverse-proxying `/api/` to Express.
 - Verify desired-state enforcement and configuration drift correction.

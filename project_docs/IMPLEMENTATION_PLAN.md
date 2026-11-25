@@ -374,11 +374,11 @@ flowchart TD
 ---
 
 ### Phase 5B: Puppet-Managed Application Configuration
-- **Objective:** Author and apply Puppet manifests to deploy the Node.js 20 LTS runtime, backend systemd service unit, NGINX virtual hosts, and environment configurations on EC2 2 based on the finalized contracts from Phase 6.
+- **Objective:** Author and apply Puppet manifests to deploy the Node.js 24 LTS runtime, backend systemd service unit, NGINX virtual hosts, and environment configurations on EC2 2 based on the finalized contracts from Phase 6.
 - **Prerequisites:** Phase 6 completion (application artifacts and contracts verified).
 - **Subtasks:**
   1. **Deploy Node.js Runtime via Puppet (`modules/application/manifests/nodejs.pp`)**:
-     - Deploy NodeSource Node.js 20 LTS repository on EC2 2; install `nodejs`.
+     - Deploy signed NodeSource Node.js 24 LTS repository (`node_24.x` / `nodistro`) on EC2 2; install `nodejs` (providing `/usr/bin/node`).
   2. **Deploy Application Files and Systemd Unit (`modules/application/manifests/backend.pp`)**:
      - Ensure system group and user `gitrepo` exist (`--system --no-create-home`).
      - Create application directories: `/opt/git-repo-analyzer/backend` (`gitrepo:gitrepo`, `0755`), `/var/www/git-repo-analyzer` (`www-data:www-data`, `0755`), `/etc/git-repo-analyzer` (`root:gitrepo`, `0750`).
@@ -394,7 +394,7 @@ flowchart TD
      - Run `puppet agent -t --detailed-exitcodes` on EC2 2. Verify exit code is 2 (applied) on first run and 0 (idempotent) on rerun.
      - Verify local HTTP response: `curl -s http://127.0.0.1/api/health` returns `UP`.
 - **Completion Criteria:**
-  - Node.js 20 LTS active on EC2 2.
+  - Node.js 24 LTS active on EC2 2.
   - Backend systemd service running as `gitrepo` user and managed by Puppet.
   - NGINX serving frontend assets and proxying `/api/` requests to Express.
   - Puppet catalog converges cleanly with zero errors.

@@ -1504,3 +1504,54 @@
   - Built bundle scan (`frontend/dist/`) confirmed zero secrets, zero Jenkins URLs/tokens/IDs, and zero Vite dev/HMR tokens.
   - Local E2E verification against real compiled `backend/dist/server.js` (`JENKINS_MOCK_MODE=true`) via both Vite proxy (`:5173`) and static `dist/` + `/api/` proxy (`:4173`) with headless Chrome DOM inspection confirmed `200 UP`, `400 VALIDATION_ERROR`, `404 NOT_FOUND`, `QUEUED -> BUILDING -> COMPLETED`, results ingestion, valid PNG chart bytes, and rendered UI DOM (`Backend API: UP`, metrics, blob PNG images, Recharts SVG). `git diff --check` clean.
 - **Outcome**: Checkpoint 6.3 complete under Approval Boundary A; Phase 6 remains in progress awaiting Checkpoint 6.4.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.4: Integrated Build Verification & Phase 5B Handover
+
+- **Task**: Execute Checkpoint 6.4 integrated build verification, runtime/persistence checks, and Phase 5B handover documentation under Approval Boundary A (`feat/terraform-infrastructure` baseline `268df23`), without altering `analyze2.sh`, `ai/*`, `Dockerfile`, `Jenkinsfile`, `backend/`, `frontend/`, Terraform, Ansible, or Phase 5A Puppet modules.
+- **Executed Verification (Local / Mock Jenkins)**:
+  - Production builds & test suites: `backend` (`npm run typecheck && npm run build && npm test` $\rightarrow$ **21/21 passed**, `dist/server.js` verified runtime-only imports `express`/`cors`/`zod` with zero devDependencies) and `frontend` (`npm run typecheck && npm run build && npm test` $\rightarrow$ **5 files, 14/14 passed**, `frontend/dist/` built cleanly using relative `/api` routes with no Vite dev server).
+  - Compiled production E2E + restart test against live `backend/dist/server.js` (`NODE_ENV=production`, `JENKINS_MOCK_MODE=true`) and NGINX-equivalent static+`/api/` proxy (`http://127.0.0.1:4173`):
+    - Verified fail-closed startup exits (`exit 1`) on `SSRF_CHECK_DNS=false` in production and `JENKINS_MOCK_MODE=false` without Jenkins credentials.
+    - Verified `GET /api/health` (`200 UP`), SPA fallback, `400 VALIDATION_ERROR`, `403 CORS_FORBIDDEN`, premature `/results` (`409 CONFLICT`), `QUEUED -> BUILDING -> COMPLETED`, results + PNG charts, and post-`SIGTERM` cold restart recovery (`preservedCompleted: 1`, interrupted pre-dispatch job transitioned to `FAILED`, orphan temp file cleaned, post-restart headless Chrome DOM rendering verified).
+    - Empirically observed that leaving `CORS_ORIGIN` empty while proxying browser requests bearing `Origin: http://127.0.0.1:4173` causes Express `cors()` to reject `POST` with `403 CORS_FORBIDDEN` — codified in Phase 5B handover as requiring Terraform-derived `CORS_ORIGIN`.
+  - Scenario HTTP verification over compiled `backend/dist/` modules (`FAILED`, `CANCELLED` in queue, `zero_commits` returning `null` chart URLs and `404` chart downloads, `missing_chart` failing closed with `ARTIFACT_INGESTION_FAILED`).
+- **Handover Documentation Authored**:
+  - Created [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md) documenting the directory/ownership matrix, runtime & static deployment specs, full 14-variable classification (including all 9 core variables plus `HOST`, `SSRF_CHECK_DNS`, and timeout/poll controls), systemd & NGINX handover contracts, health check endpoint, Puppet Phase 5B ordering, post-Terraform/Phase 7 dependencies, and known limitations.
+  - Updated [`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md) marking Phase 6 Checkpoints 6.1–6.4 complete locally under Approval Boundary A (with live Jenkins deferred to Phase 7 and cloud provisioning awaiting Boundary B).
+- **Outcome**: Checkpoint 6.4 and Phase 6 local implementation complete under Approval Boundary A; ready for user review prior to committing Checkpoint 6.4 documentation or proceeding to Phase 5B.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.4 Correction: Node.js 24 LTS Runtime Alignment
+
+- **Task**: Align the Phase 5B application runtime contract from EOL Node.js 20 LTS (EOL April 30, 2026) to **Node.js 24 LTS** (EOL April 30, 2028), verify local compatibility and dependency engine constraints, and update Phase 5B forward-looking contracts under Approval Boundary A without altering `backend/`, `frontend/`, `Dockerfile`, or historical phase logs.
+- **Compatibility & Installation Findings**:
+  - Local runtime verified at Node `v24.13.1` / `npm 11.8.0`.
+  - Audited all `engines.node` entries across `backend/package-lock.json` (`57` entries) and `frontend/package-lock.json` (`249` entries): zero `<24` or `^20` upper bounds exist; backend runtime relies strictly on `express`, `cors`, `zod`, and standard Node built-ins (`node:dns`, `node:http`, `node:https`, `node:net`, `node:crypto`, `node:fs/promises`, `node:path`).
+  - Executed `npm ci && npm run typecheck && npm run build && npm test` on `backend` (`21/21` passed) and `frontend` (`5` files, `14/14` passed) cleanly under Node `v24.13.1`.
+  - Ubuntu 24.04 LTS runtime installation path codified in `project_docs/PHASE_5B_HANDOVER.md` using NodeSource `https://deb.nodesource.com/node_24.x` (`nodistro` suite + `nodesource-repo.gpg.key`), providing `/usr/bin/node` for systemd; live EC2 package installation remains deferred to **Phase 5B**.
+- **Updated Documentation**: [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md), [`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md), [`AGENTS.md`](file:///home/aditya-2274/Git-repo-analyzer/AGENTS.md), [`project_docs/ARCHITECTURE_DECISIONS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ARCHITECTURE_DECISIONS.md), [`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md), and [`project_docs/IMPLEMENTATION_PLAN.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/IMPLEMENTATION_PLAN.md) (future Phase 5B runtime references only; `Dockerfile` and historical Phase 2/3/4 logs untouched).
+- **Outcome**: Checkpoint 6.4 Node.js 24 LTS alignment complete under Approval Boundary A; awaiting approval before committing or starting Phase 5B.
+
+---
+
+## 2026-11-25: Phase 6 — Final Closure Corrections (Authorization Boundary & Artifact Staging Strategy)
+
+- **Task**: Apply two scoped documentation corrections to complete Phase 6 handover readiness under Approval Boundary A without changing code, lockfiles, Terraform, Ansible, Phase 5A Puppet modules, or `Dockerfile`, and without starting Phase 5B implementation or live cloud provisioning.
+- **Corrections Applied**:
+  - **Phase 5B vs Boundary B Authorization Clarity ([`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md)):** Replaced ambiguous `Next Phase` phrasing with explicit separation between **Boundary A** (local Phase 5B Puppet manifest/template/test authoring and catalog validation only) and **Boundary B** (separate explicit operator approval required for Terraform provisioning, SSH access, remote Ansible execution, live Puppet runs, and live EC2 deployment).
+  - **Artifact Staging Strategy Finalized ([`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md) §2 & §9–§11):** Evaluated direct Ansible copy, operator-built versioned release archive transferred over SSH, EC2 3 CI transfer (incompatible with Terraform SGs and Phase 5B-before-7 ordering), and S3 pull (no IAM profile on EC2 2; state bucket reserved for Terraform state). Codified the chosen strategy (designed; implementation deferred to Phase 5B / execution deferred to Boundary B): pre-built immutable versioned `.tar.gz` (`backend/` with `npm ci --omit=dev` + `frontend/dist/` + `release-manifest.json` + `.sha256`) staged into `/var/cache/git-repo-analyzer/staging`, with Puppet exclusively owning checksum verification, extraction into `/opt/git-repo-analyzer/releases/<release-id>`, symlink switching (`/opt/git-repo-analyzer/backend`, `/var/www/git-repo-analyzer/dist`), preservation of external persistent `DATA_DIR` (`/var/lib/git-repo-analyzer/data`), and retention of 2–3 prior releases for deterministic rollback.
+- **Outcome**: Phase 6 closure documentation ready for single documentation commit upon explicit operator approval.
+
+---
+
+## 2026-11-25: Phase 6 — Final Pre-Commit Handover Refinements (Checksum, Permissions & Rollback)
+
+- **Task**: Address three final review refinements in [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md) under Approval Boundary A without altering `PROJECT_STATUS.md`, application source code, dependencies, or existing infrastructure files.
+- **Refinements Applied**:
+  - **Eliminated Checksum Circularity (§9.3–§9.5):** Removed `archiveSha256` from the inner `release/release-manifest.json`; specified calculating `.tar.gz.sha256` externally **after** tarball creation, transferring `.tar.gz` + `.tar.gz.sha256` sidecar into staging, and enforcing both Hiera `expected_sha256` comparison and `sha256sum -c --strict` prior to `tar` extraction.
+  - **Clarified Non-Writable Release Permissions (§2):** Defined explicit parent directory permissions (`/opt/git-repo-analyzer`, `/opt/git-repo-analyzer/releases` `root:root` `0755`; `/var/www/git-repo-analyzer` `root:www-data` `0750`; `/var/lib/git-repo-analyzer` `root:gitrepo` `0750`), read/execute/traverse release subtree permissions (`root:gitrepo` `0750`/`0640` for `backend/`, `root:www-data` `0750`/`0640` for `frontend/dist/`), symlink ownership, zero write access for runtime services inside `releases/`, and preserved writable `DATA_DIR` (`gitrepo:gitrepo`, `0750`) + `gitrepo:gitrepo` service identity.
+  - **Clarified Rollback Retention & Health Gate (§9.3, §9.5):** Explicitly gated pruning on post-activation `GET /api/health` + `GET /` `200` verification so the prior known-good release remains intact on disk, enabling zero-rebuild/zero-retransfer Hiera rollback (`.extracted.ok` check skips retransfer/re-extraction) with mutable state preserved outside `releases/`.
+- **Outcome**: Handover specification clean and consistent; awaiting operator commit approval before starting Phase 5B.
