@@ -36,3 +36,22 @@ nagios::web::admin_user: 'nagiosadmin'
 nagios::web::listen_port: 8080
 nagios::web::bind_address: '127.0.0.1'
 nagios::web::enforce_production_secret: true
+
+# ------------------------------------------------------------------------------
+# Phase 5B: Application Deployment Defaults (app-server / EC2 2 exclusively)
+# Non-secret baseline only. Release versions, SHA-256 digests, CORS origins,
+# and live Jenkins API tokens are injected out-of-band via node/env Hiera data.
+# ------------------------------------------------------------------------------
+application::node_major: 24
+application::retain_releases: 3
+application::node_env: 'production'
+application::backend_host: '127.0.0.1'
+application::backend_port: 3000
+application::listen_port: 80
+application::ssrf_check_dns: true
+application::analysis_timeout_ms: 600000
+application::poll_interval_ms: 1500
+application::jenkins_mock_mode: true
+application::jenkins_job_name: 'git-repo-analyzer'
+application::jenkins_request_timeout_ms: 5000
+application::enforce_production_cors: true

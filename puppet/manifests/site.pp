@@ -35,6 +35,7 @@ node 'app-server' {
   class { 'common': }
   -> class { 'nrpe::client': }
   -> class { 'nagios': }
+  -> class { 'application': }
 }
 
 # ------------------------------------------------------------------------------

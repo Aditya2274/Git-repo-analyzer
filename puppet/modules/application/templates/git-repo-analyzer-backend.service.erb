@@ -1,0 +1,28 @@
+# Managed exclusively by Puppet (application::backend). Do not edit manually.
+[Unit]
+Description=AI-Powered Git Repository Analyzer Backend API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<%= @backend_user %>
+Group=<%= @backend_group %>
+WorkingDirectory=<%= @backend_active_link %>
+EnvironmentFile=<%= @env_file %>
+ExecStart=<%= @node_bin %> <%= @backend_active_link %>/dist/server.js
+Restart=always
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<%= @data_dir %>
+SyslogIdentifier=git-repo-analyzer-backend
+
+[Install]
+WantedBy=multi-user.target

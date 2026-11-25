@@ -4,8 +4,10 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import express from 'express';
 import { createApp } from '../src/app';
 import { loadConfig } from '../src/config/env';
+import { createHealthRouter, resolveRuntimeReleaseId } from '../src/routes/health';
 import { FileAnalysisStore } from '../src/services/analysisStore';
 
 test('loadConfig validates defaults, boolean flags, production SSRF guard, and Jenkins conditional requirements', () => {
@@ -44,6 +46,17 @@ test('loadConfig validates defaults, boolean flags, production SSRF guard, and J
     () => loadConfig({ JENKINS_MOCK_MODE: 'false', JENKINS_URL: 'http://cicd-server:8080' }),
     /JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are required/,
   );
+
+  assert.throws(
+    () => loadConfig({ NODE_ENV: 'production', CORS_ORIGIN: 'http://user:pass@127.0.0.1' }),
+    /must not contain credentials/,
+  );
+
+  const multiCorsCfg = loadConfig({
+    NODE_ENV: 'production',
+    CORS_ORIGIN: 'https://app.example.com:8443, http://127.0.0.1:80',
+  });
+  assert.deepEqual(multiCorsCfg.corsOrigins, ['https://app.example.com:8443', 'http://127.0.0.1']);
 });
 
 async function startTestServer(store: FileAnalysisStore, corsOrigin = 'http://localhost:5173') {
@@ -103,8 +116,48 @@ test('GET /api/health returns 200 UP when store ready, 503 DOWN if uninitialized
         headers: { Origin: 'https://evil.example.com' },
       });
       assert.equal(blockedCors.status, 403);
+      assert.equal(blockedCors.headers.get('access-control-allow-origin'), null);
       const blockedJson = (await blockedCors.json()) as { error: { code: string } };
       assert.equal(blockedJson.error.code, 'CORS_FORBIDDEN');
+
+      const emptyOriginCors = await fetch(`${server.baseUrl}/api/health`, {
+        headers: { Origin: '' },
+      });
+      assert.equal(emptyOriginCors.status, 403);
+      const emptyOriginJson = (await emptyOriginCors.json()) as { error: { code: string } };
+      assert.equal(emptyOriginJson.error.code, 'CORS_FORBIDDEN');
+
+      const nullOriginCors = await fetch(`${server.baseUrl}/api/health`, {
+        headers: { Origin: 'null' },
+      });
+      assert.equal(nullOriginCors.status, 403);
+
+      const malformedOriginCors = await fetch(`${server.baseUrl}/api/health`, {
+        headers: { Origin: 'not-a-valid-origin' },
+      });
+      assert.equal(malformedOriginCors.status, 403);
+
+      const allowedPreflight = await fetch(`${server.baseUrl}/api/analyses`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'http://localhost:5173',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'Content-Type',
+        },
+      });
+      assert.equal(allowedPreflight.status, 204);
+      assert.equal(allowedPreflight.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+      assert.equal(allowedPreflight.headers.get('access-control-allow-credentials'), null);
+
+      const blockedPreflight = await fetch(`${server.baseUrl}/api/analyses`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://evil.example.com',
+          'Access-Control-Request-Method': 'POST',
+        },
+      });
+      assert.equal(blockedPreflight.status, 403);
+      assert.equal(blockedPreflight.headers.get('access-control-allow-origin'), null);
 
       const notFoundRes = await fetch(`${server.baseUrl}/api/nonexistent`);
       assert.equal(notFoundRes.status, 404);
@@ -122,6 +175,38 @@ test('GET /api/health returns 200 UP when store ready, 503 DOWN if uninitialized
       assert.equal(badJsonBody.error.code, 'INVALID_JSON');
     } finally {
       await server.close();
+    }
+
+    // Release metadata identity: frozen from manifest without leaking filesystem paths or secrets
+    const manifestPath = path.join(dataDir, 'release-manifest.json');
+    await fsPromises.writeFile(
+      manifestPath,
+      JSON.stringify({ releaseId: '2.4.1', gitCommit: 'abc123', builtAt: '2026-11-26T00:00:00Z' }),
+      'utf8',
+    );
+    assert.equal(resolveRuntimeReleaseId(manifestPath), '2.4.1');
+    const badManifestPath = path.join(dataDir, 'bad-release-manifest.json');
+    await fsPromises.writeFile(badManifestPath, JSON.stringify({ releaseId: '../evil' }), 'utf8');
+    assert.equal(resolveRuntimeReleaseId(badManifestPath), null);
+
+    const releaseApp = express();
+    releaseApp.use('/api', createHealthRouter(readyStore, resolveRuntimeReleaseId(manifestPath)));
+    const releaseSrv = http.createServer(releaseApp);
+    await new Promise<void>((resolve) => releaseSrv.listen(0, '127.0.0.1', resolve));
+    try {
+      const addr = releaseSrv.address();
+      if (!addr || typeof addr === 'string') {
+        throw new Error('Unexpected address');
+      }
+      const relRes = await fetch(`http://127.0.0.1:${addr.port}/api/health`);
+      assert.equal(relRes.status, 200);
+      assert.equal(relRes.headers.get('x-app-release'), '2.4.1');
+      const relBody = (await relRes.json()) as { status: string; releaseId?: string; gitCommit?: string };
+      assert.equal(relBody.status, 'UP');
+      assert.equal(relBody.releaseId, '2.4.1');
+      assert.equal(relBody.gitCommit, undefined);
+    } finally {
+      await new Promise<void>((resolve, reject) => releaseSrv.close((err) => (err ? reject(err) : resolve())));
     }
   } finally {
     await fsPromises.rm(dataDir, { recursive: true, force: true });

@@ -31,9 +31,10 @@ Once Puppet manages NGINX, Node.js 24 LTS, systemd unit, and backend environment
 | `/opt/git-repo-analyzer/releases/<release-id>` | `root:root` | `0755` | Extracted immutable versioned release root (`release-manifest.json`, `backend/`, `frontend/`, `.extracted.ok`) | Verified & extracted exclusively by Puppet; non-writable by runtime services |
 | `/opt/git-repo-analyzer/releases/<release-id>/backend` | `root:gitrepo` | `0750` dirs / `0640` files (`0750` scripts if executable) | Extracted backend runtime subtree (`dist/server.js`, `package.json`, `package-lock.json`, `node_modules/`); readable/executable by `gitrepo`, writable only by `root` | Puppet (`application::release`) |
 | `/opt/git-repo-analyzer/releases/<release-id>/frontend/dist` | `root:www-data` | `0750` dirs / `0640` files | Extracted frontend static SPA subtree (`index.html`, `assets/*`); traversable/readable by NGINX (`www-data`), writable only by `root` | Puppet (`application::release`) |
-| `/opt/git-repo-analyzer/backend` | `root:root` (symlink `0777`) | symlink | Active backend symlink $\rightarrow$ `/opt/git-repo-analyzer/releases/<release-id>/backend` (target readable via `root:gitrepo` `0750`/`0640`) | Managed & switched exclusively by Puppet |
+| `/opt/git-repo-analyzer/current` | `root:root` (symlink `0777`) | symlink | Single shared atomic release pointer $\rightarrow$ `/opt/git-repo-analyzer/releases/<release-id>` (switched via one atomic `os.replace()` syscall) | Managed & switched exclusively by Puppet (`release_manager.py`) |
+| `/opt/git-repo-analyzer/backend` | `root:root` (symlink `0777`) | symlink | Invariant backend symlink $\rightarrow$ `/opt/git-repo-analyzer/current/backend` (resolves via `current` into `root:gitrepo` `0750`/`0640`) | Managed exclusively by Puppet |
 | `/var/www/git-repo-analyzer` | `root:www-data` | `0750` | Web root parent directory (NGINX `www-data` traversal) | Puppet (`file`) |
-| `/var/www/git-repo-analyzer/dist` | `root:root` (symlink `0777`) | symlink | Active frontend symlink $\rightarrow$ `/opt/git-repo-analyzer/releases/<release-id>/frontend/dist` (target readable via `root:www-data` `0750`/`0640`) | Managed & switched exclusively by Puppet |
+| `/var/www/git-repo-analyzer/dist` | `root:www-data` (symlink `0777`) | symlink | Invariant frontend symlink $\rightarrow$ `/opt/git-repo-analyzer/current/frontend/dist` (resolves via `current` into `root:www-data` `0750`/`0640`) | Managed exclusively by Puppet |
 | `/var/lib/git-repo-analyzer` | `root:gitrepo` | `0750` | Persistent runtime state parent directory (`gitrepo` traversal) | Puppet (`file`) |
 | `/var/lib/git-repo-analyzer/data` | `gitrepo:gitrepo` | `0750` | Persistent mutable state (`analyses.json`) & cached non-executable PNG charts (`artifacts/<id>/`) | External to `releases/`; writable by `gitrepo` (`DATA_DIR`) |
 | `/etc/git-repo-analyzer` | `root:gitrepo` | `0750` | Restricted environment directory | Puppet (`file`) |
@@ -106,7 +107,7 @@ Verified against [`backend/src/config/env.ts`](file:///home/aditya-2274/Git-repo
 | `JENKINS_REQUEST_TIMEOUT_MS` | `5000` | 1. Static app config | Per-request timeout for Jenkins HTTP calls (ms) |
 
 > [!IMPORTANT]
-> **Critical Phase 5B `CORS_ORIGIN` Finding:** Because Chromium/Firefox send an `Origin: http://<app_server_public_ip>` header on same-origin `POST /api/analyses` requests even behind an NGINX reverse proxy, leaving `CORS_ORIGIN=` blank in `NODE_ENV=production` causes Express to reject `POST /api/analyses` with **`403 CORS_FORBIDDEN`** (empirically verified in Checkpoint 6.4 local testing). Puppet/Hiera must populate `CORS_ORIGIN` using `app_server_public_ip` (and optional public DNS/HTTPS origin) once EC2 2 is provisioned.
+> **Critical Phase 5B `CORS_ORIGIN` Finding & Fail-Closed Enforcement:** Because Chromium/Firefox send an `Origin: http://<app_server_public_ip>` header on same-origin `POST /api/analyses` requests even behind an NGINX reverse proxy, leaving `CORS_ORIGIN=` blank in `NODE_ENV=production` causes Express to reject `POST /api/analyses` with **`403 CORS_FORBIDDEN`** (empirically verified in Checkpoint 6.4 and live NGINX $\leftrightarrow$ Express tests in Phase 5B). `application::backend` enforces `enforce_production_cors => true` by default whenever `release_active => true` and `NODE_ENV=production`, failing catalog compilation unless single or comma-separated `http(s)://host[:port]` origins (`application::cors_origin`) with valid ports (`1`–`65535`) and no stray commas are populated from Terraform outputs (`app_server_public_ip` / `app_server_public_dns`), and normalizes whitespace around commas in `backend.env`. Wildcards (`*`), embedded credentials, paths, and explicit empty `Origin: ""` headers are rejected; backend CORS never enables `Access-Control-Allow-Credentials`.
 
 ---
 
@@ -148,20 +149,25 @@ In Phase 5B, Puppet's NGINX configuration assumes exclusive ownership:
 1. Disable/replace `/etc/nginx/sites-enabled/default` so zero conflicting `default_server` blocks exist on port `80`.
 2. Deploy production vhost (port `80`, `server_name _;`, `server_tokens off;`, `autoindex off;`):
    - `root /var/www/git-repo-analyzer/dist;`
-   - `location / { try_files $uri $uri/ /index.html; }`
+   - `location /` and `location /assets/`: static SPA (`try_files $uri $uri/ /index.html`), cache headers on `/assets/`, and static security headers (`X-Content-Type-Options`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`) applied on static locations without overriding Express `X-Frame-Options: DENY` / `Referrer-Policy: no-referrer` on `/api/`.
    - `location /api/ { proxy_pass http://127.0.0.1:3000/api/; ... }` preserving `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, and passing `Origin` transparently (`CORS_ORIGIN` enforces allowlisting cleanly).
-   - Keep `location = /healthz { return 200 "healthy\n"; }` (or preserve baseline synthetic NGINX check cleanly alongside `/api/health`).
+   - Keep `location = /healthz { return 200 "ok\n"; }` (preserving baseline synthetic NGINX check cleanly alongside `/api/health`).
+   - Implement a controlled Puppet-managed maintenance gate on the public `listen_port` using `/opt/git-repo-analyzer/maintenance.flag` (`server`-level `if (-f ...)` $\rightarrow$ internal `return 598` $\rightarrow$ `error_page 598 =503 @app_maintenance_page` returning HTTP `503`, `Retry-After: 5`, `Cache-Control: no-store`, and `{"status":"MAINTENANCE"}` across `/`, `/assets/`, and `/api/` without masking Express's own `503` when maintenance is inactive, while leaving `/healthz` at `200`). Zero downtime is explicitly **not** claimed: on single `t3.micro` (`FileAnalysisStore`), briefly returning `503 MAINTENANCE` prevents clients from receiving mismatched new frontend assets with an old pre-restart backend process.
+   - Bind an internal loopback verification server (`listen 127.0.0.1:8081;` by default via `application::nginx_verify_port`, guarded against colliding with `listen_port`, `backend_port`, or Nagios Apache `127.0.0.1:8080`) with identical `root` and `/api/` proxy so Puppet can verify real NGINX frontend + API parity while public traffic stays gated in `503` maintenance.
    - Do **not** proxy `/nagios` through NGINX (Apache Nagios UI remains strictly on loopback `127.0.0.1:8080` per ADR/AGENTS.md).
-3. Validate syntax (`validate_cmd => '/usr/sbin/nginx -t'`) before notifying `Service['nginx']` reload.
+3. Validate full configuration syntax (`nginx -t` via refresh `app_nginx_configtest` and pre-start `app_nginx_configtest_before_start` gates) before notifying or starting `Service['nginx']`.
 
 ---
 
 ## 8. Health Check Contract
 
 - **Backend endpoint:** `GET http://127.0.0.1:3000/api/health`
+- **Loopback NGINX verification endpoint:** `GET http://127.0.0.1:8081/` and proxied `GET http://127.0.0.1:8081/api/health` (bypasses public maintenance flag during activation)
 - **Public proxied endpoint (via NGINX):** `GET http://<app_server_public_ip>/api/health`
-- **Expected response when store ready:** HTTP `200` `{"status":"UP","timestamp":"<ISO-8601>"}`
-- **Failure response if `FileAnalysisStore` uninitialized:** HTTP `503` `{"error":{"code":"SERVICE_UNAVAILABLE",...}}`
+- **Expected response when store ready (packaged release):** HTTP `200` `{"status":"UP","timestamp":"<ISO-8601>","releaseId":"<version>"}` plus response header `X-App-Release: <version>` (resolved once at Node process startup from immutable `release-manifest.json`; omitted in standalone unit tests without release wrapper).
+- **Frontend runtime identity:** `<meta name="app-release-id" content="<version>" />` embedded and validated in `frontend/dist/index.html`; `health_check.py --expected-release <version>` enforces that NGINX `GET /` HTML and running backend `GET /api/health` both report the exact same target `<version>` (with `X-App-Release` header and JSON `releaseId` agreeing) before opening public traffic.
+- **Controlled maintenance response (during rollout/failure):** HTTP `503` `{"status":"MAINTENANCE",...}` with `Retry-After: 5`.
+- **Failure response if `FileAnalysisStore` uninitialized:** HTTP `503` `{"error":{"code":"SERVICE_UNAVAILABLE",...}}` (never masked by NGINX `@app_maintenance_page`).
 - **Monitoring dependency:** Phase 5A Nagios currently monitors `NGINX Web Server Port 80` (`check_http_port!80`); explicit active Nagios monitoring of `/api/health` / backend process will be completed in **Phase 8** after Phase 5B deploys the backend.
 
 ---
@@ -212,11 +218,10 @@ In Phase 5B, Puppet's NGINX configuration assumes exclusive ownership:
 **Prohibited Archive Contents:** Never package `backend/src/`, `backend/test/`, `frontend/src/`, `frontend/test/`, `devDependencies`, `.git/`, `.env` files, Jenkins tokens, AWS credentials, `.pem` keys, or Terraform state/plans.
 
 **Required `release-manifest.json` Fields (Stored Inside Archive — Zero Self-Referential Archive Checksum):**
-- `releaseId` (e.g., `20261125T204000Z-<short-sha>`)
-- `builtAtUtc` (ISO-8601 build timestamp)
+- `releaseId` (must match Hiera `release_version`, e.g., `20261125T204000Z-<short-sha>`)
+- `builtAt` / `builtAtUtc` (non-empty ISO-8601 build timestamp)
 - `nodeVersion` (must match major `24.x`, e.g., `v24.13.1`)
-- `backendCommit` / `backendVersion`
-- `frontendCommit` / `frontendVersion`
+- `gitCommit` / `backendCommit` (non-empty build commit identifier; optional `frontendCommit`, `backendVersion`, `frontendVersion`)
 
 ### 9.5 Build, Checksum Verification & Rollback Procedure
 
@@ -234,10 +239,11 @@ In Phase 5B, Puppet's NGINX configuration assumes exclusive ownership:
      2. Compare the 64-hex digest recorded inside `.tar.gz.sha256` strictly against Puppet Hiera's authoritative `application::release::expected_sha256` (fail closed on mismatch — preventing tampering even if both staging files were replaced together).
      3. Run `(cd /var/cache/git-repo-analyzer/staging && sha256sum -c --strict "git-repo-analyzer-release-${RELEASE_ID}.tar.gz.sha256")` — fail closed on non-zero exit without extracting.
      4. Extract cleanly into a temp dir under `/opt/git-repo-analyzer/releases/`, enforce permissions (`root:gitrepo` `0750`/`0640` on `backend/`, `root:www-data` `0750`/`0640` on `frontend/dist/`), write `.extracted.ok`, and atomically rename to `/opt/git-repo-analyzer/releases/<releaseId>`.
-3. **Retention & Rollback Strategy:**
-   - **Retention Policy:** Retain the previous known-good extracted release under `/opt/git-repo-analyzer/releases/` (minimum 2 releases: active + previous known-good; up to 3 total) **until** the newly activated release passes health validation (`GET http://127.0.0.1:3000/api/health` returning HTTP `200 UP` and NGINX `GET http://127.0.0.1/` returning HTTP `200`). Never prune the previous known-good release prior to verified health checks.
-   - **Puppet Hiera Rollback (Zero Rebuild / Zero Retransfer):** Because persistent analysis state (`analyses.json` and PNG charts) lives externally in `/var/lib/git-repo-analyzer/data` (`gitrepo:gitrepo`, `0750`) and the previous known-good release directory (`/opt/git-repo-analyzer/releases/<prev-release-id>/.extracted.ok`) remains intact on EC2 2, rolling back requires only updating Hiera on Puppet Server (`application::release::version: '<prev-release-id>'` and `application::release::expected_sha256: '<prev-sha256>'`) and running Puppet (`puppet agent -t`).
-   - Puppet observes `.extracted.ok` already present on the retained release, switches `/opt/git-repo-analyzer/backend` and `/var/www/git-repo-analyzer/dist` symlinks back to `<prev-release-id>`, notifies `Service['git-repo-analyzer-backend']` restart + `Service['nginx']` reload, and restores service cleanly without rebuilding artifacts, retransferring tarballs, or modifying stored data.
+3. **Controlled 11-Step Activation Sequence, Runtime Consistency & Rollback Strategy:**
+   - **Why Zero Downtime Is Not Claimed:** EC2 2 (`t3.micro`) runs one single-process `git-repo-analyzer-backend` (`FileAnalysisStore` on local JSON disk) behind one NGINX vhost. Switching `/opt/git-repo-analyzer/current` updates NGINX static files immediately while the running Node process still serves the previous release in memory until systemd completes its restart. Rather than claiming zero downtime, Puppet enforces a brief controlled HTTP `503 MAINTENANCE` window across public port `80` whenever activating or recovering an unpromoted release.
+   - **11-Step Activation Sequence:** (1) `prepare` extracts/validates the release off-path and stamps/verifies `<meta name="app-release-id">` while the previous release keeps serving; (2) `enter-maintenance` atomically writes `/opt/git-repo-analyzer/maintenance.flag` + `state.maintenance.active = true` (port `80` returns `503` + `Retry-After: 5` on `/`, `/assets/*`, `/api/*`); (3) `activate` updates invariant `backend`/`dist` child links, records `pendingActivation.serviceSynced = false`, and switches `/opt/git-repo-analyzer/current` via **one** atomic `os.replace()` syscall; (4) `app_sync_backend_restart` $\rightarrow$ `Service['git-repo-analyzer-backend']` restarts Node onto the new release (`app_mark_service_synced` persists `serviceSynced = true`); (5) `app_verify_backend_health_gate` verifies `127.0.0.1:3000/api/health` (`200 UP` + `releaseId == X`); (6) `Class['application::nginx']` converges/reloads NGINX; (7) `app_verify_frontend_health_gate` probes internal loopback `127.0.0.1:8081/` + proxied `/api/health` verifying both HTML `app-release-id` and running backend `releaseId` match `X`; (8) `app_promote_release` atomically persists `currentKnownGood` / `previousKnownGood`; (9) `app_exit_maintenance` re-verifies backend + verify listener, unlinks `maintenance.flag`, immediately probes public port `80` (re-arming `maintenance.flag` automatically if public check fails), and clears `state.maintenance.active = false`; (10) `app_prune_releases` removes excess directories (`> retain_releases`) **strictly after** promotion and maintenance clearance.
+   - **Failure, `SIGKILL` & Auto-Revert Invariants:** Any `SIGKILL` pre/post `os.replace(current)`, backend restart failure, frontend health/mismatch failure, or `SIGKILL` pre/post `unlink(maintenance.flag)` leaves `currentKnownGood` unmutated, blocks promotion and pruning, and ensures either `maintenance.flag` stays active (`503`) or `state.maintenance.active == true` triggers `app_enter_maintenance` to re-arm `maintenance.flag` at the start of the next Puppet convergence run before restarting/verifying the backend. Failed health/integrity checks with `--revert-on-fail` immediately revert `/opt/git-repo-analyzer/current` back to `currentKnownGood`, restart/reload services cleanly, and preserve maintenance gating.
+   - **Puppet Hiera Rollback (Zero Rebuild / Zero Retransfer):** Persistent analysis state (`analyses.json` and PNG charts) lives externally in `/var/lib/git-repo-analyzer/data` (`gitrepo:gitrepo`, `0750`) and retained known-good release directories remain intact with validated `.extracted.ok` + `release-manifest.json`. Rolling back requires only updating Hiera (`application::release_version` and `application::expected_sha256`) to `<prev-release-id>` and running Puppet (`puppet agent -t`), which follows the exact same maintenance-gated activation and runtime parity sequence without rebuilding or retransferring tarballs.
 
 ---
 
@@ -246,13 +252,13 @@ In Phase 5B, Puppet's NGINX configuration assumes exclusive ownership:
 Target node block in `puppet/manifests/site.pp` (`node 'app-server'`):
 
 1. `common` -> `nrpe::client` -> `nagios` (already implemented in Phase 5A).
-2. **`application::nodejs`**: Configures the signed NodeSource Node.js 24 LTS repository (`node_24.x` / `nodistro`) and installs `Package['nodejs']` providing `/usr/bin/node` (live installation on EC2 2 deferred to Phase 5B).
-3. **`application::release`**: Ensures system identity `Group['gitrepo']`/`User['gitrepo']` and parent directories exist, verifies the external `.tar.gz.sha256` sidecar against Hiera `expected_sha256` + `sha256sum -c` in `/var/cache/git-repo-analyzer/staging/`, extracts the versioned release into `/opt/git-repo-analyzer/releases/<releaseId>`, enforces non-writable runtime permissions (`root:gitrepo` `0750`/`0640` on `backend/`, `root:www-data` `0750`/`0640` on `frontend/dist/`), manages symlinks (`/opt/git-repo-analyzer/backend` and `/var/www/git-repo-analyzer/dist`), and prunes older releases **only after** health validation while preserving the prior known-good rollback target.
+2. **`application::nodejs`**: Configures the signed NodeSource Node.js 24 LTS repository (`node_24.x` / `nodistro`) and installs `Package['nodejs']` providing `/usr/bin/node` (live installation on EC2 2 deferred to Boundary B).
+3. **`application::release`**: Ensures system identity `Group['gitrepo']`/`User['gitrepo']` and parent directories exist, verifies `.sha256` sidecar + Hiera digest + `O_NOFOLLOW` TOCTOU-free copy re-hash, extracts the versioned release into `/opt/git-repo-analyzer/releases/<releaseId>`, stamps/verifies frontend `<meta name="app-release-id">`, enters controlled NGINX maintenance (`enter-maintenance`), enforces non-writable permissions (`root:gitrepo` `0750`/`0640` on `backend/`, `root:www-data` `0750`/`0640` on `frontend/dist/`), and atomically switches `/opt/git-repo-analyzer/current` behind invariant `backend` & `dist` links while leaving `/var/lib/git-repo-analyzer/data` untouched.
 4. **`application::backend`**:
    - Creates `/var/lib/git-repo-analyzer` (`root:gitrepo`, `0750`), `/var/lib/git-repo-analyzer/data` (`gitrepo:gitrepo`, `0750`), and `/etc/git-repo-analyzer` + `backend.env` (`0640`).
-   - Deploys `/etc/systemd/system/git-repo-analyzer-backend.service`, triggers `daemon-reload`, subscribes/starts `git-repo-analyzer-backend.service` (`require => [Package['nodejs'], Class['application::release']]`).
+   - Deploys `/etc/systemd/system/git-repo-analyzer-backend.service`, triggers `daemon-reload` when `manage_service => true`, and ensures `git-repo-analyzer-backend.service` restarts synchronously on `current` switch / interrupted `serviceSynced` (`app_sync_backend_restart` $\rightarrow$ `Service` $\rightarrow$ `app_mark_service_synced`) before `app_verify_backend_health_gate`.
 5. **`application::nginx`**:
-   - Replaces Ansible's baseline `sites-enabled/default` with production SPA (`/var/www/git-repo-analyzer/dist`) + `/api/` reverse-proxy vhost (`require => [Class['application::release'], Service['git-repo-analyzer-backend']]`), validates with `nginx -t`, and manages `Service['nginx']`.
+   - Replaces Ansible's baseline `sites-enabled/default` with production SPA (`/var/www/git-repo-analyzer/dist`) + `/api/` reverse-proxy vhost with `maintenance.flag` `503` gating on public port `80` and un-gated internal verification listener `127.0.0.1:8081` (ordered `app_verify_backend_health_gate` $\rightarrow$ `Class['application::nginx']` $\rightarrow$ `app_verify_frontend_health_gate` $\rightarrow$ `app_promote_release` $\rightarrow$ `app_exit_maintenance` $\rightarrow$ `app_prune_releases`).
 
 ---
 

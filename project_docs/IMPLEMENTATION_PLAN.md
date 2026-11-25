@@ -373,31 +373,23 @@ flowchart TD
 
 ---
 
-### Phase 5B: Puppet-Managed Application Configuration
-- **Objective:** Author and apply Puppet manifests to deploy the Node.js 24 LTS runtime, backend systemd service unit, NGINX virtual hosts, and environment configurations on EC2 2 based on the finalized contracts from Phase 6.
-- **Prerequisites:** Phase 6 completion (application artifacts and contracts verified).
-- **Subtasks:**
+### Phase 5B: Puppet-Managed Application Configuration (Provisionally Implemented & Audited Under Boundary A — Pending Review; Live Convergence Pending Boundary B)
+- **Objective:** Author, harden, and validate Puppet manifests to deploy the Node.js 24 LTS runtime, checksum/manifest-verified immutable application releases, backend systemd service unit, NGINX virtual host, post-activation health gates, and zero-rebuild rollback on EC2 2 based on [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md).
+- **Prerequisites:** Phase 6 completion (application artifacts and handover contracts verified).
+- **Subtasks (Implemented & Audited under Boundary A in `puppet/modules/application/`):**
   1. **Deploy Node.js Runtime via Puppet (`modules/application/manifests/nodejs.pp`)**:
-     - Deploy signed NodeSource Node.js 24 LTS repository (`node_24.x` / `nodistro`) on EC2 2; install `nodejs` (providing `/usr/bin/node`).
-  2. **Deploy Application Files and Systemd Unit (`modules/application/manifests/backend.pp`)**:
-     - Ensure system group and user `gitrepo` exist (`--system --no-create-home`).
-     - Create application directories: `/opt/git-repo-analyzer/backend` (`gitrepo:gitrepo`, `0755`), `/var/www/git-repo-analyzer` (`www-data:www-data`, `0755`), `/etc/git-repo-analyzer` (`root:gitrepo`, `0750`).
-     - Deploy environment file `/etc/git-repo-analyzer/backend.env` (`root:gitrepo`, mode `0640`, mode initially set to `JENKINS_MOCK_MODE=true` until Phase 7).
-     - Deploy systemd unit file `/etc/systemd/system/git-repo-analyzer-backend.service` (`User=gitrepo`, `Group=gitrepo`).
-     - Ensure service is enabled and running.
-  3. **Deploy NGINX Reverse Proxy Configuration (`modules/application/manifests/nginx.pp`)**:
-     - Deploy production virtual host configuration on port 80/443.
-     - Configure static file serving for React SPA from `/var/www/git-repo-analyzer/dist` with `try_files $uri $uri/ /index.html`.
-     - Configure reverse proxy for `/api/` targeting `http://127.0.0.1:3000/api/` with proxy buffer headers.
-     - Test NGINX configuration syntax and restart service.
-  4. **Enforce Catalog and Verify Convergence**:
-     - Run `puppet agent -t --detailed-exitcodes` on EC2 2. Verify exit code is 2 (applied) on first run and 0 (idempotent) on rerun.
-     - Verify local HTTP response: `curl -s http://127.0.0.1/api/health` returns `UP`.
-- **Completion Criteria:**
-  - Node.js 24 LTS active on EC2 2.
-  - Backend systemd service running as `gitrepo` user and managed by Puppet.
-  - NGINX serving frontend assets and proxying `/api/` requests to Express.
-  - Puppet catalog converges cleanly with zero errors.
+     - Configure signed NodeSource Node.js 24 LTS repository (`node_24.x` / `nodistro`) and APT priority pin (`900`) on EC2 2; install `nodejs` (providing `/usr/bin/node`) and enforce major version `24` (rejecting Node 20 EOL).
+  2. **Stage, Verify & Atomically Activate Immutable Releases (`modules/application/manifests/release.pp`, `files/release_manager.py`)**:
+     - Prepare `/var/cache/git-repo-analyzer/staging` (`ubuntu:ubuntu`, `0750`), `/opt/git-repo-analyzer/releases/<release-id>` (`root:root`, `0755`), non-writable release subtrees (`backend/` `root:gitrepo` `0750`/`0640`, `frontend/dist/` `root:www-data` `0750`/`0640`), `.sha256` sidecar + Hiera digest verification (`sha256sum -c --strict`) + `O_NOFOLLOW` copy-and-hash inside root-owned temp dir (eliminating staging TOCTOU), rejection of `..`/abs paths/non-dir wrapper roots/chained-symlink escapes & loops/frontend symlinks/unsafe hardlinks/special files (`FIFO`/`CHR`/`BLK`)/duplicates/file-dir collisions/prohibited `backend/.env`/`src`/`test`/`.git`/symlinked staging files/circular `archiveSha256`/Node != 24 manifests, atomic `.extracted.ok` creation after full extracted-state validation, automatic dead-PID temp cleanup after `SIGKILL`, and single shared atomic pointer switching (`/opt/git-repo-analyzer/current -> releases/<id>`) behind invariant `/opt/git-repo-analyzer/backend` & `/var/www/git-repo-analyzer/dist` links (zero split-release window under `SIGKILL`).
+  3. **Deploy Backend Service and Environment (`modules/application/manifests/backend.pp`)**:
+     - Ensure system group/user `gitrepo` (`home => '/nonexistent'`, `nologin`), persistent `DATA_DIR` (`/var/lib/git-repo-analyzer/data`, `gitrepo:gitrepo`, `0750`), `/etc/git-repo-analyzer` (`root:gitrepo`, `0750`), hardened `/etc/git-repo-analyzer/backend.env` (`root:gitrepo`, `0640`, `show_diff => false`, fail-closed SSRF, fail-closed `enforce_production_cors => true` for active production releases requiring normalized single or comma-separated `http(s)://host[:port]` origins with valid 1–65535 ports and no wildcards/credentials/stray commas, and Jenkins credential guards), `/etc/systemd/system/git-repo-analyzer-backend.service` (`Restart=always`, `KillSignal=SIGTERM`, `TimeoutStopSec=15`, journal logging, `127.0.0.1:3000`), `manage_service`-gated `systemctl daemon-reload`, and `pendingActivation.serviceSynced` restart tracking recovering interrupted Puppet runs and failed revert restarts.
+  4. **Deploy NGINX Reverse Proxy & Controlled Maintenance Listener (`modules/application/manifests/nginx.pp`)**:
+     - Manage `security.conf` (`server_tokens off`), production vhost on `listen_port` (`80`) serving `/var/www/git-repo-analyzer/dist` (`try_files $uri $uri/ /index.html`, static security headers on `/` and `/assets/` without overriding Express `X-Frame-Options: DENY` on `/api/`), `/api/` loopback reverse proxy (`http://127.0.0.1:3000/api/` preserving `Host`, `X-Forwarded-Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `Origin`), `maintenance.flag` `return 598` $\rightarrow$ `503 MAINTENANCE` gate (`Retry-After: 5`, keeping `/healthz` `200` and never masking Express's own `503`), plus an internal loopback verification listener (`127.0.0.1:8081` default via `nginx_verify_port`) for health verification during maintenance; disable `sites-enabled/default` on activation, gate reloads on `nginx -t`, and keep `/nagios` + Apache `127.0.0.1:8080` completely separate.
+  5. **11-Step Runtime-Consistent Activation, Health Gates, Auto-Revert, Retention & Rollback (`modules/application/manifests/init.pp`, `files/health_check.py`, `backend/src/routes/health.ts`)**:
+     - Enforce a controlled `503 MAINTENANCE` rollout window (explicitly **not** claiming zero downtime on single-instance `FileAnalysisStore`): `prepare` (stamping `<meta name="app-release-id">` in `frontend/dist/index.html`) $\rightarrow$ `enter-maintenance` $\rightarrow$ `activate` (`current` single atomic pointer swap, `serviceSynced=false`) $\rightarrow$ `Service['git-repo-analyzer-backend']` restart + `app_mark_service_synced` $\rightarrow$ backend health gate (`127.0.0.1:3000/api/health` verifying `status=UP` + startup-cached `releaseId`/`X-App-Release`) $\rightarrow$ `Class['application::nginx']` $\rightarrow$ NGINX verification gate (`127.0.0.1:8081/` + proxied `/api/health` confirming frontend HTML `app-release-id` matches running backend `releaseId`) $\rightarrow$ `promote-release` $\rightarrow$ `exit-maintenance` (pre-open checks, unlink flag, immediate public port confirmation with auto re-arm on failure, `maintenance.active=false`) $\rightarrow$ `prune-releases` (refusing while maintenance active or before promotion). Automatically revert `current` back to `currentKnownGood` inside maintenance on health or pre-check integrity failure; protect active + `previousKnownGood` releases regardless of mtime; support zero-rebuild Hiera rollback preserving `/var/lib/git-repo-analyzer/data`.
+- **Completion Status:**
+  - **Boundary A (Local Implementation & Audit):** **Complete, Approved & Closed Locally** — `36/36` release checks + `26/26` integrated application checks (`62/62` Phase 5B), `21/21` backend, `14/14` frontend, `83/83` Phase 5A, and `208/208` Phase 4 Ansible regression passing; `puppet-lint` unavailable locally.
+  - **Boundary B (Live Convergence on EC2 2):** Deferred until AWS provisioning, Ansible enrollment, node Hiera `cors_origin` + `nagiosadmin` hash configuration, and live release staging (`puppet agent -t --detailed-exitcodes` exit `2 -> 0` and live HTTP verification).
 
 ---
 
@@ -525,7 +517,7 @@ To distinguish design requirements from implemented and verified controls, each 
 | Rejection of Embedded Credentials & Ports | Application API | **SPECIFIED** | Documented in Section 3.1; to be implemented in Phase 6. |
 | SSRF Defense (Metadata, Private IP, Redirects) | Application API | **SPECIFIED** | Documented in Section 3.1; to be implemented in Phase 6. |
 | Zero Shell Command Interpolation | Application API | **SPECIFIED** | Parameterized Jenkins API dispatch designed; to be implemented in Phase 6. |
-| Execution User & Restrictive Permissions | Host OS / Service | **SPECIFIED** | User `gitrepo`, `/etc/git-repo-analyzer/backend.env` mode `0640`; to be deployed in Phase 5B. |
+| Execution User & Restrictive Permissions | Host OS / Service | **IMPLEMENTED (Boundary A)** | System user `gitrepo` and `/etc/git-repo-analyzer/backend.env` mode `0640` (`show_diff => false`) implemented and verified in Puppet `application::backend`; live EC2 convergence pending Boundary B. |
 | Analyzer Container Non-Root User | Container Engine | **TESTED** | Verified in Phase 2 container testing (`docker run --user $(id -u):$(id -g)`). |
 | Docker Socket Mount Prohibition | Container Engine | **IMPLEMENTED** | `Jenkinsfile` and `analyze2.sh` verified: socket `/var/run/docker.sock` is not mounted. |
 | Git Hooks Disabled (`core.hooksPath=/dev/null`) | Container Engine | **SPECIFIED** | To be enforced in `Jenkinsfile` / container analysis invocation. |

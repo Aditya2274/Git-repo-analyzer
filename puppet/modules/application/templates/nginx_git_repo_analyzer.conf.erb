@@ -1,0 +1,118 @@
+# Managed exclusively by Puppet (application::nginx). Do not edit manually.
+server {
+    listen <%= @listen_port %> default_server;
+<% if @manage_ipv6 -%>
+    listen [::]:<%= @listen_port %> default_server;
+<% end -%>
+    server_name _;
+
+    server_tokens off;
+    autoindex off;
+
+    root <%= @frontend_active_link %>;
+    index index.html;
+
+    # Controlled release maintenance gate: returns HTTP 503 for public application
+    # routes whenever maintenance.flag exists while leaving /healthz up for liveness.
+    set $app_maintenance 0;
+    if (-f "<%= @maintenance_flag_file %>") {
+        set $app_maintenance 1;
+    }
+    if ($uri = "/healthz") {
+        set $app_maintenance 0;
+    }
+    if ($app_maintenance = 1) {
+        return 598;
+    }
+    error_page 598 =503 @app_maintenance_page;
+
+    location @app_maintenance_page {
+        default_type application/json;
+        add_header Retry-After "5" always;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "no-referrer" always;
+        return 503 '{"status":"MAINTENANCE","message":"Application release update in progress; please retry shortly."}';
+    }
+
+    location /api/ {
+        proxy_pass http://<%= @backend_host %>:<%= @backend_port %>/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 65s;
+        proxy_send_timeout 65s;
+    }
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+}
+<% if @nginx_verify_port -%>
+
+# Loopback-only internal verification server queried by Puppet health_check.py
+# while the public server stays in 503 maintenance mode until release consistency
+# and health checks succeed. Never exposed on 0.0.0.0 or public interfaces.
+server {
+    listen 127.0.0.1:<%= @nginx_verify_port %>;
+    server_name _;
+
+    server_tokens off;
+    autoindex off;
+
+    root <%= @frontend_active_link %>;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://<%= @backend_host %>:<%= @backend_port %>/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 65s;
+        proxy_send_timeout 65s;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+}
+<% end -%>

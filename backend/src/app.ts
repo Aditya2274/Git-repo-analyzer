@@ -34,8 +34,9 @@ export function createApp({ config, store, analysisManager }: AppDependencies): 
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Same-origin / NGINX proxy / server-side health checks omit Origin header
-        if (!origin) {
+        // Same-origin / NGINX proxy / server-side health checks omit Origin header;
+        // explicit empty Origin: "" is rejected rather than treated as omitted.
+        if (origin === undefined) {
           callback(null, true);
           return;
         }

@@ -41,6 +41,9 @@ function parseCorsOrigins(raw: string | undefined, nodeEnv: 'development' | 'tes
       if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.origin === 'null') {
         throw new Error(`Invalid CORS_ORIGIN protocol for "${entry}": must be http or https`);
       }
+      if (parsed.username !== '' || parsed.password !== '') {
+        throw new Error(`Invalid CORS_ORIGIN "${entry}": must not contain credentials`);
+      }
       if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
         throw new Error(`Invalid CORS_ORIGIN "${entry}": must not contain path, query, or fragment`);
       }
