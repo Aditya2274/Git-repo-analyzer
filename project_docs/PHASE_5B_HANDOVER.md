@@ -274,6 +274,7 @@ Target node block in `puppet/manifests/site.pp` (`node 'app-server'`):
   3. Running `apt` / `puppet agent -t` on EC2 2 to install Node.js 24 LTS (`nodejs`), extract the verified release, start `git-repo-analyzer-backend.service`, and verify live `http://<app_server_public_ip>/api/health`.
 - **Values Deferred Further to Phase 7 (CI/CD Integration on EC2 3):**
   - `JENKINS_URL` (`http://<cicd_server_private_ip>:8080` or `http://cicd-server:8080`), `JENKINS_USER` (`backend-service`), `JENKINS_API_TOKEN`, switching `JENKINS_MOCK_MODE=false`, and hardening [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile) (`-c core.hooksPath=/dev/null`, `--no-recurse-submodules`, timeouts, resource limits, and `post { cleanup { cleanWs() } }`).
+  - *(Historical Note: The [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile) hardening TODO recorded above at Phase 5B handover is historical and has subsequently been implemented and locally validated in Phase 7 Checkpoint 7.1; live `JENKINS_URL`, `JENKINS_USER`, `JENKINS_API_TOKEN`, and `JENKINS_MOCK_MODE=false` deployment remains deferred to Boundary B.)*
 - **Accepted Design Limitations:**
   - Single-process `FileAnalysisStore` serialization on `t3.micro` (no clustering per ADR 001/009).
   - Real `LiveJenkinsClient` HTTP calls and Ubuntu 24.04 package convergence remain untested on live hosts until Boundary B / Phase 7.

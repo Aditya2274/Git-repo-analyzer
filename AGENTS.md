@@ -195,7 +195,7 @@ The application workflow:
 6. Jenkins triggers the parameterized analysis job.
 7. Jenkins executes the Dockerized analyzer.
 8. Analyzer generates reports, metrics, and charts.
-9. AI integration generates insights.
+9. Report generation produces insights (current Phase 7 policy retains the analyzer's deterministic static-report fallback without injecting `GROQ_API_KEY` via Jenkins credentials or analyzer container environment variables; earlier standalone analyzer testing also supported optional Groq AI integration).
 10. Backend retrieves the results securely.
 11. React displays the analysis dashboard.
 
@@ -304,16 +304,17 @@ Strict Security Specification for Untrusted Repository Input & Execution Sandbox
   - Repository scripts, makefiles, and binaries must **never be executed** under any circumstances.
   - Submodules must not be recursively initialized (`--no-recurse-submodules`).
   - Analysis is restricted strictly to Git metadata inspection (`git log`, `git shortlog`, `git rev-parse`) and static line counting (`cloc`).
-  - Bounded resource allocation: Container memory limit `1g` (`--memory=1g`), CPU limit `1.5` (`--cpus=1.5`), process limit `100` (`--pids-limit=100`), and repository disk allocation capped at 2 GB.
+  - Bounded resource allocation (Current Phase 7 Approved Baseline): Container memory limit `768 MB` (`--memory=768m`, superseding the historical `--memory=1g` pre-Phase 7 specification), CPU limit `1.5` (`--cpus=1.5`), process limit `100` (`--pids-limit=100`), and repository disk allocation capped at 2 GB (pre-clone free-space checks, clone timeout, shallow clone, and post-clone size checks do not constitute a hard filesystem quota; disk exhaustion remains an acknowledged residual risk).
   - Bounded execution timeouts: Git clone operations timeout at 5 minutes; analysis container execution times out at 10 minutes.
   - Non-root execution: Container executes strictly as an unprivileged user (`--user $(id -u):$(id -g)`).
-  - Workspace hygiene: Cloned repository files and temporary data are completely wiped from disk immediately after report generation.
+  - Workspace hygiene: Cloned repository files and temporary data are wiped from disk after report generation and on aborted/failed builds via Jenkins `post` cleanup (subject to the limitation that hard host failure or agent loss can prevent post-build cleanup).
 - **Jenkins & Docker Security Rules:**
   - Jenkins TCP 8080 is accessible strictly from EC2 2's security group (`app_monitoring_sg`).
   - Backend execution user: Dedicated unprivileged system user `gitrepo` and group `gitrepo`.
   - Backend environment directory `/etc/git-repo-analyzer` owned by `root:gitrepo` with permissions `0750` (`rwxr-x---`).
   - Backend environment file `/etc/git-repo-analyzer/backend.env` owned by `root:gitrepo` with permissions `0640` (`rw-r-----` - root read/write, `gitrepo` group read-only, others no access).
-  - Jenkins credentials must not be passed into the ephemeral analyzer container.
+  - Jenkins credentials and unrelated host secrets must not be passed into the ephemeral analyzer container.
+  - `GROQ_API_KEY` must **not** be injected through Jenkins credentials or analyzer container environment variables; the analyzer must retain and use its existing deterministic static-report fallback when the Groq key is unavailable.
   - The host Docker socket (`/var/run/docker.sock`) is **never mounted** inside the analyzer container.
   - Docker group membership on EC2 3 is treated as root-equivalent access and strictly restricted.
 
@@ -788,7 +789,7 @@ On-Demand Ephemeral Lifecycle (ADR 011):
 | EC2 1 — Puppet | 5666 | EC2 2 security group | Internal Nagios NRPE monitoring checks |
 | EC2 3 — CI/CD | 5666 | EC2 2 security group | Internal Nagios NRPE monitoring checks |
 
-- **Outbound Egress:** Enabled to `0.0.0.0/0` across all instances for apt, Docker Hub, GitHub, and Groq API calls.
+- **Outbound Egress:** Enabled to `0.0.0.0/0` across all instances for apt, Docker Hub, and GitHub (historical pre-Phase 7 design also noted outbound Groq API egress; current Phase 7 pipeline policy does not inject `GROQ_API_KEY` into the analyzer container and uses the deterministic static-report fallback).
 
 ## Persistent Remote State Backend
 
@@ -871,12 +872,14 @@ Do not attempt to implement the entire project in one operation.
 - Verify desired-state enforcement and configuration drift correction.
 
 ## Phase 7 — Jenkins Pipeline Configuration & Real Backend Integration
-- Install Jenkins Controller on Instance 3; tune JVM heap to `-Xms384m -Xmx512m`.
-- Add `jenkins` system user to the `docker` group.
-- Store `GROQ_API_KEY` in Jenkins Credentials Store as secret text.
-- Create parameterized pipeline job loaded with `Jenkinsfile`.
-- Switch Express backend from Mock to Live Jenkins client via private network API.
-- Verify end-to-end flow: Frontend submission → Backend → Jenkins → Docker Analyzer → Artifacts archived → Backend retrieval → Frontend display.
+- **Current Approved Requirements & Boundary A Checkpoints (`7.1`–`7.5`):**
+  - `7.1` — Jenkinsfile hardening and analyzer sandboxing: non-root `--user "$(id -u):$(id -g)"`, `--memory=768m`, `--cpus=1.5`, `--pids-limit=100`, `-c core.hooksPath=/dev/null`, `--no-recurse-submodules`, `--depth 500`, 5 GB pre-clone gate / 2 GB post-clone cap, `post` cleanup, zero Jenkins credential injection, and **zero `GROQ_API_KEY` injection** (retaining the deterministic static-report fallback).
+  - `7.2` — Puppet Jenkins module (Java 21, Jenkins LTS 2.580.3 baseline subject to deploy-time revalidation, `-Xms384m -Xmx512m`, single executor, `jenkins` system user in `docker` group).
+  - `7.3` — Backend–Jenkins protocol integration tests.
+  - `7.4` — Docker analyzer execution and artifact validation.
+  - `7.5` — Boundary B deployment runbook.
+- **Boundary B Live Execution (Blocked Pending Explicit Authorization):** Install and configure Jenkins Controller on Instance 3 via Puppet, create the parameterized pipeline job loaded with `Jenkinsfile`, switch Express backend from Mock to Live Jenkins client via private network API (`JENKINS_MOCK_MODE=false`), verify end-to-end flow (Frontend submission → Backend → Jenkins → Docker Analyzer → Artifacts archived → Backend retrieval → Frontend display), and empirically validate the amended **>= 300 MB** minimum host `MemAvailable` headroom threshold on the live 2 GB `t3.small` CI/CD instance.
+- **Historical Context (Superseded):** Earlier pre-Phase 7 project instructions specified storing `GROQ_API_KEY` in the Jenkins Credentials Store as secret text and bounding the container to `--memory=1g`. Both are superseded by current Phase 7 security policy (`--memory=768m`, no Jenkins credential or `GROQ_API_KEY` injection into Jenkins/container, and deterministic static-report fallback).
 
 ## Phase 8 — Monitoring Configuration & End-to-End System Verification
 - Finalize Nagios Core active service checks on Instance 2 for Instance 1 (Puppet), Instance 2 (Local App), and Instance 3 (Remote NRPE).

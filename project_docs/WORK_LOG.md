@@ -1660,3 +1660,317 @@
   - Fleet wiring: `puppet/hieradata/common.yaml`, `puppet/manifests/site.pp`.
   - Bytecode caches (`__pycache__/*.pyc`) strictly excluded from staging.
 - **Outcome**: Phase 5B is officially complete, validated, approved, and closed locally under Approval Boundary A. Zero AWS resources provisioned. Ready for Phase 7 or authorized Boundary B execution.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.1 Jenkinsfile Hardening, Analyzer Sandboxing & Acceptance Criteria Amendments (Approval Boundary A Only)
+
+- **Task**: Implement and validate Phase 7 Checkpoint 7.1 under Approval Boundary A: apply two formal acceptance-criteria amendments to the Phase 7 plan, harden [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile) and analyzer container sandboxing, implement the local validation suite, and collect local workstation telemetry without staging, committing, pushing, or executing cloud operations.
+- **Accepted Plan Amendments**:
+  - **Memory Headroom Threshold (300 MB Minimum)**: Set the minimum host memory headroom threshold to **300 MB** (replacing the previous 250 MB threshold), requiring empirical measurements captured at short intervals during representative workloads on the target fleet (zero OOM events, zero sustained swap thrashing). **Scope Boundary:** Local testing collected measurements on the 15,712 MB RAM development workstation; **the 300 MB minimum memory-headroom acceptance validation on the actual 2 GB `t3.small` EC2 CI/CD instance remains STILL PENDING until Boundary B live deployment.**
+  - **Workspace Cleanup & Disk-Exhaustion Residual Risk**: Validated workspace cleanup logic across normal, failed, aborted, and simulated interrupted builds (`post { always { ... } cleanup { cleanWs ... } }`). Local simulated interruptions verified removal of partial clones and halting/removal of active containers before workspace deletion. Explicitly documented the limitation that **hard host failure or sudden Jenkins agent/controller loss can prevent Jenkins post-build cleanup from executing** (hard-failure cleanup guarantees are not claimed), and that pre-clone free-space checks (5 GB), clone timeouts (5m), shallow clones (`--depth 500`), and post-clone size checks (2 GB) do **not** constitute a hard filesystem quota; **disk exhaustion remains an acknowledged residual operational risk**, not a guaranteed-protection scenario.
+- **Pipeline Hardening & Analyzer Sandboxing Details ([`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile)):**
+  - **Pipeline Structure & Options:** Enforces `options { timeout(time: 15, unit: 'MINUTES'); disableConcurrentBuilds(); ansiColor('xterm') }`.
+  - **Strict Parameter Validation:** Anchored Groovy regex pattern `^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$` rejecting non-GitHub hosts, non-HTTPS protocols, embedded credentials (`@`), non-standard ports, query parameters (`?`), URL fragments (`#`), path traversal, and command/newline injection attacks.
+  - **Storage Pre-Clone Gate:** Enforces workspace filesystem availability check `df -Pk "${WORKSPACE:-.}"` requiring at least 5,242,880 KB (5 GB) free space before cloning.
+  - **Git Clone Isolation:** Enforces `-c core.hooksPath=/dev/null` (prohibiting untrusted repository hook execution), `--no-recurse-submodules` (prohibiting untrusted recursive submodule cloning), `--depth 500` (shallow clone constraint), and a 5-minute clone timeout.
+  - **Post-Clone Size Ceiling:** Measures `du -sk target-repo`; immediately aborts and wipes `target-repo` if size exceeds 2,097,152 KB (2 GB).
+  - **Analyzer Container Sandboxing:** Runs ephemeral container under non-root unprivileged user `--user "$(id -u):$(id -g)"`, approved 768 MB memory limit (`--memory=768m`), 1.5 CPUs (`--cpus=1.5`), 100 process limit (`--pids-limit=100`), 10-minute container timeout, zero Docker daemon socket mount, zero Jenkins credentials or host secret passing, zero `GROQ_API_KEY` injection into container or pipeline (preserving deterministic static report fallback), and deterministic container naming (`CONTAINER_NAME="analyzer-${BUILD_TAG:-${BUILD_NUMBER:-run}}"`).
+  - **Post Lifecycle Cleanup:** Enforces `post { always { docker stop "$CONTAINER_NAME" 2>/dev/null || true; docker rm -f "$CONTAINER_NAME" 2>/dev/null || true; rm -rf target-repo || true } cleanup { cleanWs deleteDirs: true, notFailBuild: true } }` to stop/remove residual containers and purge temporary workspaces under normal Jenkins build termination lifecycles (subject to hard host/agent loss limitations).
+  - **Runtime Compatibility Baseline:** Documented Java 21 runtime requirement and Jenkins LTS 2.580.3 planning baseline, noting exact package version and Java compatibility must be revalidated upon live deployment authorization.
+- **Automated Validation Suite ([`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh)):**
+  - Implemented 25 local fixture, container integration, simulated-cleanup, and local-telemetry checks:
+    - Tests 1–3: Declarative pipeline structure, options, timeouts, parameters, and anchored URL regex syntax.
+    - Tests 4–6: URL regex positive cases, protocol/domain negative cases, and injection attack rejection.
+    - Test 7: Pre-clone 5 GB free-space gate logic.
+    - Tests 8–11: Git clone hooks prohibition, submodule isolation, shallow depth 500, 5m timeout, and post-clone 2 GB ceiling rejection.
+    - Tests 12–16: Non-root user flag, 768 MB memory limit, CPU/PID limits, Docker socket isolation, zero secret/Groq injection, and 10m container timeout.
+    - Tests 17–18: Post cleanup architecture (`always` + `cleanup { cleanWs }`) and deterministic container naming for abort cleanup.
+    - Tests 19–21: Live Docker container execution on representative repo, non-root file ownership (UID:GID 1000:1000), deterministic metrics structure (`metrics.json`), static fallback markdown (`summary.md`), and Chart.js PNG raster charts.
+    - Test 22: Zero-commit repository graceful handling (exit code 0, empty metrics, skipped charts, static report).
+    - Tests 23–24: Simulated workspace cleanup validation on interrupted clone, interrupted analysis with active container, and post-clone size violation.
+    - Test 25: Local workstation telemetry sampling during isolated analyzer container execution.
+  - **Test Suite Result: 25/25 PASS**.
+- **Local Workstation Memory Benchmark (Not EC2 3):**
+  - Machine tested: Local Linux development workstation (15,712 MB total physical RAM, 4,095 MB swap, isolated Docker container runs without Jenkins JVM or Puppet Agent).
+  - Workload: Representative multi-commit synthetic repository (35–40 commits, multiple authors/branches, Chart.js rendering).
+  - Execution duration: 1.95s–2.05s (`test_checkpoint_7_1.sh` Test 25); 39–41 host samples captured at 50ms intervals.
+  - Minimum observed workstation `MemAvailable`: **6,514.2 MB** (initial run) / **6,698.7 MB** (final run).
+  - Peak analyzer container memory (dedicated cgroup v2 `memory.peak` poll across 122 samples): **26.25 MB** (configured limit: 768.00 MB; container headroom: 741.75 MB).
+  - Host swap used during benchmark: **0.0 MB**; container `OOMKilled: False`, exit code `0`.
+  - **Pending EC2 Acceptance:** Live 300 MB host memory-headroom acceptance on the actual 2 GB `t3.small` EC2 3 CI/CD instance running Jenkins JVM (`-Xms384m -Xmx512m`) + Docker + analyzer + Puppet Agent remains **pending Boundary B deployment**.
+- **Full Regression Verification:**
+  - Backend: `npm test` passed **21/21** tests.
+  - Frontend: `npm test` passed **14/14** tests across 5 test suites.
+  - Checkpoint 7.1 test suite: **25/25** passed.
+- **Restored Canonical Phase 7 Checkpoint Mapping (Not Yet Started for 7.2–7.5):**
+  - `7.1` — Jenkinsfile hardening and analyzer sandboxing (**Complete Locally under Boundary A**).
+  - `7.2` — Puppet Jenkins module (*Pending — Boundary A*).
+  - `7.3` — Backend–Jenkins protocol integration tests (*Pending — Boundary A*).
+  - `7.4` — Docker analyzer execution and artifact validation (*Pending — Boundary A*).
+  - `7.5` — Boundary B deployment runbook (*Pending — Boundary A*; governs live EC2 3 Jenkins installation, job creation, live `JENKINS_MOCK_MODE=false` cutover, and live E2E / EC2 memory acceptance).
+- **Outcome**: Phase 7 Checkpoint 7.1 is complete and verified locally under Approval Boundary A. Zero AWS resources provisioned. No git staging, commits, or pushes performed. Checkpoint 7.2 has not been started.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.2 Puppet Jenkins Module (Approval Boundary A Only)
+
+- **Task**: Implement and locally validate the Puppet `jenkins` module for `cicd-server` (EC2 3) under Approval Boundary A without reopening Phase 7.1, modifying Terraform/Ansible/application code, starting Checkpoints 7.3–7.5, or performing any live EC2, SSH, staging, or commit operations.
+- **Implemented Module & Fleet Integration**:
+  - [`puppet/modules/jenkins/manifests/init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/init.pp): Strongly typed top-level orchestrator (`jenkins::repo -> jenkins::install -> jenkins::config -> jenkins::service`), strict `cicd-server` node guard (`enforce_node`), path/control-character validation, unprivileged port bounds (`Integer[1024, 65535]`), single-executor type enforcement (`Integer[1, 1] $num_executors = 1`), and JVM heap sanity bounds (`jvm_xms <= jvm_xmx <= 1024m`).
+  - [`puppet/modules/jenkins/manifests/repo.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/repo.pp): Enforces HTTPS-only `https://pkg.jenkins.io/debian-stable` APT source (`/etc/apt/sources.list.d/jenkins.list`) with modern `[signed-by=/etc/apt/keyrings/jenkins-keyring.asc]` (`https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key`, mode `0644`, zero deprecated `apt-key`) and APT pin priority `900` (`/etc/apt/preferences.d/jenkins`).
+  - [`puppet/modules/jenkins/manifests/install.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/install.pp): Enforces `fontconfig`, Java 21 (`openjdk-21-jre-headless` / `openjdk-21-jre`), and Jenkins LTS `2.580.3` planning baseline (`pin_package_version => true`), noting exact package availability and Java 21 compatibility must be revalidated prior to Boundary B deployment.
+  - [`puppet/modules/jenkins/manifests/config.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/config.pp) & templates ([`override.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/override.conf.erb), [`controller-hardening.groovy.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/controller-hardening.groovy.erb)): Manages `/var/lib/jenkins` (`0750` `jenkins:jenkins`), `init.groovy.d/01-controller-hardening.groovy` (`0640`, enforcing `numExecutors = 1`, `slaveAgentPort = -1`, `DefaultCrumbIssuer(true)`, `allowAnonymousRead = false` without embedding any credentials/tokens/bypass flags), `/etc/systemd/system/jenkins.service.d/override.conf` (`-Djava.awt.headless=true -Xms384m -Xmx512m -Dhudson.DNSMultiCast.disabled=true -Dhudson.udp=-1`, `JENKINS_PORT=8080`, `JENKINS_LISTEN_ADDRESS=0.0.0.0`, `JENKINS_HOME`), `systemctl daemon-reload`, and `jenkins` membership in the `docker` group (`membership => 'minimum'`, documented as root-equivalent access per ADR 007; Docker remains UNIX socket only; unrelated accounts excluded; zero `GROQ_API_KEY` injection).
+  - [`puppet/modules/jenkins/manifests/service.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/service.pp): Manages `Service['jenkins']` (`ensure => running`, `enable => true` under `systemd`, plus `base` provider support for unprivileged fixture testing), subscribing to drop-in and hardening config updates.
+  - [`puppet/manifests/site.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/manifests/site.pp) & [`puppet/hieradata/common.yaml`](file:///home/aditya-2274/Git-repo-analyzer/puppet/hieradata/common.yaml): Wired `class { 'common': } -> class { 'nrpe::server': } -> class { 'jenkins': }` exclusively on `node 'cicd-server'`, preserving `puppet-server`, `app-server`, and `node default` isolation, and added non-secret `jenkins::*` Hiera defaults.
+- **Verification & Full Regression Results (Boundary A)**:
+  - [`puppet/tests/test_jenkins_module.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_jenkins_module.sh): **20/20 checks passed** (parser/ERB syntax, `cicd-server` deterministic JSON catalog, `pkg.jenkins.io` 2026 keyring + HTTP rejection, Java 21 requirement + non-21 rejection, Jenkins `2.580.3` baseline, systemd drop-in/reload/service, `-Xms384m -Xmx512m` + heap bounds, `/var/lib/jenkins` `0750` & Groovy `0640` permissions, port `8080` / 1 executor / disabled JNLP & UDP / privileged port rejection, zero NGINX/Apache listeners, `docker` group membership, Hiera overrides, cycle-free `--graph` DAG, sandboxed `puppet apply --detailed-exitcodes` `exit 2 -> 0 -> config refresh -> 0`, `cicd-server` NRPE preservation, fleet isolation, `node default` safety, zero embedded secrets, and path hardening).
+  - Phase 4 Ansible Regression (`ansible/tests/test_*.sh`): **208/208 passed** (`16/16` common, `30/30` docker, `30/30` nginx, `54/54` puppet_agent, `45/45` puppet_enrollment, `20/20` puppet_server, `5/5` sync_inventory, `8/8` verify_ssh_keys).
+  - Phase 5A Puppet Regression: **83/83 passed** (`15/15` architecture, `14/14` common, `20/20` nrpe, `26/26` nagios, `8/8` convergence).
+  - Phase 5B Puppet Application Regression: **62/62 passed** (`36/36` release, `26/26` application).
+  - Phase 6 Application Regression: Backend **21/21** passed; Frontend **14/14** (5 suites) passed.
+  - Phase 7.1 Regression (`cicd/tests/test_checkpoint_7_1.sh`): **25/25 passed** (local workstation benchmark `MemAvailable` min `6,342.8 MB` on `15,712.1 MB` host).
+  - Combined Local Validation Total: **433/433 passed**.
+- **Pending Boundary B Operations (Not Executed)**:
+  - Live `apt` installation on Ubuntu 24.04 EC2 3 (`openjdk-21-jre-headless`, `fontconfig`, revalidated Jenkins LTS `2.580.3` compatibility), live systemd startup, `backend-service` API token provisioning, `JENKINS_MOCK_MODE=false` live cutover, and empirical `>= 300 MB` host `MemAvailable` acceptance validation on the live 2 GB `t3.small` EC2 3 node.
+- **Canonical Phase 7 Checkpoint Status (Current Progress Snapshot)**:
+  - `7.1` — Jenkinsfile hardening and analyzer sandboxing (**Complete Locally — Boundary A**).
+  - `7.2` — Puppet Jenkins module (**Approved & Closed Locally — Boundary A**).
+  - `7.3` — Backend–Jenkins protocol integration tests (**Approved & Closed Locally — Boundary A**; superseded historical pending note after implementation and revalidation below).
+  - `7.4` — Docker analyzer execution and artifact validation (**Implemented & Validated Locally — Boundary A; Pending Review/Closure**).
+  - `7.5` — Boundary B deployment runbook (*Pending — Boundary A; Not Started*).
+
+---
+
+## Phase 7.2 Focused Security Review & Final Closure Wording Correction (Boundary A)
+
+- **Scope & Question**: Evaluated whether `jenkins::listen_address: '0.0.0.0'` / `JENKINS_LISTEN_ADDRESS=0.0.0.0` could be narrowed to a private interface bind while preserving local NRPE checks (`127.0.0.1:8080`), remote `app-server` backend API connectivity, Terraform Security Group restrictions, and zero public Jenkins access.
+- **Root Cause & Technical Assessment**:
+  - Jenkins's embedded Winstone/Jetty servlet container supports only a **single** `--httpListenAddress` argument (`JENKINS_LISTEN_ADDRESS`); it cannot simultaneously bind both `127.0.0.1` and EC2 3's VPC private IP.
+  - Binding strictly to `127.0.0.1` breaks `app-server` backend API calls (`LiveJenkinsClient` connecting to `http://<private-ip-3>:8080` or `http://cicd-server:8080`) unless an unapproved reverse proxy (`nginx`/`apache2`) were added on EC2 3.
+  - Binding strictly to EC2 3's VPC private IP breaks [`puppet/modules/nrpe/files/check_jenkins.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/nrpe/files/check_jenkins.sh) (`JENKINS_HOST="127.0.0.1"`, `JENKINS_PORT=8080`). Furthermore, because EC2 3 configures `associate_public_ip_address = true`, AWS IGW performs 1:1 NAT from the public IPv4 directly to EC2 3's single VPC ENI private IP—so binding solely to a private IP does not prevent public ingress at the OS socket layer.
+  - Consequently, `jenkins::listen_address: '0.0.0.0'` (`JENKINS_LISTEN_ADDRESS=0.0.0.0`) on port `8080` is intentionally retained and explicitly documented as a **wildcard IPv4 listener** (not a private-only socket bind).
+  - **Network security boundary**: AWS Security Group `cicd_analysis_sg` in [`terraform/modules/ec2/main.tf`](file:///home/aditya-2274/Git-repo-analyzer/terraform/modules/ec2/main.tf) restricts TCP `8080` ingress strictly to `app_monitoring_sg` and is the primary network-level control preventing unauthorized external access.
+  - **Application-layer security**: `setAllowAnonymousRead(false)` and `DefaultCrumbIssuer(true)` in [`controller-hardening.groovy.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/controller-hardening.groovy.erb) are additional application-layer controls only; they do not prevent TCP connections, provide network isolation, or rely on omitting container credentials to restrict access to the Jenkins listener.
+- **Files Updated in Review & Final Correction**:
+  - [`puppet/modules/jenkins/manifests/init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/init.pp), [`puppet/modules/jenkins/manifests/config.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/config.pp), [`puppet/modules/jenkins/templates/override.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/override.conf.erb), and [`puppet/hieradata/common.yaml`](file:///home/aditya-2274/Git-repo-analyzer/puppet/hieradata/common.yaml).
+  - [`puppet/tests/test_jenkins_module.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_jenkins_module.sh) (**21/21 PASS**).
+  - [`project_docs/IMPLEMENTATION_PLAN.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/IMPLEMENTATION_PLAN.md), [`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md), and [`project_docs/WORK_LOG.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/WORK_LOG.md). Phase 7.2 is **approved and closed locally under Boundary A**.
+- **Part A Re-verification Commands**:
+  - `./puppet/tests/test_jenkins_module.sh && ./puppet/tests/test_nrpe_module.sh && ./puppet/tests/test_phase5a_convergence.sh && git diff --check` -> **`21/21`**, **`20/20`**, **`8/8`** checks passed; `git diff --check` exited `0`.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.3 Backend–Jenkins Protocol Integration Tests (Boundary A Only — Approved & Closed Locally)
+
+- **Architecture & Interfaces Inspected**:
+  - [`backend/src/services/jenkinsClient.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/jenkinsClient.ts) (`IJenkinsClient`), [`backend/src/services/liveJenkinsClient.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/liveJenkinsClient.ts), [`backend/src/services/mockJenkinsClient.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/mockJenkinsClient.ts), [`backend/src/services/analysisManager.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/analysisManager.ts), [`backend/src/services/analysisStore.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/analysisStore.ts), [`backend/src/services/artifactIngestion.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.ts), [`backend/src/routes/analyses.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/routes/analyses.ts), [`backend/src/config/env.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/config/env.ts), [`backend/src/types/analysis.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/types/analysis.ts), [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile), and [`ai/reportGenerator.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/reportGenerator.js).
+- **Files Created**:
+  - [`backend/test/backendJenkinsProtocol.test.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/test/backendJenkinsProtocol.test.ts): Added 6 deterministic end-to-end protocol integration tests exercising `createApp` (`/api/analyses`), `AnalysisManager`, `FileAnalysisStore`, `ArtifactIngestor`, and `LiveJenkinsClient` against a controlled loopback HTTP Jenkins simulator without modifying source contracts or production validation.
+- **Final Review Corrections Applied**:
+  1. Eliminated the `BUILDING` polling timing race in Test 1 ([`backendJenkinsProtocol.test.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/test/backendJenkinsProtocol.test.ts)) by adding deterministic `allowActiveQueueResolve` and `allowActiveBuildComplete` controller gates with queue/build poll counters so `QUEUED` and `BUILDING` assertions and `409 CONFLICT` checks execute deterministically without narrow timer windows or production changes.
+  2. Corrected the stale `7.3` pending bullet above in `WORK_LOG.md` so the snapshot matches current closure status while preserving historical Phase 7.2 records.
+- **Test Commands & Exact Results**:
+  - `npm --prefix backend run typecheck`: exited `0`.
+  - `npm --prefix backend run build`: exited `0`.
+  - **5 consecutive runs** of `npm --prefix backend test`: **`27/27`** tests passed on every run (`21` existing backend tests + `6` new Phase 7.3 protocol integration tests; `135/135` total test executions, `0` failed, `0` skipped).
+  - `git diff --check`: exited `0`.
+- **Known Limitations & Remaining Boundary B Validation**:
+  - Tests validate HTTP/JSON/CSRF/artifact protocol semantics locally against an in-process HTTP simulator over `127.0.0.1` without a live Jenkins controller JVM, container runtime execution (Checkpoint 7.4), or cross-host EC2 2 $\leftrightarrow$ EC2 3 networking.
+  - Real `backend-service` API token provisioning, EC2 2 `JENKINS_MOCK_MODE=false` cutover, live private VPC TCP `8080` dispatch (`app-server` -> `cicd-server`), and real archived container artifact retrieval remain pending Boundary B.
+  - Final Phase 7.3 status: **Approved & Closed Locally under Boundary A**.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.4 Docker Analyzer Execution & Artifact Validation (Boundary A Only)
+
+- **Files Inspected**:
+  - [`Dockerfile`](file:///home/aditya-2274/Git-repo-analyzer/Dockerfile), [`.github/workflows/docker-ci.yml`](file:///home/aditya-2274/Git-repo-analyzer/.github/workflows/docker-ci.yml), [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile), [`analyze2.sh`](file:///home/aditya-2274/Git-repo-analyzer/analyze2.sh), [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js), [`ai/chartGenerator.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/chartGenerator.js), [`ai/reportGenerator.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/reportGenerator.js), [`ai/prompt.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/providers/groqProvider.js), [`backend/src/services/artifactIngestion.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.ts), and [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh) (confirmed `.dockerignore` does not exist at repo root).
+- **Concrete Analyzer Defect Discovered & Fixed**:
+  - [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js#L275): `summarizeBranchDrift` invoked `run('git for-each-ref --format=%(refname:short) refs/heads/')` without quotes around `%(refname:short)`, causing `/bin/sh` syntax error (`Syntax error: "(" unexpected`) handled silently by `run()`, leaving `branchDrift.branchesAnalyzed = 0` and `staleBranches = []`. Quoted format (`--format='%(refname:short)'`) matching `analyze2.sh` line 145 without changing the output schema.
+- **Files Created / Modified**:
+  - Modified [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js#L275).
+  - Created [`cicd/tests/test_checkpoint_7_4.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_4.sh) (13 integration checks validating image layers/config/non-root runtime, 10 Git fixture profiles, untrusted hook/script non-execution, real [`ArtifactIngestor`](file:///home/aditya-2274/Git-repo-analyzer/backend/dist/services/artifactIngestion.js) acceptance and negative rejection, cgroup limits, cleanup across failure/timeout/`SIGKILL`/`>2 GB` check, and cgroup `memory.peak`/disk telemetry).
+- **Docker Build, Telemetry & Test Results (Local Workstation — No Jenkins JVM)**:
+  - `docker build -t git-repo-analyzer:phase74-local .`: exited `0` (`1.23 GB` image; Node `v20.20.2`, Git `2.34.1`, runtime-only `/tool/package.json` dependencies without `devDependencies`, zero secrets/`GROQ_API_KEY` in `docker history`/`Config.Env`; noted apt compile headers retained in single `RUN` layer and missing `.dockerignore`).
+  - `./cicd/tests/test_checkpoint_7_4.sh`: **`13/13 PASS`** (150-commit fixture elapsed `2.24s`, cgroup `memory.peak: 26.35 MB`, `OOMKilled: False`, `--memory=768m` / `--cpus=1.5` / `--pids-limit=100` enforced, local `MemTotal 15712.1 MB`, min local `MemAvailable 5535.8 MB`, workstation host swap `735.2 MB`, workspace `2888 KB -> 2980 KB` with `92 KB` `reports/` purged cleanly).
+  - `npm --prefix backend run typecheck && npm --prefix backend test && npm --prefix backend run build`: exited `0` (**`27/27 PASS`**), `git diff --check`: exited `0`.
+  - `./cicd/tests/test_checkpoint_7_1.sh`: **24/25 checks passed** during this post-7.4 run; Check 25 failed on workstation system-wide swap usage (`735.2 MB >= 200.0 MB` pre-existing host swap floor across background desktop/build workloads, while container had `OOMKilled: False` and host `MemAvailable >= 5300 MB`; Check 25 had earlier passed `25/25` when workstation swap baseline was `0.0–0.3 MB`).
+- **Known Limitations & Remaining Boundary B Validation**:
+  - Local `git-repo-analyzer:phase74-local` tests prove real container execution locally, NOT live Jenkins `pipeline` execution or Docker Hub distribution (`adityaashok2274/git-repo-analyzer:latest` must be rebuilt/pushed via [`.github/workflows/docker-ci.yml`](file:///home/aditya-2274/Git-repo-analyzer/.github/workflows/docker-ci.yml) so the `ai/metrics.js` fix reaches Jenkins prior to Boundary B).
+  - Pre-clone/post-clone size gates (5 GB / 2 GB) are availability checks, not a hard filesystem disk quota (`disk exhaustion` remains an acknowledged residual risk).
+  - Live EC2 3 container execution alongside Jenkins JVM + Puppet Agent + NRPE, and `>= 300 MB MemAvailable` telemetry acceptance on 2 GB `t3.small` remain pending Boundary B.
+  - Status: Phase 7.4 is **Approved & Closed Locally under Boundary A**.
+
+---
+
+## 2026-11-26: Phase 7.1 Check 25 Resolution, Consolidated Regression (7.1–7.4 + 4 + 5A + 5B), and Phase 7.4 Local Closure
+
+- **Part A — Check 25 Investigation and Resolution**:
+  - **Symptom**: During post-7.4 validation, Check 25 in [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh) reported failure (`AssertionError: Excessive local swap usage observed: 735.2 MB; max allowed: 200.0 MB`).
+  - **Root Cause & Classification**: Check 25 previously measured absolute host swap (`SwapTotal - SwapFree`) with no baseline subtraction. Telemetry inspection of `/proc/meminfo` and `free -m` revealed the development workstation had ~727.5–735.2 MB pre-existing swap allocated to persistent desktop applications and OS background services. Modern cgroup v2 telemetry confirmed container-attributable swap was strictly **0.00 MB** (`memory.swap.peak` = 0) and container `OOMKilled` was `False`. The failure was definitively classified as **pre-existing host swap attribution error**, not an analyzer resource regression.
+  - **Correction**: Refactored Check 25 in [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh):
+    1. Records pre-test host baseline swap (`baseline_swap_used_mb`).
+    2. Uses `--cidfile` to identify the container scope and reads cgroup v2 controllers (`/sys/fs/cgroup/.../memory.peak`, `memory.swap.peak`, `memory.swap.current`, `memory.events`).
+    3. Confirms zero container OOM events (`oom == 0`, `oom_kill == 0`, `OOMKilled: False`).
+    4. Asserts container memory < 768.0 MB limit.
+    5. Asserts container-attributed swap < 200.0 MB (when supported by cgroup v2).
+    6. Asserts host swap delta < 200.0 MB (`max_host_swap_used - baseline_swap_used_mb < 200.0 MB`).
+    7. Retains explicit notice that live EC2 CI/CD instance acceptance (`>= 300 MB MemAvailable`, 0 OOM, no swap thrashing on 2 GB `t3.small`) remains PENDING Boundary B.
+  - **Re-test Output**: Checkpoint 7.1 suite passed **25/25 checks** (container memory peak: 28.34 MB, container swap peak: 0.00 MB, host baseline swap: 727.7 MB, max swap: 727.7 MB, delta: +0.0 MB).
+
+- **Part B — Consolidated Regression Validation Across Completed Phases (Reconciled & Verified)**:
+  - Executed all completed test suites across Phase 7, backend, Puppet, Ansible (Phase 4), and Puppet modules (Phases 5A & 5B):
+    1. `./cicd/tests/test_checkpoint_7_1.sh` -> **25/25 PASS** (Exit 0)
+    2. `./cicd/tests/test_checkpoint_7_4.sh` -> **13/13 PASS** (Exit 0)
+    3. `npm --prefix backend run typecheck && npm --prefix backend test && npm --prefix backend run build` -> **27/27 PASS** (Exit 0; includes 21 Phase 6 + 6 Phase 7.3 tests)
+    4. `./puppet/tests/test_jenkins_module.sh` -> **21/21 PASS** (Exit 0)
+    5. Phase 4 Ansible Suites: **208/208 PASS** (Exit 0 across all 8 suites; verified in `task-779.log`):
+       - `./ansible/tests/test_common_role.sh` -> **16/16 PASS** (Exit 0)
+       - `./ansible/tests/test_docker_role.sh` -> **30/30 PASS** (Exit 0)
+       - `./ansible/tests/test_nginx_role.sh` -> **30/30 PASS** (Exit 0)
+       - `./ansible/tests/test_puppet_agent_role.sh` -> **54/54 PASS** (Exit 0)
+       - `./ansible/tests/test_puppet_server_role.sh` -> **20/20 PASS** (Exit 0)
+       - `./ansible/tests/test_puppet_enrollment.sh` -> **45/45 PASS** (Exit 0)
+       - `./ansible/tests/test_sync_inventory.sh` -> **5/5 PASS** (Exit 0)
+       - `./ansible/tests/test_verify_ssh_keys.sh` -> **8/8 PASS** (Exit 0)
+    6. Phase 5A Puppet Suites: **83/83 PASS** (Exit 0 across all 5 suites; verified in `task-779.log`):
+       - `./puppet/tests/test_puppet_architecture.sh` -> **15/15 PASS** (Exit 0)
+       - `./puppet/tests/test_common_module.sh` -> **14/14 PASS** (Exit 0)
+       - `./puppet/tests/test_nrpe_module.sh` -> **20/20 PASS** (Exit 0)
+       - `./puppet/tests/test_nagios_module.sh` -> **26/26 PASS** (Exit 0)
+       - `./puppet/tests/test_phase5a_convergence.sh` -> **8/8 PASS** (Exit 0)
+    7. Phase 5B Puppet Suites: **62/62 PASS** (Exit 0 across both suites; verified in `task-779.log`):
+       - `./puppet/tests/test_phase5b_release.sh` -> **36/36 PASS** (Exit 0)
+       - `./puppet/tests/test_phase5b_application.sh` -> **26/26 PASS** (Exit 0)
+    8. Formatting check:
+       - `git diff --check` -> **Clean** (Exit 0)
+  - **Reconciled Consolidated Test Count**: **439/439 checks passed** (25 + 13 + 27 + 21 + 208 + 83 + 62 = 439), 0 failures, 0 regressions.
+  - **Reconciliation Note**: An earlier report had an errant table transcription claiming 391/391 (listing 163 for Phase 4, 84 for Phase 5A, and 48 for Phase 5B with scrambled sub-suite rows). The underlying execution log (`task-779.log`) and test script assertion definitions confirm with zero ambiguity that all historical baselines were completely preserved (Phase 4: 208, Phase 5A: 83, Phase 5B: 62), and the true executed total is 439 passing checks.
+
+- **Part C — Phase 7.4 Review Synthesis & Closure**:
+  - Image config and layers clean; non-root UID 1000:1000 execution verified.
+  - Resource limits (768 MB, 1.5 CPUs, 100 PIDs) enforced.
+  - Zero docker.sock mounting, zero GROQ_API_KEY injection, deterministic static-report fallback verified.
+  - All 10 repository fixture profiles executed and validated via real backend `ArtifactIngestor`.
+  - Workspace cleanup across failure, timeout, interrupt, and >2 GB oversized repos verified.
+  - POSIX quoting defect in `ai/metrics.js` resolved.
+  - Image size noted at 1.23 GB; hard quota limitation and disk-exhaustion residual risk acknowledged.
+  - Docker Hub republish identified as prerequisite for live Boundary B deployment.
+  - Phase 7.4 is **Approved & Closed Locally under Boundary A**.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.5 Boundary B Deployment Runbook (Boundary A Only — Completed)
+
+- **Task**: Author the authoritative, ordered 11-stage Boundary B deployment runbook governing live AWS provisioning, Ansible bootstrap, Puppet convergence, application release activation, Jenkins controller hardening, backend credential cutover, Docker analyzer execution, resource acceptance gates on 2 GB `cicd-server`, monitoring validation, E2E demonstration, and teardown under ADR 011.
+- **Architectural Invariants Strictly Preserved**:
+  - Exactly 3 Ubuntu 24.04 EC2 instances: `puppet-server` (`t3.small`, 15 GB gp3), `app-server` (`t3.micro`, 15 GB gp3), `cicd-server` (`t3.small`, 20 GB gp3). Total storage: 50 GB gp3.
+  - Security Groups: Public ingress (80/443) strictly on `app-server` only; SSH (22) restricted to operator `/32`; internal ports (8140, 8080, 5666) restricted to security group references.
+  - Monitoring topology: Nagios Core on `app-server` (accessed via encrypted SSH tunnel to Apache loopback `127.0.0.1:8080`); NRPE daemon on `puppet-server` and `cicd-server`.
+  - Application lifecycle: Immutable release staging, SHA-256 sidecar verification, 11-step maintenance-gated activation (`503 MAINTENANCE`), atomic symlink swap, health verification gate, and zero-rebuild rollback.
+- **Runbook Codification**:
+  - Extended Section 7 of [`project_docs/IMPLEMENTATION_PLAN.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/IMPLEMENTATION_PLAN.md) to provide comprehensive coverage across 11 stages:
+    - `7.5.1` — Pre-deployment readiness (credentials, working tree, Docker Hub publish gate, release bundle sidecars, approval gates).
+    - `7.5.2` — Infrastructure provisioning (Terraform 5-stage workflow, SG verification, dynamic inventory sync, strict halt protocol).
+    - `7.5.3` — Ansible bootstrap (`site.yml` master fleet bootstrap: common, puppet_server, puppet_agent, docker, nginx).
+    - `7.5.4` — Puppet deployment (CA verification, strict allowlist CSR signing via `enroll-puppet-agents.yml`, catalog convergence, Jenkins & Application modules).
+    - `7.5.5` — Application release deployment (staging, SHA-256 sidecar, `release_manager.py`, maintenance mode, health verification gate, rollback).
+    - `7.5.6` — Jenkins and backend integration (`backend-service` user, API token, `/etc/git-repo-analyzer/backend.env` cutover, `JENKINS_MOCK_MODE=false`).
+    - `7.5.7` — Docker analyzer execution (republished `:latest` tag, non-root UID, 768m/1.5cpus/100pids, 0 socket, static fallback, disk exhaustion residual risk).
+    - `7.5.8` — Resource acceptance gates (Mandatory go/no-go on EC2 3: `MemAvailable >= 300 MB`, 0 OOMs, 0 swap thrashing, disk headroom).
+    - `7.5.9` — Monitoring validation (Nagios Core via SSH tunnel `127.0.0.1:8080`, NRPE checks, failure simulation).
+    - `7.5.10` — End-to-end demonstration (11-step demonstration sequence, positive analysis, negative validation, evidence collection).
+    - `7.5.11` — Teardown and cost control (artifact export, explicit teardown approval gate, interactive `terraform destroy`, permanent S3 state retention).
+- **Phase 7 Checkpoint Status Summary**:
+  - `7.1` — Jenkinsfile hardening & container sandboxing: **Approved & Closed Locally (Boundary A)**.
+  - `7.2` — Puppet Jenkins module: **Approved & Closed Locally (Boundary A)**.
+  - `7.3` — Backend–Jenkins protocol integration tests: **Approved & Closed Locally (Boundary A)**.
+  - `7.4` — Docker analyzer execution & artifact validation: **Approved & Closed Locally (Boundary A)**.
+  - `7.5` — Boundary B deployment runbook: **Approved & Closed Locally (Boundary A)**.
+- **Phase 7.5 Runbook Secret-Handling Documentation Correction**:
+  - Eliminated documentation inconsistency in Section 7.5.4 and Section 7.5.1 that suggested injecting secrets into protected node Hiera.
+  - Reaffirmed permanent project rule: **Secrets and credentials must never be stored in Puppet manifests, Hiera, Git, Docker image layers, or analyzer container environment variables.**
+  - Documented strict out-of-band provisioning for the backend Jenkins API token directly on `app-server` in `/etc/git-repo-analyzer/backend.env` (`root:gitrepo`, `0640`), with Puppet managing only file existence, ownership, permissions, and non-secret metadata.
+  - Documented out-of-band Jenkins service credentials provisioning without exposing credentials in command-line arguments, process listings, or logs.
+  - Reaffirmed zero credential or `GROQ_API_KEY` injection into the ephemeral analyzer container, deterministically preserving the static report fallback.
+- **Constraints Maintained**: Boundary A strictly preserved. Zero AWS CLI/API calls, no Terraform apply, no SSH, no remote Ansible, no live Puppet/Jenkins, no Docker Hub push, no Git commits/pushes/branch changes. Phase 7 implementation planning complete.
+
+---
+
+## 2026-11-26: Phase 7 — Finalization of Nagios Authentication Secret Provisioning in Deployment Runbook (Boundary A Only)
+
+- **Objective**: Derive exact properties of Nagios web authentication from the repository implementation, codify the secure out-of-band provisioning procedure in the Boundary B deployment runbook, conduct compatibility analysis with existing Puppet management, and document all findings across project documentation without modifying implementation code.
+- **Repository Implementation Audit Findings**:
+  - **Authentication Mechanism**: HTTP Basic Authentication (`AuthType Basic`, `AuthName "Nagios Access"`, `AuthUserFile /etc/nagios4/htpasswd.users`, `Require valid-user`) defined in Apache template `puppet/modules/nagios/templates/apache_nagios.conf.erb` protecting `/usr/share/nagios4/htdocs`, `/usr/lib/cgi-bin/nagios4`, and `/etc/nagios4/stylesheets` under Apache loopback virtual host (`127.0.0.1:8080`).
+  - **Exact Password-File Path**: `/etc/nagios4/htpasswd.users` (derived from `puppet/modules/nagios/manifests/web.pp` line 16: `$htpasswd_file = '/etc/nagios4/htpasswd.users'`).
+  - **Service User & Group**: `root:www-data` (Apache worker processes execute under `www-data:www-data` on Ubuntu 24.04 LTS and require group read access).
+  - **Ownership & Permissions**: `owner => 'root'`, `group => 'www-data'`, `mode => '0640'` (`-rw-r-----` — root read/write, `www-data` group read-only, others no access).
+  - **Puppet Management State & Known Implementation Conflict**:
+    - In `puppet/modules/nagios/manifests/web.pp`:
+      - Lines 22–24: `if $admin_password_hash == undef or $admin_password_hash =~ /^\s*$/ { fail("Nagios web credential error: nagios::web::admin_password_hash is absent or empty. ...") }`
+      - Lines 136–148: `file { $htpasswd_file: ensure => file, owner => 'root', group => 'www-data', mode => '0640', content => "${admin_user}:${admin_password_hash}\n" }`
+    - **Conflict Analysis**: Phase 5A's `web.pp` currently manages `htpasswd.users` content directly and fails catalog compilation if `$admin_password_hash` is `undef`. Under the established zero-secrets-in-Hiera rule, omitting the hash from Hiera causes Puppet catalog compilation on `app-server` to fail closed. Supplying the hash in Hiera causes Puppet to overwrite the out-of-band file.
+    - **Boundary B Operational Resolution**: Under Boundary A, code modifications are prohibited. During live Boundary B deployment, `web.pp` must be patched to decouple secret content (e.g., adding `replace => false` on `File[$htpasswd_file]` and making `$admin_password_hash` optional without failing compilation when `undef`), mirroring `backend.env`.
+- **Codified Out-of-Band Provisioning Procedure**:
+  - Interactive password generation directly on `app-server`:
+    ```bash
+    sudo htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin
+    sudo chown root:www-data /etc/nagios4/htpasswd.users
+    sudo chmod 0640 /etc/nagios4/htpasswd.users
+    ```
+  - Non-leaking file verification:
+    ```bash
+    stat -c "%n %U:%G %a" /etc/nagios4/htpasswd.users
+    sudo -u www-data test -r /etc/nagios4/htpasswd.users && echo "READABLE (OK)"
+    ```
+  - Non-leaking authentication test:
+    - Browser login via SSH tunnel `ssh -L 8080:127.0.0.1:8080 ubuntu@app-server` at `http://localhost:8080/nagios`.
+    - Interactive CLI check: `curl -s -o /dev/null -w "%{http_code}\n" -u nagiosadmin http://127.0.0.1:8080/nagios/`.
+- **Documentation Updated**:
+  - `project_docs/IMPLEMENTATION_PLAN.md`: Section 7.5.1 Step 6, Section 7.5.4 Step 3, Section 7.5.9 Step 2 updated with exact file paths, permissions, out-of-band procedures, and Puppet compatibility conflict analysis.
+  - `project_docs/PROJECT_STATUS.md`: Updated Section 2 table entries for Puppet App Config, CI/CD & Jenkins, and Monitoring (Nagios/NRPE) to reflect out-of-band htpasswd provisioning and eliminate lingering Hiera secret references.
+  - `project_docs/WORK_LOG.md`: Added comprehensive audit, procedure specification, and compatibility analysis entry.
+- **Constraints Maintained**: Boundary A strictly preserved. Zero implementation code changed, zero Git write mutations, zero cloud/AWS/remote operations executed.
+
+
+---
+
+## 2026-11-27: Decouple Nagios Authentication Secrets from Puppet Management (Boundary A — Completed)
+
+- **Objective**: Fix the security conflict in `puppet/modules/nagios/manifests/web.pp` where Puppet previously managed both the metadata and secret content of `/etc/nagios4/htpasswd.users` and failed catalog compilation when `$admin_password_hash` was undefined or empty. Decouple authentication credentials so that secret values are never managed or stored in Puppet manifests, Hiera, Git, or compiled catalogs, while Puppet continues enforcing metadata (`root:www-data`, `0640`, `replace => false`).
+- **Root Cause Analysis**:
+  - `puppet/modules/nagios/manifests/web.pp` previously contained hard compilation assertions:
+    `if $admin_password_hash == undef or $admin_password_hash =~ /^\s*$/ { fail("Nagios web credential error: ...") }`
+    and declared `File[$htpasswd_file]` with:
+    `ensure => file, owner => 'root', group => 'www-data', mode => '0640', content => "${admin_user}:${admin_password_hash}\n"`.
+  - This forced operator password hashes to be present in Hiera (`puppet/hieradata/nodes/app-server.yaml` or `common.yaml`), violating the project's permanent security requirement: **Secrets must never be stored in Puppet manifests, Hiera, Git, deployment scripts, Docker image layers, or analyzer container environment variables.**
+  - If omitted from Hiera, catalog compilation on `app-server` failed closed. If provided in Hiera, Puppet compiled the secret into the catalog and overwrote out-of-band changes.
+- **Implementation Changes**:
+  1. **`puppet/modules/nagios/manifests/web.pp`**:
+     - Signature: Retained `Optional[String] $admin_password_hash = undef` for backwards parameter compatibility with test fixtures.
+     - Removed compilation failure when `$admin_password_hash` is `undef` or empty.
+     - Hardened placeholder guard: When `$admin_password_hash != undef and $enforce_production_secret`, compilation fails if known demo placeholders (`$apr1$demo$hashedpassword`, etc.) are passed.
+     - Decoupled `File[$htpasswd_file]`:
+       - Removed `content => "${admin_user}:${admin_password_hash}\n"`.
+       - Removed `ensure => file`.
+       - Added `replace => false`.
+       - Retained `owner => 'root'`, `group => 'www-data'`, `mode => '0640'`.
+  2. **`puppet/hieradata/common.yaml`**:
+     - Updated documentation comments to explicitly state that Nagios web authentication credentials are not managed via Hiera or Puppet, pointing to interactive out-of-band provisioning.
+  3. **Verified Puppet Resource Semantics**:
+     - *Absent File (First-Time Provisioning)*: When `ensure` is omitted, Puppet manages file metadata only if the target exists on disk. It will **not** create a bogus 0-byte or empty file if absent.
+     - *Present File (Post-Provisioning Convergence)*: Once the operator provisions `/etc/nagios4/htpasswd.users` interactively out-of-band via `htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin`, Puppet enforces ownership (`root`), group (`www-data`), and mode (`0640`).
+     - *Content Immutability*: Because `content` is omitted and `replace => false` is enforced, Puppet will never modify, overwrite, or corrupt the provisioned credentials.
+     - *Catalog Cleanliness*: Zero password strings or bcrypt/apr1 hashes appear in the compiled catalog JSON, agent cache, reports, or logs.
+  4. **Test Suite Updates & Validation**:
+     - `puppet/tests/test_nagios_module.sh`:
+       - Updated Test 13: Added verification that catalog compilation succeeds with undefined password hash; verified `File[/etc/nagios4/htpasswd.users]` has mode `0640`, owner `root`, group `www-data`, `replace => false`, no `content` attribute, and zero hashes in catalog; verified placeholder rejection; sandboxed `/tmp` behavioral verification confirming no empty file creation on first install, out-of-band content preservation, and idempotency (exit 0 on repeat).
+       - Updated Test 17: Validated `app-server` catalog compilation against repository `hiera.yaml` directly without mock secrets.
+       - Result: **26/26 PASS (Exit 0)**.
+     - `puppet/tests/test_phase5a_convergence.sh`:
+       - Updated Test 2: Verified decoupled zero-secret catalog compilation on `app-server` with `hiera.yaml`, verified `File[/etc/nagios4/htpasswd.users]` parameters, and asserted zero hashes in JSON catalog.
+       - Result: **8/8 PASS (Exit 0)**.
+     - Canonical 4-node compilation verification:
+       - `puppet-server` (25 resources), `app-server` (87 resources), `cicd-server` (50 resources), `node default` (16 resources) all compile cleanly and deterministically with zero cycles and zero credentials.
+- **Constraints Maintained**: Boundary A strictly preserved. Zero Git write mutations (no commit, push, or branch changes), zero AWS/remote operations, zero live credential generation.

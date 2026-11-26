@@ -394,41 +394,54 @@ flowchart TD
 ---
 
 ### Phase 7: Jenkins Pipeline Configuration & Real Backend Integration
-- **Objective:** Provision Jenkins Controller on EC2 3, configure parameterized pipeline executing the Dockerized analyzer container, establish Jenkins API credentials, and switch the Express backend from mock mode to live Jenkins execution.
-- **Prerequisites:** Phase 5B completion (application running on EC2 2; Docker running on EC2 3).
-- **Subtasks:**
-  1. **Jenkins Installation & System Configuration (EC2 3)**:
-     - Install OpenJDK 17 headless and official Jenkins LTS repository package on EC2 3.
-     - Tune Jenkins JVM heap in `/etc/default/jenkins` or systemd override: `JAVA_ARGS="-Xms384m -Xmx512m"`.
-     - Add `jenkins` system user to the `docker` group (`usermod -aG docker jenkins`).
-     - Start and enable `jenkins` service; verify port 8080 listens locally.
-  2. **Pipeline Job Configuration**:
-     - Create parameterized pipeline job `git-repo-analyzer` loaded with repository `Jenkinsfile`.
-     - Parameter: `REPO_URL` (String).
-     - Configure secret credential in Jenkins Credentials Store: `groq-api-key` (Secret text) for AI report generation.
-     - Verify Docker execution: Jenkins executes `docker run --rm --user $(id -u):$(id -g) -v $WORKSPACE/target-repo:/repo adityaashok2274/git-repo-analyzer:latest`.
-     - Confirm Docker socket (`/var/run/docker.sock`) is never mounted inside the analyzer container.
-  3. **Backend Integration & Credential Configuration**:
-     - Generate an API token for user `backend-service` on Jenkins.
-     - Update `/etc/git-repo-analyzer/backend.env` on EC2 2:
-       ```ini
-       PORT=3000
-       NODE_ENV=production
-       JENKINS_URL=http://<private-ip-3>:8080
-       JENKINS_USER=backend-service
-       JENKINS_API_TOKEN=<token>
-       JENKINS_MOCK_MODE=false
-       ```
-     - Restart backend systemd service: `systemctl restart git-repo-analyzer-backend`.
-  4. **Integration Verification**:
-     - Trigger live analysis via backend: `POST /api/analyses` with `https://github.com/owner/repo`.
-     - Verify Jenkins job is triggered over internal private network (TCP 8080).
-     - Verify Docker container executes analyzer, generates `metrics.json`, `summary.md`, and PNG charts, and Jenkins archives artifacts.
-     - Verify backend retrieves artifacts and React displays analysis dashboard.
+- **Objective:** Harden the Jenkins pipeline and analyzer container sandboxing, implement the Puppet `jenkins` module for EC2 3, validate Backend–Jenkins protocol integration and Docker analyzer execution/artifacts locally under Approval Boundary A, and produce the authoritative Boundary B deployment runbook for live EC2 Jenkins provisioning, job configuration, backend live cutover, and empirical 2 GB instance validation.
+- **Prerequisites:** Phase 5B completion (application configured for EC2 2; Docker role configured for EC2 3).
+- **Approved Acceptance Criteria Amendments (2026-11-26):**
+  1. **Memory Headroom Threshold (300 MB Minimum)**:
+     - Set the minimum host memory headroom threshold to **300 MB**, replacing the previous 250 MB threshold.
+     - Validation must use actual empirical measurements during representative workloads, not estimates or theoretical calculations.
+     - Capture `MemAvailable` at short intervals while Jenkins and the analyzer execute representative workloads; record minimum observed `MemAvailable`, peak analyzer memory usage, host memory pressure, swap activity, and any OOM events.
+     - Acceptance requires:
+       - Minimum observed host `MemAvailable` remains at or above 300 MB.
+       - No host-level or analyzer-level OOM events.
+       - No sustained swap pressure or thrashing.
+     - If the threshold is violated: report the evidence and recommend a targeted adjustment. Do not resize instances or change the architecture automatically.
+     - **Local vs. EC2 Validation Boundary**: Local Checkpoint 7.1 testing measured isolated container workloads on the 15,712 MB RAM development workstation (`memory.peak` 26.25 MB, minimum workstation `MemAvailable` 6,514.2–6,698.7 MB, 0.0 MB swap, `OOMKilled: False`). Because that workstation is not the 2 GB `t3.small` EC2 3 instance running Jenkins JVM (`-Xms384m -Xmx512m`) + Docker + Puppet Agent, **the 300 MB memory-headroom acceptance validation on the actual 2 GB EC2 CI/CD instance remains STILL PENDING until Boundary B live deployment.**
+  2. **Workspace Cleanup and Disk-Exhaustion Residual Risk**:
+     - Validate workspace cleanup after normal, interrupted, aborted, and failed builds under the expected pipeline lifecycle (`post { always { ... } cleanup { cleanWs deleteDirs: true, notFailBuild: true } }`).
+     - Record behavior observed in local simulated interruptions:
+       - Simulated interruption during cloning: `rm -rf target-repo` in `post.always` removes partial clones.
+       - Simulated interruption during analysis: targeted `docker stop` / `docker rm -f` on `analyzer-${BUILD_TAG...}` halts the active container and releases its volume mount before `rm -rf target-repo` and `cleanWs` purge workspace artifacts.
+     - **Hard-Failure Cleanup Limitation**: Jenkins `post` lifecycle actions execute only while the Jenkins controller/agent and host remain operational to process build termination. **Hard host failure, sudden power loss, or Jenkins agent/controller loss can prevent Jenkins post-build cleanup from running**, potentially leaving orphaned workspace directories or containers until manual intervention or a subsequent run's pre-clone `rm -rf target-repo`. Hard-failure cleanup guarantees are **not** claimed.
+     - **Residual Risk & Quota Limitation Notice**: The existing pre-clone free-space check (5 GB gate), clone timeout (5m), shallow clone (`--depth 500`), and post-clone size check (2 GB ceiling) do **not** constitute a hard filesystem disk quota. **Disk exhaustion remains an acknowledged residual operational risk**, not a guaranteed-protection scenario. No filesystem quotas or storage redesigns are introduced in this phase.
+- **Canonical Phase 7 Checkpoint Structure (Boundary A Deliverables):**
+  - **Checkpoint 7.1 — Jenkinsfile hardening and analyzer sandboxing** (**Approved & Closed Locally under Boundary A**):
+    - Harden [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile): anchored regex `^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$`; 15m overall, 5m clone, and 10m container timeouts; shallow clone (`--depth 500`); disabled hooks (`-c core.hooksPath=/dev/null`); disabled submodules (`--no-recurse-submodules`); pre-clone 5 GB free-space gate (`5242880 KB`); post-clone 2 GB size ceiling (`2097152 KB`) with immediate abort/removal; `disableConcurrentBuilds()`; single executor policy on CI/CD node; unprivileged non-root container execution (`--user "$(id -u):$(id -g)"`); approved 768 MB memory limit (`--memory=768m`); CPU limit (`--cpus=1.5`); process limit (`--pids-limit=100`); zero Docker socket mounting; zero Jenkins credentials or host secrets passed; zero `GROQ_API_KEY` injection into container or pipeline (deterministic static-report fallback preserved); deterministic container naming (`analyzer-${BUILD_TAG...}`); `post { always { docker stop/rm; rm -rf target-repo } cleanup { cleanWs deleteDirs: true, notFailBuild: true } }`.
+    - Document Jenkins runtime compatibility baseline: **Java 21** and **Jenkins LTS 2.580.3** planning baseline; note that exact package version and Java compatibility must be revalidated when live deployment is authorized (especially when consuming a moving package repository).
+    - Local validation: [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh) (**25/25 PASS** after resolving Check 25 host-swap attribution by adding pre-test baseline capture and cgroup v2 container-attributable swap peak validation), local workstation memory benchmark, and simulated interruption cleanup tests. Live EC2 Jenkins execution and 2 GB EC2 3 headroom validation remain pending Boundary B.
+  - **Checkpoint 7.2 — Puppet Jenkins module** (**Approved & Closed Locally under Boundary A**):
+    - Implemented [`puppet/modules/jenkins/`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/) (`init.pp`, `repo.pp`, `install.pp`, `config.pp`, `service.pp`, `override.conf.erb`, `controller-hardening.groovy.erb`) and integrated `class { 'jenkins': }` into [`puppet/manifests/site.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/manifests/site.pp) (`cicd-server` exclusively) with non-secret defaults in [`puppet/hieradata/common.yaml`](file:///home/aditya-2274/Git-repo-analyzer/puppet/hieradata/common.yaml).
+    - Enforces official `https://pkg.jenkins.io/debian-stable` APT repository with modern `signed-by` `/etc/apt/keyrings/jenkins-keyring.asc` (`jenkins.io-2026.key`, APT pin priority `900`), `openjdk-21-jre-headless` + `fontconfig`, Jenkins LTS `2.580.3` planning baseline (`pin_package_version => true`, revalidated prior to Boundary B), systemd drop-in `/etc/systemd/system/jenkins.service.d/override.conf` (`-Xms384m -Xmx512m`, `JENKINS_PORT=8080`, `JENKINS_LISTEN_ADDRESS=0.0.0.0` intentional wildcard IPv4 bind rather than a private-only socket, UDP/mDNS disabled), `/var/lib/jenkins` (`0750` `jenkins:jenkins`), `init.groovy.d/01-controller-hardening.groovy` (`0640`, single executor `numExecutors = 1`, `slaveAgentPort = -1`, `DefaultCrumbIssuer(true)`, `setAllowAnonymousRead(false)`), zero embedded passwords/tokens/`GROQ_API_KEY`, zero NGINX/Apache reverse-proxy listeners, and `jenkins` user `docker` group membership (`membership => 'minimum'`, explicitly documented as root-equivalent on `cicd-server` per ADR 007). Retention of `'0.0.0.0'` is required because Jenkins's Winstone/Jetty server accepts only one `--httpListenAddress` and must serve both local NRPE probes on `127.0.0.1:8080` ([`check_jenkins.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/nrpe/files/check_jenkins.sh)) and remote `app-server` VPC requests without adding an extra reverse proxy on EC2 3; moreover, because EC2 public-to-private 1:1 NAT delivers public traffic to the ENI private IP anyway, binding solely to a private IP neither preserves `127.0.0.1:8080` nor stops public access at the socket layer. **Network security boundary:** AWS Security Group `cicd_analysis_sg` (TCP `8080` ingress restricted strictly to `app_monitoring_sg`) is the primary network-level control preventing unauthorized external access. **Application-layer security:** Jenkins authentication (`setAllowAnonymousRead(false)`) and CSRF protection (`DefaultCrumbIssuer(true)`) are additional application-layer controls only; they do not prevent TCP network connections, provide network isolation, or rely on omitting container credentials to restrict listener access.
+    - Local validation: [`puppet/tests/test_jenkins_module.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_jenkins_module.sh) (**21/21 PASS** after listener security review), plus Phase 7.2 pre-closure regression across Phase 4 Ansible (`208/208`), Phase 5A Puppet (`83/83`), Phase 5B Puppet (`62/62`), Backend (`21/21`), Frontend (`14/14`), and Checkpoint 7.1 (`25/25`). *(Live `apt` package installation, package/Java compatibility revalidation, systemd daemon convergence, and live 2 GB EC2 3 `>= 300 MB` `MemAvailable` validation execute only under Boundary B).*
+  - **Checkpoint 7.3 — Backend–Jenkins protocol integration tests** (**Approved & Closed Locally under Boundary A**):
+    - Implemented [`backend/test/backendJenkinsProtocol.test.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/test/backendJenkinsProtocol.test.ts) (6 integrated HTTP protocol scenarios wiring Express `/api/analyses`, `AnalysisManager`, `FileAnalysisStore`, `ArtifactIngestor`, and `LiveJenkinsClient` against a stateful loopback HTTP Jenkins controller simulator with deterministic queue/build synchronization gates, zero edits to public API contracts).
+    - Coverage: `DefaultCrumbIssuer(true)` CSRF header acquisition & rejection (`Jenkins-Crumb` and custom `crumbRequestField`), runtime-generated Basic Auth credentials (`401`/`403` failure paths), `201` & `302` queue dispatch with `REPO_URL` form encoding, queue cancellation & build `ABORTED`/`FAILURE`/`UNSTABLE`/`SUCCESS` lifecycle polling (with explicit `QUEUED` and `BUILDING` state gates eliminating narrow timer races), live HTTP restart recovery without duplicate `triggerJob`/`crumbIssuer` requests, missing/incomplete/malformed/spoofed/traversal/oversized artifact rejections, pre-completion `409 CONFLICT` enforcement, controller unavailability/timeouts/cross-origin redirect blocks, non-leakage across HTTP responses/logs/disk store, and `Jenkinsfile` / `ai/reportGenerator.js` static fallback parity.
+    - Validation commands & exact results: `npm --prefix backend run typecheck` (exit 0), `npm --prefix backend run build` (exit 0), **5 consecutive runs** of `npm --prefix backend test` (**27/27 PASS** per run; 135/135 individual test executions with 0 failures), and `git diff --check` (exit 0).
+    - Known limitations & Boundary B pending items: local validation uses a loopback HTTP simulator rather than a live Jenkins JVM controller or Docker analyzer runtime (Checkpoint 7.4); real EC2 2 $\leftrightarrow$ EC2 3 VPC REST calls, `backend-service` API token authentication, and `JENKINS_MOCK_MODE=false` runtime cutover remain pending Boundary B.
+  - **Checkpoint 7.4 — Docker analyzer execution and artifact validation** (**Approved & Closed Locally under Boundary A**):
+    - Built and inspected real container image `git-repo-analyzer:phase74-local` (`1.23 GB`) from [`Dockerfile`](file:///home/aditya-2274/Git-repo-analyzer/Dockerfile), verifying Node `v20.20.2`, Git `2.34.1`, runtime-only npm dependencies (`@langchain/core`, `@langchain/groq`, `chart.js`, `chartjs-node-canvas`, `dotenv`, zero `devDependencies`), non-root UID execution (`1000:1000`), and zero baked secrets or `GROQ_API_KEY` in `docker history` / `Config.Env`. *(Noted without image redesign that apt compile headers `build-essential`/`*-dev` remain in the single `RUN` layer and `.dockerignore` is absent, though `COPY` strictly scopes to `analyze2.sh` and `ai`).*
+    - Identified and fixed a concrete POSIX `/bin/sh` quoting defect in [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js#L275) (`git for-each-ref --format='%(refname:short)' refs/heads/`) where unquoted parentheses previously caused `branchDrift` to silently return `0` branches/`[]` stale branches in `metrics.json`. *(Republishing `adityaashok2274/git-repo-analyzer:latest` to Docker Hub via [`.github/workflows/docker-ci.yml`](file:///home/aditya-2274/Git-repo-analyzer/.github/workflows/docker-ci.yml) is required before Boundary B live execution).*
+    - Implemented [`cicd/tests/test_checkpoint_7_4.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_4.sh) (**13/13 PASS**): validates image layers/env/UID, all 10 local Git repository fixtures (empty non-git dir fail-closed, 0-commit repo, single-author + blocked `core.hooksPath=/dev/null` hook template & untrusted scripts, multi-author, 7d/30d/`>30d` commit windows, additions/deletions & hotspot ranking, stale branches `>30d`, spaces/quotes/UTF-8/literal-`$` filenames, and 150-commit history), real backend [`ArtifactIngestor`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.js) acceptance/negative contract rejection across PNG `IHDR`/`IEND` & schema rules, cgroup sandboxing (`--memory=768m`, `--cpus=1.5`, `--pids-limit=100`, zero `docker.sock`, zero `GROQ_API_KEY`), cleanup across failure/timeout/abort/2 GB size ceiling (`26.35–26.68 MB` `memory.peak`, `OOMKilled: False`, `1.85–3.13s`, `92 KB` generated `reports/` purged cleanly). *(Distinct from simulated Phase 7.3 protocol tests; live Jenkins execution, Docker Hub image publish, and live 2 GB EC2 3 `>= 300 MB` `MemAvailable` acceptance remain pending Boundary B).*
+  - **Checkpoint 7.5 — Boundary B deployment runbook** (**Approved & Closed Locally under Boundary A**):
+    - Authored the comprehensive, authoritative Boundary B deployment runbook in Section 7 of this plan, governing all 11 stages of live deployment once AWS provisioning is explicitly approved: (7.5.1) Pre-deployment readiness, (7.5.2) Infrastructure provisioning, (7.5.3) Ansible bootstrap, (7.5.4) Puppet deployment, (7.5.5) Application release deployment, (7.5.6) Jenkins and backend integration, (7.5.7) Docker analyzer execution, (7.5.8) Resource acceptance gates on 2 GB `cicd-server` (`MemAvailable >= 300 MB`, 0 OOM), (7.5.9) Monitoring validation, (7.5.10) End-to-end demonstration, and (7.5.11) Teardown and cost control.
+- **Boundary B Live Execution Activities (Blocked Pending Explicit Boundary B Approval — Governed by Checkpoint 7.5 Runbook):**
+  1. **Jenkins Controller Provisioning & Package Revalidation (EC2 3)**: Apply Puppet `jenkins` module on EC2 3; install OpenJDK 21 and Jenkins LTS (baseline 2.580.3, revalidating package version and Java compatibility at deploy time); verify `-Xms384m -Xmx512m`, single executor, `jenkins` in `docker` group, `0.0.0.0:8080` listener protected externally by AWS SG `cicd_analysis_sg`, and NRPE `check_jenkins.sh`.
+  2. **Pipeline Job Creation (EC2 3)**: Configure parameterized pipeline job `git-repo-analyzer` from repository `Jenkinsfile` (`REPO_URL` parameter, zero `GROQ_API_KEY` injection, deterministic static fallback).
+  3. **Live Backend Integration & Credential Cutover (EC2 2)**: Generate `backend-service` Jenkins API token out-of-band; update `/etc/git-repo-analyzer/backend.env` out-of-band directly on `app-server` (`JENKINS_URL=http://<private-ip-3>:8080`, `JENKINS_USER=backend-service`, `JENKINS_API_TOKEN=<token>`, `JENKINS_MOCK_MODE=false`; `root:gitrepo`, `0640`; zero secrets in Puppet or Hiera); restart `git-repo-analyzer-backend`.
+  4. **Live End-to-End Verification & EC2 3 Memory Acceptance**: Trigger `POST /api/analyses`, verify private-network dispatch, Docker analyzer execution, artifact archiving/ingestion, React UI rendering, and live EC2 3 `MemAvailable` sampling (`>= 300 MB`, zero OOM, zero sustained swap pressure).
 - **Completion Criteria:**
-  - Jenkins executes pipeline successfully without root escalation or Docker socket mounting.
-  - Backend retrieves and formats live artifacts from Jenkins API.
-  - React frontend displays live analysis results for submitted public repositories.
+  - Boundary A checkpoints 7.1–7.5 implemented and verified locally.
+  - Boundary B (when separately authorized): Jenkins executes hardened pipeline on EC2 3 without root escalation or Docker socket mounting; analyzer runs within 768 MB memory limit using static fallback without Groq credentials; live 2 GB EC2 3 host `MemAvailable` remains >= 300 MB with zero OOM events during representative workloads; workspace cleanup removes temporary clones and artifacts across normal/interrupted/failed Jenkins lifecycles (acknowledging hard host/agent failure limitations and disk-exhaustion residual risk); backend retrieves live artifacts and React displays results.
 
 ---
 
@@ -520,11 +533,11 @@ To distinguish design requirements from implemented and verified controls, each 
 | Execution User & Restrictive Permissions | Host OS / Service | **IMPLEMENTED (Boundary A)** | System user `gitrepo` and `/etc/git-repo-analyzer/backend.env` mode `0640` (`show_diff => false`) implemented and verified in Puppet `application::backend`; live EC2 convergence pending Boundary B. |
 | Analyzer Container Non-Root User | Container Engine | **TESTED** | Verified in Phase 2 container testing (`docker run --user $(id -u):$(id -g)`). |
 | Docker Socket Mount Prohibition | Container Engine | **IMPLEMENTED** | `Jenkinsfile` and `analyze2.sh` verified: socket `/var/run/docker.sock` is not mounted. |
-| Git Hooks Disabled (`core.hooksPath=/dev/null`) | Container Engine | **SPECIFIED** | To be enforced in `Jenkinsfile` / container analysis invocation. |
-| Recursive Submodules Disabled | Container Engine | **SPECIFIED** | To be enforced in `Jenkinsfile` clone stage. |
-| Execution Timeouts & Resource Caps | Container Engine | **SPECIFIED** | 5m clone timeout, 10m container timeout, `--memory=1g` to be enforced in Phase 7. |
-| Ephemeral Container Cleanup | Container Engine | **IMPLEMENTED** | Docker run specifies `--rm` in `Jenkinsfile`; container runtime filesystem is discarded on exit. |
-| Host Workspace Directory Cleanup (All Paths) | CI/CD Pipeline | **SPECIFIED** | Currently only pre-build `rm -rf target-repo` exists in `Jenkinsfile`; post-build cleanup via `post { cleanup { cleanWs() } }` covering success, failure, abort, and timeout paths is to be implemented and tested in Phase 7. |
+| Git Hooks Disabled (`core.hooksPath=/dev/null`) | Container Engine | **IMPLEMENTED (Boundary A)** | Enforced in `Jenkinsfile` clone stage (`-c core.hooksPath=/dev/null`); validated in Checkpoint 7.1 test suite. |
+| Recursive Submodules Disabled | Container Engine | **IMPLEMENTED (Boundary A)** | Enforced in `Jenkinsfile` clone stage (`--no-recurse-submodules`); validated in Checkpoint 7.1 test suite. |
+| Execution Timeouts & Resource Caps | Container Engine | **IMPLEMENTED (Boundary A)** | Enforced in `Jenkinsfile`: 15m overall build timeout, 5m clone timeout, 10m container timeout, approved 768 MB memory limit (`--memory=768m`), `--cpus=1.5`, `--pids-limit=100`; validated in Checkpoint 7.1. |
+| Ephemeral Container Cleanup | Container Engine | **IMPLEMENTED (Boundary A)** | Docker run specifies `--rm` and deterministic container naming in `Jenkinsfile`; verified in Checkpoint 7.1. |
+| Host Workspace Directory Cleanup (All Paths) | CI/CD Pipeline | **IMPLEMENTED (Boundary A — Simulated Cleanup Verified)** | Enforced in `Jenkinsfile` `post { always { docker stop/rm; rm -rf target-repo } cleanup { cleanWs deleteDirs: true, notFailBuild: true } }`. Cleanup demonstrated locally via simulated interruptions/aborts/size-rejections; hard host failure or Jenkins agent loss can prevent `post` execution, and live Jenkins `cleanWs` execution awaits Boundary B. |
 
 ---
 
@@ -548,6 +561,7 @@ EC2 3: CI/CD & Analysis Server (t3.small: 2.0 GB Physical RAM, 20 GB gp3 EBS + 2
 • OS Base: ~250 MB │ Docker Daemon: ~120 MB │ NRPE: ~15 MB │ Jenkins JVM (-Xms384m -Xmx512m): ~520 MB
 • Estimated Steady-State Memory: ~905 MB ──► Free Physical Headroom: ~1.09 GB
 • Estimated Peak Run (+ Analyzer Container ~350 MB + Agent ~250 MB): ~1.50 GB ──► Free Headroom: ~500 MB
+  (Historical Note: The ~350 MB analyzer consumption figure above is a historical pre-deployment profile estimate and does NOT supersede the approved 768 MB container hard memory limit enforced via --memory=768m in Checkpoint 7.1.)
 ```
 
 ### Operational Risks by Instance
@@ -558,20 +572,25 @@ EC2 3: CI/CD & Analysis Server (t3.small: 2.0 GB Physical RAM, 20 GB gp3 EBS + 2
    - *Operational Risk*: Most memory-constrained node in the fleet. Baseline steady-state consumes ~440 MB (leaving ~560 MB headroom). When Puppet Agent executes its catalog run (+250 MB), usage surges to ~690 MB (~70% of physical capacity). If inbound API traffic spikes, Nagios executes intensive concurrent plugin checks, or Node.js encounters memory leaks, the instance risks memory paging thrashing or process termination by the OOM killer.
    - *Mitigation & Monitoring*: Ansible configures a 1.0 GB swapfile strictly as an emergency shock-absorber; configure Puppet Agent with random sleep (splay); monitor RSS memory, swap in-use (`< 50 MB`), and process count.
 3. **EC2 3 (CI/CD & Analysis Server — `t3.small`, 2 GB RAM)**:
-   - *Operational Risk*: Concurrent workload spikes. The Jenkins controller JVM (~520 MB) running alongside an ephemeral Docker analyzer container (bounded to 1 GB via `--memory=1g`, ~350 MB typical) and a concurrent Puppet Agent catalog run (~250 MB) consumes ~1.50–1.80 GB RAM, leaving minimal physical headroom. Unbounded concurrent builds or runaway container processes could trigger system-wide contention.
-   - *Mitigation & Monitoring*: Restrict Jenkins to a single build executor (`# of executors = 1`) ensuring strictly sequential pipeline execution; enforce container limits (`--memory=1g`, `--cpus=1.5`, `--pids-limit=100`); Ansible configures a 2.0 GB swapfile cushion.
+   - *Operational Risk*: Concurrent workload spikes. The Jenkins controller JVM (~520 MB) running alongside an ephemeral Docker analyzer container (bounded to 768 MB via `--memory=768m`; 26.25 MB peak observed on local workstation container benchmark without Jenkins JVM) and a concurrent Puppet Agent catalog run (~250 MB) could deplete physical headroom on the 2 GB instance. Unbounded concurrent builds or runaway container processes could trigger system-wide contention. **Live empirical 300 MB headroom validation on the actual 2 GB EC2 3 instance remains pending Boundary B deployment.**
+   - *Mitigation & Monitoring*: Restrict Jenkins to a single build executor (`# of executors = 1`, `disableConcurrentBuilds()`) ensuring strictly sequential pipeline execution; enforce container limits (`--memory=768m`, `--cpus=1.5`, `--pids-limit=100`); Ansible configures a 2.0 GB swapfile cushion.
 4. **Fleet-Wide T3 CPU Credit Exhaustion Risk**:
    - *Operational Risk*: T3 instances operate in Unlimited mode. Initial bootstrap activities (Puppet Server startup, package compilation, Docker pull, Jenkins initialization) cause sustained CPU bursts that deplete initial launch credits. Once credits reach zero, surplus CPU credits are billed at $0.05 per vCPU-hour.
    - *Mitigation & Monitoring*: Track credit burn rate via CloudWatch telemetry and stagger bootstrap tasks where practical.
 
 ### Workload Thresholds & Monitored Metrics
+- **Host Memory Headroom Threshold**: Minimum host `MemAvailable` must remain **>= 300 MB** (amended from 250 MB per Phase 7 acceptance criteria). Acceptance must be validated using empirical measurements captured at short intervals during representative workloads **on the target 2 GB EC2 CI/CD instance**, not estimates or local 16 GB workstation proxies. Acceptance requires:
+  - Minimum observed host `MemAvailable` remains at or above 300 MB.
+  - Zero host-level or analyzer-level OOM events (`OOMKilled: False`).
+  - Zero sustained swap pressure or thrashing.
+  - If threshold is violated, report evidence and recommend a targeted adjustment without automatic instance resizing or architectural change.
 - **Swap Limits**: Steady-state swap in-use must remain `< 50 MB` (near 0 MB). Transient peak during catalog compilation must not exceed `< 200 MB`. Swap is an emergency buffer against kernel OOM panics, not physical memory expansion.
 - **CPU Credit Dynamics**: T3 instances run in Unlimited mode. We make **no guarantee** that baseline credits sustain a four-hour demonstration without surplus credit charges ($0.05/vCPU-hour).
 - **Active Live Metrics to Measure During Deployment**:
   - **CloudWatch Metrics**: `CPUCreditBalance`, `CPUSurplusCreditCharged`, `CPUUtilization`, `NetworkIn`, `NetworkOut`.
   - **Host OS Telemetry**: 1-minute, 5-minute, 15-minute load averages via `/proc/loadavg`; memory distribution via `/proc/meminfo` (`MemAvailable`, `SwapTotal`, `SwapFree`); swap activity via `vmstat 1 5`.
   - **Process-Level Profiles**: Top memory consumers via `ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -15`.
-  - **Docker Engine Stats**: Real-time container memory and CPU utilization via `docker stats --no-stream`.
+  - **Docker Engine Stats**: Real-time container memory and CPU utilization via `docker stats --no-stream` and cgroup v2 `memory.peak`.
 - **Sizing Decision Policy**: Retain provisional sizing (`t3.small` / `t3.micro` / `t3.small`) without resizing until empirical telemetry captured during live Phase 4 and Phase 7 deployments provides verified data justifying adjustments.
 
 ---
@@ -625,12 +644,12 @@ Before executing `terraform apply` or provisioning live AWS resources under Boun
 
 ---
 
-## 7. Authoritative Boundary B Deployment Runbook
+## 7. Authoritative Boundary B Deployment Runbook (Checkpoint 7.5)
 
 > [!CAUTION]
-> **Approval Boundary B Policy**: The commands in this runbook interact with live AWS infrastructure and create billable cloud resources. **DO NOT execute any step in this runbook without separate, explicit user authorization.**
+> **Approval Boundary B Policy**: The commands in this runbook interact with live AWS infrastructure and create billable cloud resources. **DO NOT execute any step in this runbook without separate, explicit user authorization.** All steps in this runbook are planned and documented under Approval Boundary A; live execution is strictly blocked until explicit operator approval is granted.
 
-### Execution Sequence Architecture
+### 7.5 Execution Architecture & Stage Flow
 
 ```text
                                   [ Approval Boundary B Entry ]
@@ -639,172 +658,564 @@ Before executing `terraform apply` or provisioning live AWS resources under Boun
                                                 │
                                                 ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 1: Terraform Infrastructure Provisioning & Approval                                     │
-│   1. Identity Verification ──► 2. terraform init / validate ──► 3. terraform plan -out=tfplan │
-│   ──► 4. Human Review & Explicit Approval ──► 5. terraform apply tfplan (No Auto-Approve)     │
+│ Stage 1: Pre-Deployment Readiness & Input Verification (7.5.1)                                │
+│   • Git & Working Tree Check  • AWS Identity & Quota Check  • Docker Hub Image Re-Publish     │
+│   • Release Bundle & Sidecar  • Out-of-Band Secrets Plan    • Formal Approval Gate 1          │
 └───────────────────────────────────────────────┬───────────────────────────────────────────────┘
                                                 │
                                                 ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 2: Inventory & Cryptographic SSH Trust                                                  │
-│   6. bash sync_terraform_inventory.sh ──► 7. bash verify_ssh_host_keys.sh (Strict Fingerprints)   │
+│ Stage 2: Infrastructure Provisioning & Network Security Verification (7.5.2)                  │
+│   • terraform init/validate   • terraform plan -out=tfplan  • Plan Inspection Gate            │
+│   • terraform apply tfplan    • Strict SG Ingress Audit     • Dynamic Inventory & SSH Trust   │
 └───────────────────────────────────────────────┬───────────────────────────────────────────────┘
                                                 │
                                                 ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 3: Authoritative 2-Playbook Ansible Bootstrap & Puppet Handover                         │
-│   8. Master Fleet Bootstrap (site.yml: common, puppet_server, puppet_agent, docker, nginx)   │
-│                                                │                                              │
-│   9. Controlled CA Enrollment Playbook (enroll-puppet-agents.yml: 9-step supervised handover) │
+│ Stage 3: Ansible Infrastructure Bootstrap (7.5.3)                                             │
+│   • site.yml Master Playbook: Common (APT Lock/Swap/Hosts) ──► Puppet Server ──► Agents      │
+│   • Docker CE on cicd-server (UNIX socket only) ──► NGINX Baseline on app-server              │
 └───────────────────────────────────────────────┬───────────────────────────────────────────────┘
                                                 │
                                                 ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 4: Live Verification, Demonstration & Teardown Gate                                     │
-│   10. Fleet Connectivity & Health Check ──► 11. Export Run Logs ──► 12. Demonstration Session │
-│   ──► 13. Pre-Teardown Artifact Export ──► 14. Explicit Teardown Approval                     │
-│   ──► 15. terraform destroy (Retains Permanent S3 State Backend)                              │
+│ Stage 4: Puppet CA Verification & Fleet Catalog Convergence (7.5.4)                           │
+│   • enroll-puppet-agents.yml: Supervised CSR Inspection & Strict Allowlist Signing            │
+│   • Agent Catalog Runs ──► Common Baseline ──► NRPE Server/Client ──► Nagios Core             │
+│   • Jenkins Module Deployment (cicd-server) ──► Application Module (app-server)               │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 5: Application Release Deployment & Health Verification (7.5.5)                         │
+│   • Staging Tarball & Sidecar ──► SHA-256 Digest Verification ──► Maintenance Gating (503)    │
+│   • Atomic Pointer Swap ──► Backend Restart ──► Verification Gate (8081) ──► Public Unlink   │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 6: Jenkins Controller Hardening & Backend Integration (7.5.6)                           │
+│   • Controller Groovy Hardening (Auth/CSRF) ──► backend-service User & API Token Provisioning │
+│   • Job Configuration (REPO_URL) ──► backend.env Cutover (JENKINS_MOCK_MODE=false)            │
+│   • Private VPC REST Connectivity Verification (app-server ──► cicd-server:8080)              │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 7: Docker Analyzer Sandboxed Execution (7.5.7)                                          │
+│   • Image Digest Verification ──► Non-Root UID ──► 768m / 1.5 CPUs / 100 PIDs Limits          │
+│   • Zero Docker Socket ──► Zero Groq Key (Static Fallback) ──► Clone & Disk Availability Gates │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 8: Resource Acceptance Gates on 2 GB cicd-server (7.5.8)                                │
+│   • MemAvailable >= 300 MB Sampling  • Zero OOM Events  • Zero Swap Thrashing                 │
+│   • Bounded Post-Build Cleanup Verification  • Mandatory Go/No-Go Decision Gate               │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 9: Monitoring & Telemetry Validation (7.5.9)                                            │
+│   • SSH Tunnel to Nagios Core (127.0.0.1:8080)  • NRPE Telemetry Checks (Puppet/Jenkins/Docker)│
+│   • Controlled Service Failure Simulation & Recovery Verification                             │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 10: End-to-End System Demonstration (7.5.10)                                            │
+│   • Public React Submission (POST /api/analyses) ──► Jenkins Dispatch ──► Analyzer Execution  │
+│   • Artifact Archiving & Ingestion ──► React Metrics Dashboard ──► Negative Validation Test   │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Stage 11: Teardown, Evidence Export & Cost Governance (7.5.11)                                │
+│   • Pre-Teardown Log & Artifact Export ──► Formal Teardown Approval Gate                      │
+│   • terraform destroy (Interactive Prompt) ──► Permanent S3 State Retention ──► Final Audit  │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Step 1: Pre-Deployment Authorization & Session Verification
-- **Purpose**: Ensure explicit human authorization and active session awareness before provisioning billable resources.
-- **Procedure**: Request operator confirmation. Verify AWS CLI caller identity:
-  ```bash
-  aws sts get-caller-identity
-  ```
-- **Expected Result**: Valid AWS Account ID and ARN (`arn:aws:iam::704475327786:user/terraform-admin`) returned.
-- **Failure Condition**: Missing or expired AWS credentials $\to$ Halt immediately.
+---
 
-#### Step 2: Terraform Initialization & Configuration Validation
-- **Purpose**: Verify backend connectivity and validate configuration syntax without modifying state.
-- **Command**:
-  ```bash
-  cd terraform && terraform init && terraform validate && terraform fmt -check
-  ```
-- **Expected Result**: `Success! The configuration is valid.` Backend initialized with S3 state bucket.
-- **Failure Condition**: Validation or backend error $\to$ Correct syntax/connectivity before proceeding.
+### 7.5.1 — Stage 1: Pre-Deployment Readiness & Input Verification
 
-#### Step 3: Terraform Planning & Human Inspection
-- **Purpose**: Generate a deterministic execution plan with the operator's public `/32` IP for security group ingress.
-- **Command**:
-  ```bash
-  cd terraform
-  terraform plan -var="allowed_ssh_cidr=$(curl -s https://checkip.amazonaws.com)/32" -out=tfplan
-  ```
-- **Expected Result**: Plan output shows exactly 3 instances (`puppet-server`, `app-server`, `cicd-server`), 3 security groups, and 50 GB gp3 storage to create; 0 to change; 0 to destroy.
-- **Human Inspection Gate**: Operator verifies:
-  1. Operator public IP `/32` matches intended workstation.
-  2. Exactly 3 EC2 instances created in public subnets of the Default VPC.
-  3. Total EBS storage allocated equals exactly 50 GB (15 GB + 15 GB + 20 GB).
-  4. Security group ingress rules strictly restrict SSH (22) to operator `/32`, HTTP/HTTPS (80/443) exclusively to EC2 2, and internal ports (8140, 8080, 5666) to appropriate security groups.
-  5. Zero unintended resource destructions or replacements.
+- **Purpose**: Verify all prerequisites, credentials, release artifacts, and images before provisioning billable cloud infrastructure.
+- **Verification Checklist**:
+  1. **Git Repository Hygiene**:
+     - Verify active branch is `feat/terraform-infrastructure` and working tree has no uncommitted test artifacts.
+     - Record commit SHA baseline.
+  2. **AWS Session & Identity Verification**:
+     - Run: `aws sts get-caller-identity`
+     - Expected Output: Account `704475327786`, ARN `arn:aws:iam::704475327786:user/terraform-admin`.
+     - Region: Verify `AWS_DEFAULT_REGION=ap-south-1`.
+  3. **AWS Key Pair Presence**:
+     - Verify key pair `git-repo-analyzer` exists in `ap-south-1`:
+       ```bash
+       aws ec2 describe-key-pairs --key-names git-repo-analyzer --region ap-south-1
+       ```
+     - Confirm local private key is present at `~/.ssh/git-repo-analyzer.pem` with permissions `0400` (outside repository).
+  4. **Docker Hub Image Republish Gate (Prerequisite for Boundary B)**:
+     - The local fix to [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js#L275) (stale-branch quoting) must reach Docker Hub before EC2 deployment.
+     - Trigger GitHub Actions workflow [`.github/workflows/docker-ci.yml`](file:///home/aditya-2274/Git-repo-analyzer/.github/workflows/docker-ci.yml) or push tag to republish `adityaashok2274/git-repo-analyzer:latest`.
+     - Record published image digest (`docker pull adityaashok2274/git-repo-analyzer:latest && docker inspect --format='{{index .RepoDigests 0}}' adityaashok2274/git-repo-analyzer:latest`).
+  5. **Application Release Bundle Staging**:
+     - Compile production builds and package release tarball with SHA-256 sidecar on workstation:
+       ```bash
+       npm --prefix backend run build
+       npm --prefix frontend run build
+       mkdir -p /tmp/release-staging
+       tar -czf /tmp/release-staging/git-repo-analyzer-1.0.0.tar.gz -C backend dist -C ../frontend dist
+       sha256sum /tmp/release-staging/git-repo-analyzer-1.0.0.tar.gz > /tmp/release-staging/git-repo-analyzer-1.0.0.tar.gz.sha256
+       ```
+     - Record release SHA-256 hash.
+  6. **Configuration Inputs & Out-of-Band Secrets Strategy**:
+     - Determine operator public IPv4: `OPERATOR_IP=$(curl -s https://checkip.amazonaws.com)`.
+     - Non-secret node configuration: Verify non-secret node parameters (such as `application::cors_origin: 'http://<application-public-ip>'`) are prepared for node Hiera (`puppet/hieradata/nodes/app-server.yaml`).
+     - Strict Out-of-Band Secrets Mandate: **Secrets and credentials must never be stored in Puppet manifests, Hiera, Git, Docker image layers, or analyzer container environment variables.**
+     - All credentials (such as backend Jenkins API tokens in `/etc/git-repo-analyzer/backend.env` and Nagios web authentication in `/etc/nagios4/htpasswd.users`) are provisioned strictly out-of-band on target instances without exposing credential values in Puppet, Hiera, Git, command-line arguments, process lists, or logs.
+- **Approval Gate 1**: Explicit written operator authorization to proceed to AWS provisioning.
 
-#### Step 4: Explicit Provisioning Approval Gate
-- **Purpose**: Enforce the human-in-the-loop cost governance gate before applying changes.
-- **Procedure**: Operator reviews the plan output and estimated running costs (~$0.0773/hour across fleet) and grants explicit authorization.
-- **Failure Condition**: Operator denies authorization $\to$ Abort; discard `tfplan`.
+---
 
-#### Step 5: Infrastructure Provisioning (`terraform apply`)
-- **Purpose**: Provision the approved 3-node fleet using the inspected execution plan without auto-approval bypass.
-- **Command**:
-  ```bash
-  cd terraform && terraform apply tfplan
-  ```
-- **Expected Result**: Exactly 3 instances created with public IPv4 and private IPs. State saved to remote S3 backend.
-- **Failure Condition & Strict Halt Protocol**:
-  - Quota exhaustion, subnet collision, or AWS API error $\to$ **HALT IMMEDIATELY**.
-  - **Do NOT automatically execute `terraform destroy`**. Automatic destruction violates the teardown approval gate (Step 14).
-  - Preserve Terraform state intact in the S3 remote backend.
-  - Inspect and report partially created resources via `terraform state list` and `terraform show`.
-  - Require separate, explicit operator authorization before any cleanup, remediation, or destruction commands are executed.
+### 7.5.2 — Stage 2: Infrastructure Provisioning & Network Security Verification
 
-#### Step 6: Dynamic Inventory Generation
-- **Purpose**: Ingest live EC2 public and private IP addresses from Terraform state into Ansible inventory.
-- **Command**:
-  ```bash
-  bash ansible/scripts/sync_terraform_inventory.sh
-  ```
-- **Expected Result**: [`ansible/inventory/hosts.ini`](file:///home/aditya-2274/Git-repo-analyzer/ansible/inventory/hosts.ini) atomically updated with live IP addresses; validated with `ansible-inventory --list`.
-- **Failure Condition**: Empty or malformed Terraform output $\to$ Baseline inventory preserved; script aborts cleanly.
+- **Purpose**: Provision exactly three EC2 instances in Default VPC public subnets with strict least-privilege security groups and dynamic inventory generation.
+- **Procedure**:
+  1. **Terraform Initialization & Formatting Validation**:
+     ```bash
+     cd terraform
+     terraform init
+     terraform validate
+     terraform fmt -check
+     ```
+  2. **Deterministic Planning**:
+     ```bash
+     terraform plan -var="allowed_ssh_cidr=$(curl -s https://checkip.amazonaws.com)/32" -out=tfplan
+     ```
+  3. **Plan Inspection Gate**:
+     - Operator verifies plan output:
+       - Exactly 3 instances created: `puppet-server` (`t3.small`), `app-server` (`t3.micro`), `cicd-server` (`t3.small`).
+       - Storage: Exactly 50 GB gp3 storage allocated (15 GB + 15 GB + 20 GB).
+       - Ingress rules: Port 22 restricted strictly to operator `/32`; Ports 80 & 443 restricted exclusively to `app-server`; internal ports 8140, 8080, 5666 restricted strictly to peer security groups.
+       - Plan shows 0 to change, 0 to destroy.
+  4. **Interactive Apply**:
+     ```bash
+     terraform apply tfplan
+     ```
+     *(Executed strictly without `-auto-approve`).*
+  5. **Strict Partial Failure Halt Protocol**:
+     - If `terraform apply` fails or encounters AWS API errors: **HALT IMMEDIATELY**.
+     - Do NOT run `terraform destroy`. Preserve state in S3.
+     - Inspect `terraform state list` and report partially created resources.
+  6. **Dynamic Inventory Generation**:
+     ```bash
+     cd ..
+     bash ansible/scripts/sync_terraform_inventory.sh
+     ```
+     - Verifies `ansible/inventory/hosts.ini` updated with live public/private IPs.
+  7. **Cryptographic SSH Host-Key Verification**:
+     ```bash
+     bash ansible/scripts/verify_ssh_host_keys.sh
+     ```
+     - Compares EC2 console fingerprints against live host keys; records verified keys into `ansible/known_hosts` (mode `0600`).
+  8. **Security Group Boundary Audit**:
+     - Verify TCP 8080 on `cicd-server` is NOT reachable from the operator workstation:
+       ```bash
+       curl -m 3 -I "http://$(terraform -chdir=terraform output -raw cicd_public_ip):8080" || echo "BLOCKED (Expected)"
+       ```
+     - Verify TCP 80 on `app-server` is reachable from public internet:
+       ```bash
+       curl -m 5 -I "http://$(terraform -chdir=terraform output -raw application_public_ip)/healthz"
+       ```
 
-#### Step 7: Cryptographic SSH Host-Key Verification
-- **Purpose**: Establish cryptographic SSH trust against EC2 console fingerprints, mitigating MITM risks without blind TOFU.
-- **Command**:
-  ```bash
-  bash ansible/scripts/verify_ssh_host_keys.sh
-  ```
-- **Expected Result**: Host keys verified against EC2 system console output and recorded into [`ansible/known_hosts`](file:///home/aditya-2274/Git-repo-analyzer/ansible/known_hosts) (mode `0600`).
-- **Failure Condition**: Console output delayed $\to$ Automatic bounded retry (up to 360s); mismatch triggers immediate MITM alert and aborts.
+---
 
-#### Step 8: Master Fleet Bootstrap (`ansible/playbooks/site.yml`)
-- **Purpose**: Execute canonical master orchestration playbook across the 3-node fleet in strict dependency order:
-  - Play 1 (`hosts: all`): Apply common baseline (APT record locks, dynamic `/etc/hosts` private DNS, swapfiles).
-  - Play 2 (`hosts: puppet_server`): Bootstrap Puppet Server 8, tune JVM heap (`-Xms1g -Xmx1g`), initialize CA (State A), start service on TCP 8140.
-  - Play 3 (`hosts: puppet_agents`): Install Puppet Agent 8 on EC2 2 & 3, set `server = puppet-server`, submit initial CSRs, and enforce gated stopped/disabled service state per ADR 012.
-  - Play 4 (`hosts: cicd`): Bootstrap Docker Engine and Compose plugin on EC2 3, configure log rotation (`10m`/`3`), restrict daemon to local UNIX socket, add `ubuntu` user to `docker` group.
-  - Play 5 (`hosts: application`): Bootstrap NGINX on EC2 2, configure baseline security (`server_tokens off;`), deploy default port 80 virtual host with `/healthz`, and pre-validate syntax via `nginx -t`.
-- **Command**:
+### 7.5.3 — Stage 3: Ansible Infrastructure Bootstrap
+
+- **Purpose**: Execute canonical master orchestration playbook across the fleet in strict dependency order.
+- **Procedure**:
   ```bash
   ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/site.yml
   ```
-- **Operational Execution Note**:
-  - `site.yml` is the **authoritative master orchestration playbook** for live deployment.
-  - The individual playbooks (`test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) were authored during development for isolated component testing. Their `test-` naming reflects their initial test harness origin, but they are retained as modular diagnostic runners for targeted troubleshooting if a single role fails. They are not the primary deployment path.
-- **Expected Result**: All 5 plays complete with `failed=0`; all baseline packages, services, and configs deployed.
-- **Failure Condition**: Task failure on any play $\to$ Playbook halts; inspect error log and address before proceeding.
+- **Execution Breakdown**:
+  1. **Play 1 (`hosts: all`) — Common Role**:
+     - Non-blocking POSIX APT lock wait (`fcntl.lockf`).
+     - Injects private IPs into `/etc/hosts` (`puppet-server`, `app-server`, `cicd-server`).
+     - Swap allocation: 0 MB on `puppet-server`, 1 GB on `app-server`, 2 GB on `cicd-server`.
+  2. **Play 2 (`hosts: puppet_server`) — Puppet Server Role**:
+     - Installs Puppet Server 8 with vendor priority 900 APT pinning.
+     - Tunes JVM heap to `-Xms1g -Xmx1g`.
+     - Initializes Puppet CA (State A setup); starts service on TCP 8140 with `autosign = false`.
+  3. **Play 3 (`hosts: puppet_agents`) — Puppet Agent Role**:
+     - Installs Puppet Agent 8 on `app-server` and `cicd-server`.
+     - Sets `server = puppet-server`, generates agent SSL certificates, submits initial CSRs.
+     - Enforces gated stopped/disabled service state per ADR 012.
+  4. **Play 4 (`hosts: cicd`) — Docker Role**:
+     - Installs Docker CE & Compose plugin from official Docker Noble repository.
+     - Configures daemon log rotation (`10m`, 3 files).
+     - Daemon restricted to local UNIX domain socket; adds `ubuntu` user to `docker` group.
+     - Premature `jenkins` user addition strictly guarded.
+  5. **Play 5 (`hosts: application`) — NGINX Baseline Role**:
+     - Installs baseline NGINX on `app-server`.
+     - Sets `server_tokens off;`, default port 80 virtual host with `/healthz` returning 200.
+     - Validates configuration syntax via `nginx -t`.
+- **Expected Result**: All 5 plays complete with `failed=0`.
+- **Failure Recovery**: If any play fails, inspect `/tmp/ansible-*.log`. Targeted diagnostic runners (`test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) are available for isolated troubleshooting.
 
-#### Step 9: Controlled Puppet CA Enrollment & Supervised Handover (`ansible/playbooks/enroll-puppet-agents.yml`)
-- **Purpose**: Execute the 9-step controlled CA enrollment sequence across 3 dedicated plays:
-  - Play 1 (`hosts: puppet_agents`): Verify TCP 8140 reachability from agents to Puppet Server.
-  - Play 2 (`hosts: puppet_server`): Inspect pending CSRs, verify allowlisted certnames (`app-server`, `cicd-server`), reject unknown CSRs, and perform individual signing via `puppetserver ca sign`.
-  - Play 3 (`hosts: puppet_agents`): Verify SSL certificate presence, execute supervised initial catalog run (`timeout 300 puppet agent -t --detailed-exitcodes`), validate exit code 0 or 2, and activate/enable the agent systemd service strictly upon catalog success (ADR 012).
-- **Command**:
-  ```bash
-  ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/enroll-puppet-agents.yml
-  ```
-- **Expected Result**: Both agents enrolled, initial catalog successfully applied, `puppet` systemd service active and enabled.
-- **Failure Condition**: Unrecognized CSR or catalog exit code 1 or 4 $\to$ Playbook halts; agent daemons remain disabled.
+---
 
-#### Step 10: Fleet Connectivity & Baseline Health Verification
-- **Purpose**: Validate end-to-end functionality across the provisioned fleet.
-- **Commands**:
-  ```bash
-  ansible -i ansible/inventory/hosts.ini all -m ping
-  curl -I "http://$(terraform -chdir=terraform output -raw application_public_ip)/healthz"
-  ```
-- **Expected Result**: All 3 nodes respond `pong`; `/healthz` returns HTTP 200 `OK`.
+### 7.5.4 — Stage 4: Puppet CA Verification & Fleet Catalog Convergence
 
-#### Step 11: Export Run Logs & Diagnostic Artifacts
-- **Purpose**: Persist deployment logs for auditability and compliance.
-- **Procedure**: Capture Ansible execution logs into timestamped files in `/tmp/deployment-logs/`.
+- **Purpose**: Supervised certificate enrollment and fleet catalog convergence.
+- **Procedure**:
+  1. **Supervised CA Enrollment Playbook**:
+     ```bash
+     ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/enroll-puppet-agents.yml
+     ```
+     - Play 1: Verifies agent-to-master reachability on TCP 8140.
+     - Play 2: Inspects pending CSRs on `puppet-server`. Strictly allowlists `app-server` and `cicd-server`. Signs each CSR individually (`puppetserver ca sign --certname <certname>`). Rejects any unrecognized certnames.
+     - Play 3: Verifies certificate receipt on agents, runs supervised catalog run (`timeout 300 puppet agent -t --detailed-exitcodes`), verifies exit code 0 or 2, and activates/enables `puppet.service` strictly upon success (ADR 012).
+  2. **Synchronize Puppet Modules to Puppet Server**:
+     - Rsync local `puppet/` directory to `puppet-server`:
+       ```bash
+       rsync -avz -e "ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg" \
+         puppet/modules puppet/manifests puppet/hieradata \
+         ubuntu@puppet-server:/tmp/puppet-sync/
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@puppet-server \
+         "sudo cp -r /tmp/puppet-sync/* /etc/puppetlabs/code/environments/production/ && rm -rf /tmp/puppet-sync"
+       ```
+  3. **Configure Non-Secret Node Variables & Out-of-Band Secret Architecture**:
+     - On `puppet-server`, configure non-secret deployment variables in `/etc/puppetlabs/code/environments/production/hieradata/nodes/app-server.yaml`:
+       ```yaml
+       application::cors_origin: 'http://<application-public-ip>'
+       ```
+     - **Strict Out-of-Band Credential Boundaries**:
+       - **Zero Secrets in Puppet or Hiera**: Secrets and credentials must never be stored in Puppet manifests, Hiera, Git, deployment scripts, Docker image layers, or analyzer container environment variables.
+       - **Nagios Web Authentication (`/etc/nagios4/htpasswd.users`)**:
+         - **Target File Path**: `/etc/nagios4/htpasswd.users`.
+         - **Required Ownership & Group**: `root:www-data` (Apache worker processes execute under `www-data:www-data` on Ubuntu 24.04 and require group read access).
+         - **Required Permissions**: `0640` (`-rw-r-----` — root read/write, `www-data` group read-only, others no access).
+         - **Out-of-Band Provisioning Procedure**:
+           - Run interactively directly on `app-server` (prompts securely for password twice on terminal stdin; never pass plaintext via `-b` or expose passwords in process arguments):
+             ```bash
+             ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@app-server
+             sudo htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin
+             sudo chown root:www-data /etc/nagios4/htpasswd.users
+             sudo chmod 0640 /etc/nagios4/htpasswd.users
+             ```
+         - **Non-Leaking File Verification**:
+           - Verify existence, ownership, permissions, and service account readability without printing, displaying, or logging the secret hash:
+             ```bash
+             stat -c "%n %U:%G %a" /etc/nagios4/htpasswd.users
+             # Expected output: /etc/nagios4/htpasswd.users root:www-data 640
+             sudo -u www-data test -r /etc/nagios4/htpasswd.users && echo "READABLE (OK)"
+             # Expected output: READABLE (OK)
+             ```
+         - **Non-Leaking Authentication Testing**:
+           - Verify credentials without placing password or hash strings in command-line arguments or shell history:
+             - Via SSH tunnel: Establish tunnel `ssh -L 8080:127.0.0.1:8080 ubuntu@app-server`, navigate to `http://localhost:8080/nagios`, and authenticate interactively through the browser HTTP Basic Auth dialog.
+             - Via interactive CLI check on `app-server`:
+               ```bash
+               # Prompts for password interactively on terminal stdin; returns HTTP status code
+               curl -s -o /dev/null -w "%{http_code}\n" -u nagiosadmin http://127.0.0.1:8080/nagios/
+               # Expected output: 200 (or 301/200 OK)
+               ```
+         - **Puppet Compatibility & Decoupled Secret Management**:
+           - **Decoupled Secret Architecture**: The historical Phase 5A conflict where `puppet/modules/nagios/manifests/web.pp` managed file `content` and required `$admin_password_hash` during catalog compilation has been resolved:
+             - `$admin_password_hash` is declared as `Optional[String] $admin_password_hash = undef` and does not fail catalog compilation when absent or empty.
+             - `File[$htpasswd_file]` (`/etc/nagios4/htpasswd.users`) enforces required metadata (`owner => 'root'`, `group => 'www-data'`, `mode => '0640'`, `replace => false`) with `content` and `ensure` omitted.
+           - **Verified Resource Semantics**:
+             - *First-Time Provisioning (File Absent)*: Omitting `ensure` guarantees that Puppet does not create an empty or invalid placeholder authentication file when `/etc/nagios4/htpasswd.users` does not yet exist.
+             - *Out-of-Band Content Preservation (File Present)*: Once created interactively via `sudo htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin`, Puppet manages ownership (`root`) and permissions (`0640`, `www-data`), while `replace => false` ensures Puppet never modifies or overwrites the secret contents.
+             - *Catalog Cleanliness*: Zero password or hash values are present in Hiera, manifests, templates, or compiled JSON catalogs (`app-server` compiles cleanly with zero credentials).
+       - **Backend Jenkins API Token**:
+         - Provision the token out-of-band, directly on `app-server`.
+         - Store it in `/etc/git-repo-analyzer/backend.env`.
+         - Required ownership: `root:gitrepo`.
+         - Required permissions: `0640` (root read/write, `gitrepo` group read-only, others no access).
+         - Puppet may manage the file's existence, directory ownership, permissions, and other non-secret metadata.
+         - Puppet must not contain, retrieve, render, or distribute the secret value.
+       - **Jenkins Credentials**:
+         - Provision Jenkins API credentials out-of-band through Jenkins' credential-management mechanism.
+         - Do not place credential values in Puppet manifests, Hiera, Git, or deployment scripts.
+         - Do not expose credentials in command-line arguments, process listings, or logs.
+       - **Analyzer Container Isolation**:
+         - Do not pass the backend Jenkins API token or other Jenkins credentials into the analyzer container.
+         - Do not inject `GROQ_API_KEY`.
+         - Preserve the existing deterministic static-report fallback when Groq credentials are unavailable.
+  4. **Trigger Fleet Catalog Convergence**:
+     - Run Puppet Agent on `app-server`:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@app-server \
+         "sudo /opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes || [ \$? -eq 2 ]"
+       ```
+       - Converges: Common baseline, NRPE client, Nagios Core (with Apache loopback `127.0.0.1:8080`), Node.js 24 LTS runtime, application directories (`/opt/git-repo-analyzer`, `/var/cache/git-repo-analyzer/staging`), systemd service unit `git-repo-analyzer-backend`.
+     - Run Puppet Agent on `cicd-server`:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@cicd-server \
+         "sudo /opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes || [ \$? -eq 2 ]"
+       ```
+       - Converges: Common baseline, NRPE server (`check_jenkins.sh`, `check_docker.sh`), Jenkins LTS (`2.580.3` baseline + OpenJDK 21), systemd override (`-Xms384m -Xmx512m`, `0.0.0.0:8080` wildcard listener), `init.groovy.d/01-controller-hardening.groovy` (`DefaultCrumbIssuer(true)`, `setAllowAnonymousRead(false)`), `jenkins` in `docker` group.
 
-#### Step 12: Ephemeral Demonstration & Assessment Execution
-- **Purpose**: Perform repository analysis, test analyzer container execution, and demonstrate platform capabilities.
-- **Procedure**: Execute demonstration workloads within the approved session time window under ADR 011.
+---
 
-#### Step 13: Pre-Teardown Artifact Export Gate
-- **Purpose**: Save generated analysis reports, charts, and audit metrics before ephemeral infrastructure is destroyed.
-- **Procedure**: Export required files from EC2 instances to local disk or Git repository.
+### 7.5.5 — Stage 5: Application Release Deployment & Health Verification
 
-#### Step 14: Explicit Infrastructure Teardown Approval Gate
-- **Purpose**: Prevent unintended cloud charges while ensuring that no destruction occurs without operator consent.
-- **Procedure**: Confirm with operator that the demonstration session is complete and authorization is granted for teardown.
-- **Failure Condition**: Operator requests session extension $\to$ Retain fleet; reschedule teardown approval gate.
+- **Purpose**: Deploy immutable application release bundle onto `app-server` with runtime parity verification, controlled `503 MAINTENANCE` gating, and zero-rebuild rollback capability.
+- **Procedure**:
+  1. **Upload Release Bundle to Staging**:
+     ```bash
+     scp -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg \
+       /tmp/release-staging/git-repo-analyzer-1.0.0.tar.gz \
+       /tmp/release-staging/git-repo-analyzer-1.0.0.tar.gz.sha256 \
+       ubuntu@app-server:/tmp/
+     ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@app-server \
+       "sudo mv /tmp/git-repo-analyzer-1.0.0.tar.gz* /var/cache/git-repo-analyzer/staging/ && sudo chown -R ubuntu:ubuntu /var/cache/git-repo-analyzer/staging"
+     ```
+  2. **Configure Release Version in Node Hiera**:
+     - On `puppet-server`, configure:
+       ```yaml
+       application::release_version: '1.0.0'
+       application::release_sha256: '<release-sha256-hash>'
+       ```
+  3. **Execute Puppet Application Convergence**:
+     - Trigger Puppet run on `app-server`:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@app-server \
+         "sudo /opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes || [ \$? -eq 2 ]"
+       ```
+     - Validates 11-step activation sequence executed by `release_manager.py`:
+       - `prepare`: extracts archive, stamps `<meta name="app-release-id">`.
+       - `enter-maintenance`: NGINX serves `503 MAINTENANCE` to external visitors.
+       - `activate`: atomic symlink swap `/opt/git-repo-analyzer/current -> releases/1.0.0`.
+       - `systemctl restart git-repo-analyzer-backend`.
+       - `backend health gate`: verifies `http://127.0.0.1:3000/api/health` returns HTTP 200 `UP`.
+       - `nginx verification gate`: queries internal listener `http://127.0.0.1:8081/` to confirm HTML meta tag matches running backend release ID.
+       - `promote-release`: updates `previousKnownGood` pointer.
+       - `exit-maintenance`: unlinks maintenance flag, re-arming public traffic.
+       - `prune-releases`: cleans old unreferenced releases.
+  4. **Verify Public Web Response**:
+     ```bash
+     curl -I "http://$(terraform -chdir=terraform output -raw application_public_ip)/"
+     curl -s "http://$(terraform -chdir=terraform output -raw application_public_ip)/api/health"
+     ```
+     - Expected Output: HTTP 200; `{"status":"UP","releaseId":"1.0.0",...}`.
 
-#### Step 15: Ephemeral Infrastructure Teardown (`terraform destroy`)
-- **Purpose**: Terminate all EC2 instances, release public IPv4 allocations, and remove security groups.
-- **Command**:
-  ```bash
-  cd terraform && terraform destroy
-  ```
-  *(Execute interactively without `-auto-approve`; require operator confirmation prompt `yes`).*
-- **Expected Result**: All 3 EC2 instances destroyed; attached 50 GB gp3 EBS volumes deleted; estimated active fleet running cost (approximately $0.0773/hour) is eliminated. However, actual AWS account charges may remain from persistent resources (such as the S3 state backend) or external account-level services.
-- **Clarification on Retained AWS Costs**:
-  - `terraform destroy` terminates all ephemeral compute, storage, and networking resources managed by Terraform.
-  - **However, it does not necessarily eliminate all AWS account costs.**
-  - **Persistent S3 Remote State Backend (`git-repo-analyzer-terraform-state-2026`)**: The S3 remote state bucket and its versioned history remain active in AWS region `ap-south-1`. This bucket is a permanent resource that must **never** be deleted, replaced, or modified. Its minimal storage cost (typically <$0.01/month) is absorbed by active promotional credits ($107.98 net remaining).
-  - Any external account-level resources (such as AWS KMS keys, Route 53 zones, or other non-Terraform resources) remain governed by standard account billing.
+---
+
+### 7.5.6 — Stage 6: Jenkins Controller Hardening & Backend Integration
+
+- **Purpose**: Configure parameterized Jenkins job, generate service API token, and cut over Express backend from mock mode to live Jenkins dispatch.
+- **Procedure**:
+  1. **Jenkins Controller Status Check**:
+     - Verify service running on `cicd-server`:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@cicd-server \
+         "systemctl status jenkins && sudo -u jenkins docker info"
+       ```
+     - Confirm Jenkins user has working access to Docker UNIX socket.
+  2. **Out-of-Band Service Credential Provisioning**:
+     - Open SSH tunnel to Jenkins controller for initial administrative access:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg -L 8888:127.0.0.1:8080 ubuntu@cicd-server
+       ```
+     - Access `http://localhost:8888` in local browser.
+     - Log in with initial admin password (from `/var/lib/jenkins/secrets/initialAdminPassword`).
+     - Create service user account `backend-service` through Jenkins' internal credential-management mechanism.
+     - Generate API token for `backend-service`.
+     - **Security Mandates**:
+       - Provision Jenkins API credentials strictly out-of-band through Jenkins' credential-management mechanism.
+       - Never place credential values in Puppet manifests, Hiera, Git, or deployment scripts.
+       - Never expose credential values in command-line arguments, shell history, process listings, or logs.
+  3. **Configure Parameterized Pipeline Job `git-repo-analyzer`**:
+     - Create new Pipeline job named `git-repo-analyzer`.
+     - Configure parameters: String Parameter `REPO_URL` (default: empty).
+     - Pipeline Definition: Pipeline script from SCM $\to$ Git $\to$ specify repository URL and branch `feat/terraform-infrastructure` (or load [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile) directly into Pipeline script block).
+     - Save job.
+  4. **Backend Environment Cutover on `app-server`**:
+     - Provision the backend Jenkins API token out-of-band directly on `app-server` into `/etc/git-repo-analyzer/backend.env`.
+     - Required ownership: `root:gitrepo`.
+     - Required permissions: `0640` (root read/write, `gitrepo` group read-only, others no access).
+     - Puppet manages the file's existence, directory ownership, permissions, and non-secret metadata, but must not contain, retrieve, render, or distribute the secret token value.
+     - Inject the token value out-of-band (e.g. interactively via a restricted text editor or secure stdin prompt, avoiding exposing secrets in shell history or command-line arguments):
+       - Set `JENKINS_MOCK_MODE=false`.
+       - Set `JENKINS_URL=http://<cicd-server-private-ip>:8080`.
+       - Set `JENKINS_USER=backend-service`.
+       - Set `JENKINS_API_TOKEN=<token>` (stored securely in file; never placed in Puppet or Hiera).
+     - Verify permissions and restart backend service:
+       ```bash
+       sudo chown root:gitrepo /etc/git-repo-analyzer/backend.env
+       sudo chmod 0640 /etc/git-repo-analyzer/backend.env
+       sudo systemctl restart git-repo-analyzer-backend
+       ```
+  5. **Private Connectivity Test**:
+     - Verify `app-server` can reach Jenkins over the private network without exposing secrets in command-line arguments:
+       - Trigger `/api/health` and verify backend logs confirm connectivity to Jenkins over `http://cicd-server:8080`.
+       - Verify authenticated dispatch succeeds via backend API or via interactive credentials input without printing secret tokens in logs.
+
+---
+
+### 7.5.7 — Stage 7: Docker Analyzer Sandboxed Execution
+
+- **Purpose**: Verify that the ephemeral repository analyzer container executes within strict sandboxing boundaries under the Jenkins service account.
+- **Verification Matrix**:
+  1. **Image Digest & Layer Verification**:
+     - On `cicd-server`, verify Docker pulled the republished image:
+       ```bash
+       docker inspect adityaashok2274/git-repo-analyzer:latest | jq '.[0].Config.User, .[0].Config.Env'
+       ```
+     - Confirms non-root execution (`UID 1000`), zero baked secrets, and zero `GROQ_API_KEY`.
+  2. **Pipeline Sandboxing Parameters**:
+     - Validate execution matches [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile) sandboxing parameters:
+       - User: `--user $(id -u):$(id -g)` (Jenkins UID/GID).
+       - Memory ceiling: `--memory=768m`.
+       - CPU allocation: `--cpus=1.5`.
+       - Process ceiling: `--pids-limit=100`.
+       - Socket mounting: `/var/run/docker.sock` is NOT mounted.
+       - Secret & Credential Isolation:
+         - Do NOT pass the backend Jenkins API token or other Jenkins credentials into the analyzer container.
+         - Do NOT inject `GROQ_API_KEY` into the pipeline or container environment variables.
+         - Preserve the existing deterministic static-report fallback when Groq credentials are unavailable.
+       - Clone constraints: `--depth 500`, `--no-recurse-submodules`, `-c core.hooksPath=/dev/null`.
+       - Storage ceiling: post-clone size check rejects repositories exceeding 2 GB.
+  3. **Acknowledged Residual Risk**:
+     - Note: While application checks reject repos `> 2 GB`, the host filesystem lacks a hard OS-level disk quota. Disk exhaustion remains an acknowledged residual risk during large cloning bursts.
+  3. **Acknowledged Residual Risk**:
+     - Note: While application checks reject repos `> 2 GB`, the host filesystem lacks a hard OS-level disk quota. Disk exhaustion remains an acknowledged residual risk during large cloning bursts.
+
+---
+
+### 7.5.8 — Stage 8: Mandatory Resource Acceptance Gates on 2 GB `cicd-server`
+
+- **Purpose**: Empirically validate host memory headroom and stability on the 2 GB `t3.small` CI/CD instance during concurrent execution of Jenkins JVM + Docker analyzer + Puppet Agent.
+- **Telemetry Capture Procedure**:
+  1. On `cicd-server`, launch background resource telemetry logger:
+     ```bash
+     cat << 'EOF' > /tmp/capture_telemetry.sh
+     #!/bin/bash
+     echo "timestamp,mem_total_mb,mem_avail_mb,swap_used_mb" > /tmp/resource_telemetry.csv
+     while true; do
+       MEM_AVAIL=$(awk '/MemAvailable/ {print $2/1024}' /proc/meminfo)
+       MEM_TOTAL=$(awk '/MemTotal/ {print $2/1024}' /proc/meminfo)
+       SWAP_USED=$(free -m | awk '/Swap/ {print $3}')
+       echo "$(date +%s),$MEM_TOTAL,$MEM_AVAIL,$SWAP_USED" >> /tmp/resource_telemetry.csv
+       sleep 1
+     done
+     EOF
+     chmod +x /tmp/capture_telemetry.sh
+     nohup /tmp/capture_telemetry.sh > /dev/null 2>&1 &
+     TELEMETRY_PID=$!
+     ```
+  2. Trigger a representative analysis run via backend API (or manual Jenkins job trigger).
+  3. Wait for analysis to complete. Kill telemetry logger (`kill $TELEMETRY_PID`).
+- **Mandatory Go/No-Go Acceptance Criteria**:
+  | Criterion | Mandatory Threshold | Failure Action |
+  | :--- | :--- | :--- |
+  | **Host Memory Headroom** | **`MemAvailable >= 300.0 MB`** at all times during run | **HALT & INVESTIGATE**. Do not resize instance without explicit review. |
+  | **OOM Events** | **Zero host or container OOM kills** (`dmesg \| grep -i oom` clean) | **HALT & INVESTIGATE**. |
+  | **Swap Pressure** | **No sustained swap thrashing**; swap delta `< 200.0 MB` | **HALT & INVESTIGATE**. |
+  | **Disk Headroom** | Root filesystem `/` retains `> 3.0 GB` free space | Clean up workspace; verify `cleanWs` executed. |
+  | **Analyzer Memory** | Peak container cgroup memory `< 768.0 MB` | Verify container did not hit memory ceiling. |
+  | **Jenkins Responsiveness** | HTTP port 8080 responds to NRPE check without timeout | Verify Jenkins JVM heap is not starving OS. |
+- **Remediation Protocol**: If `MemAvailable < 300 MB`, report the empirical minimum and evaluate tuning Jenkins JVM down from `-Xmx512m` to `-Xmx384m` or tuning swapiness before requesting architectural changes.
+
+---
+
+### 7.5.9 — Stage 9: Monitoring & Telemetry Validation
+
+- **Purpose**: Verify centralized Nagios Core monitoring and remote NRPE health checks.
+- **Procedure**:
+  1. **Establish Secure SSH Tunnel to Nagios Core**:
+     ```bash
+     ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg \
+       -L 8080:127.0.0.1:8080 ubuntu@app-server
+     ```
+  2. **Access Nagios Core UI**:
+     - In local browser, navigate to: `http://localhost:8080/nagios`
+     - Authenticate with username `nagiosadmin` and the password provisioned interactively out-of-band in `/etc/nagios4/htpasswd.users` during Stage 4.
+     - Confirm all hosts (`puppet-server`, `app-server`, `cicd-server`) report `UP`.
+     - Confirm all services (`PING`, `SSH`, `HTTP`, `Puppet Server`, `Jenkins Service`, `Docker Service`, `Disk Space`) report `OK`.
+  3. **Verify Zero Public Exposure**:
+     - Confirm navigating to `http://<application-public-ip>:8080/nagios` from an external machine fails or times out (Apache is bound strictly to `127.0.0.1:8080`).
+  4. **Controlled Service Failure Simulation**:
+     - Temporarily stop Docker on `cicd-server`:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@cicd-server "sudo systemctl stop docker"
+       ```
+     - Observe Nagios Core transitions `Docker Service` on `cicd-server` to `CRITICAL`.
+     - Restore Docker:
+       ```bash
+       ssh -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg ubuntu@cicd-server "sudo systemctl start docker"
+       ```
+     - Observe Nagios Core transitions back to `OK`.
+
+---
+
+### 7.5.10 — Stage 10: End-to-End System Demonstration
+
+- **Purpose**: Execute a full end-to-end repository analysis through the public React UI and verify all system metrics, static reports, and charts.
+- **Procedure**:
+  1. Open browser to the public application URL: `http://<application-public-ip>/`.
+  2. Submit public repository URL: `https://github.com/octocat/Hello-World` (or a representative target repo).
+  3. Verify frontend transitions from `SUBMITTING` $\to$ `QUEUED` $\to$ `BUILDING`.
+  4. Verify backend dispatches job to Jenkins via private VPC IP.
+  5. Verify Jenkins triggers Docker container `analyzer-<build-tag>`.
+  6. Verify analysis completes within 60 seconds; artifacts generated into `reports/`.
+  7. Verify backend ingests `metrics.json`, `report.md`, and PNG charts into persistent `DATA_DIR`.
+  8. Verify frontend renders:
+     - Total commits, active authors, churn statistics.
+     - DOA author ownership distribution.
+     - Stale branch detection.
+     - Daily commit activity chart and author contribution chart.
+     - Deterministic static Markdown report.
+  9. **Negative Testing Demonstration**:
+     - Submit an invalid URL (`http://insecure-site.com/repo` or `https://github.com/../../etc/passwd`).
+     - Verify frontend displays clear validation error; backend rejects request with HTTP 400 Bad Request; zero Jenkins jobs dispatched.
+  10. **Evidence Capture**:
+      - Capture screenshots of:
+        1. React Dashboard showing completed analysis and raster charts.
+        2. Jenkins Console Output showing sandboxed Docker execution.
+        3. Nagios Core Host and Service Status Grid.
+        4. Resource telemetry plot (`MemAvailable >= 300 MB`).
+
+---
+
+### 7.5.11 — Stage 11: Teardown, Evidence Export & Cost Governance
+
+- **Purpose**: Export all session demonstration evidence and execute a clean, cost-controlled teardown under ADR 011.
+- **Procedure**:
+  1. **Pre-Teardown Evidence Export Gate**:
+     - Export generated analysis reports and CSV telemetry from EC2 instances to local workstation:
+       ```bash
+       mkdir -p ./demo-evidence
+       scp -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg \
+         ubuntu@app-server:/var/lib/git-repo-analyzer/data/analyses.json ./demo-evidence/
+       scp -i ~/.ssh/git-repo-analyzer.pem -F ansible/ssh.cfg \
+         ubuntu@cicd-server:/tmp/resource_telemetry.csv ./demo-evidence/
+       ```
+     - Confirm all required screenshots and logs are saved.
+  2. **Approval Gate 2 — Explicit Infrastructure Teardown Authorization**:
+     - Confirm with operator that demonstration is concluded and authorization is granted for teardown.
+  3. **Interactive Infrastructure Teardown**:
+     ```bash
+     cd terraform
+     terraform destroy
+     ```
+     *(Executed interactively without `-auto-approve`; operator enters `yes` at prompt).*
+  4. **Post-Teardown Verification**:
+     - Confirm all 3 EC2 instances are terminated:
+       ```bash
+       aws ec2 describe-instances --filters "Name=tag:Project,Values=git-repo-analyzer" "Name=instance-state-name,Values=running,pending,stopping,stopped" --region ap-south-1
+       ```
+       - Expected: 0 instances returned.
+     - Active fleet running cost (~$0.0773/hour) is completely halted.
+  5. **Permanent S3 State Retention Confirmation**:
+     - Confirm persistent state bucket `git-repo-analyzer-terraform-state-2026` is intact:
+       ```bash
+       aws s3 ls s3://git-repo-analyzer-terraform-state-2026/git-repo-analyzer/
+       ```
+     - Expected: `terraform.tfstate` is retained with full version history. (Bucket is never deleted).
 
 ---
 
@@ -842,6 +1253,10 @@ To ensure absolute documentation honesty, all technical claims are classified in
   - `Dockerfile` & `Jenkinsfile`: Cairo/Pango build stack, non-root execution parameters.
 - **Executed Successfully in Local Test Environment**:
   - Phase 2 Docker container execution on active and zero-commit repositories (all tests exited with code 0).
+  - Phase 7 Checkpoint 7.1 (`cicd/tests/test_checkpoint_7_1.sh`, 25/25 PASS): hardened `Jenkinsfile` validation, Docker sandboxing (`--user $(id -u):$(id -g)`, `--memory=768m`, `--cpus=1.5`, `--pids-limit=100`), static report fallback without `GROQ_API_KEY`, simulated interruption cleanup checks, and local 16 GB workstation benchmark (`memory.peak` 26.25 MB, workstation `MemAvailable` min 6,342.8–6,698.7 MB across test runs, 0.0–0.3 MB swap, `OOMKilled: False`).
+  - Phase 7 Checkpoint 7.2 (`puppet/tests/test_jenkins_module.sh`, 21/21 PASS): Puppet `jenkins` module parser/ERB syntax, `cicd-server` JSON catalog compilation, official HTTPS `pkg.jenkins.io` `signed-by` keyring (`jenkins.io-2026.key`), Java 21 + Jenkins `2.580.3` baseline, systemd `override.conf` (`-Xms384m -Xmx512m`, port `8080`, `0.0.0.0` wildcard IPv4 bind with `cicd_analysis_sg` as primary network-level control and `setAllowAnonymousRead(false)` + `DefaultCrumbIssuer(true)` as additional application-layer controls), single executor & JNLP/UDP hardening, `docker` group membership (`membership => 'minimum'`), Hiera overrides, cycle-free `--graph` DAG, sandboxed `puppet apply --detailed-exitcodes` (`exit 2 -> 0 -> refresh -> 0`), fleet node placement isolation, zero embedded secrets, and NRPE/backend/SG perimeter parity.
+  - Phase 7 Checkpoint 7.3 (`backend/test/backendJenkinsProtocol.test.ts`; **5 consecutive runs** of `npm --prefix backend test`, 27/27 PASS per run — 21 existing + 6 Phase 7.3 protocol integration tests): Express `/api/analyses` + `AnalysisManager` + `FileAnalysisStore` + `ArtifactIngestor` + `LiveJenkinsClient` validated end-to-end against a stateful loopback Jenkins HTTP simulator with deterministic `QUEUED`/`BUILDING` controller gates (Basic Auth with ephemeral test tokens, `DefaultCrumbIssuer(true)` CSRF headers, `201`/`302` queue dispatch, `QUEUED -> BUILDING -> COMPLETED`/`FAILED`/`CANCELLED` lifecycle, restart recovery without re-dispatch, artifact validation/rejection, controller/timeout/redirect failures, zero secret/internal-ID leaks, and `Jenkinsfile`/static-fallback parity). *(Approved & closed locally; live EC2 controller execution remains pending Boundary B).*
+  - Phase 7 Checkpoint 7.4 (`cicd/tests/test_checkpoint_7_4.sh`, **13/13 PASS**; `ai/metrics.js` line 275 shell-quoting fix): Built real analyzer image `git-repo-analyzer:phase74-local` (`1.23 GB`) from [`Dockerfile`](file:///home/aditya-2274/Git-repo-analyzer/Dockerfile), verified runtime-only npm dependencies, non-root `UID 1000`, zero baked `GROQ_API_KEY`/secrets, executed containerized analyses across 10 Git repository fixtures, verified real [`ArtifactIngestor`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.js) positive and negative contracts, cgroup enforcement (`--memory=768m`, `--cpus=1.5`, `--pids-limit=100`), failure/timeout/`SIGKILL`/`>2 GB` cleanup, and recorded local telemetry (`26.35 MB` `memory.peak`, `OOMKilled: False`, `2.24s`). *(Live Docker Hub publish, Jenkins execution, and 2 GB EC2 3 `>= 300 MB` `MemAvailable` acceptance remain pending Boundary B).*
   - Code validation: `terraform fmt -check`, `terraform validate`, and `git diff --check` passed cleanly with exit code 0.
   - *(Note: `terraform validate` verifies syntax and module configurations only; it does not connect to AWS or prove remote state initialization).*
 - **Validated Against Live AWS Infrastructure**:
@@ -854,5 +1269,6 @@ To ensure absolute documentation honesty, all technical claims are classified in
   - Live Puppet Agent catalog application across instances.
   - Live out-of-band EC2 serial console fingerprint retrieval latency.
   - Live Nagios Core active monitoring over NRPE TCP 5666.
-  - Live backend-to-Jenkins API job dispatch and artifact retrieval.
+  - Live Jenkins controller installation (Java 21 / LTS 2.580.3 revalidation), job creation, `cleanWs` execution, and backend-to-Jenkins API dispatch and artifact retrieval.
+  - Empirical 300 MB minimum `MemAvailable` headroom acceptance validation on the actual 2 GB `t3.small` EC2 3 CI/CD instance under representative concurrent workloads.
   - Actual T3 CPU credit consumption under prolonged demonstration workloads.
