@@ -44,6 +44,7 @@ node 'app-server' {
 node 'cicd-server' {
   class { 'common': }
   -> class { 'nrpe::server': }
+  -> class { 'jenkins': }
 }
 
 # ------------------------------------------------------------------------------

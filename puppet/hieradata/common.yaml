@@ -55,3 +55,25 @@ application::jenkins_mock_mode: true
 application::jenkins_job_name: 'git-repo-analyzer'
 application::jenkins_request_timeout_ms: 5000
 application::enforce_production_cors: true
+
+# ------------------------------------------------------------------------------
+# Phase 7.2: Jenkins Controller Defaults (cicd-server / EC2 3 exclusively)
+# Non-secret baseline only. Zero credentials, passwords, or API tokens may be
+# stored here. Exact package availability (2.580.3 baseline) and Java 21
+# compatibility must be revalidated prior to Boundary B deployment.
+# ------------------------------------------------------------------------------
+jenkins::java_package: 'openjdk-21-jre-headless'
+jenkins::jenkins_version: '2.580.3'
+jenkins::pin_package_version: true
+jenkins::http_port: 8080
+# Wildcard IPv4 bind (not a private-only socket) required so Winstone/Jetty serves
+# both local NRPE (127.0.0.1:8080) and app-server VPC calls without an extra proxy.
+# Network boundary: AWS SG cicd_analysis_sg (app_monitoring_sg -> TCP 8080) is
+# the primary network-level control across EC2 1:1 NAT; Jenkins authentication
+# and CSRF are additional application-layer controls (not network isolation).
+jenkins::listen_address: '0.0.0.0'
+jenkins::jvm_xms: '384m'
+jenkins::jvm_xmx: '512m'
+jenkins::num_executors: 1
+jenkins::jenkins_home: '/var/lib/jenkins'
+jenkins::manage_docker_group: true

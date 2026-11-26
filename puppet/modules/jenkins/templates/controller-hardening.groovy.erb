@@ -1,0 +1,42 @@
+// ==============================================================================
+// Managed by Puppet: modules/jenkins/templates/controller-hardening.groovy.erb
+// Purpose: Non-secret Jenkins controller initialization hardening:
+//            - Enforces strictly <%= @num_executors %> built-in executor (no concurrent builds).
+//            - Disables inbound TCP/JNLP agent listener port (-1).
+//            - Enables CSRF crumb issuer protection.
+//            - Prohibits anonymous unauthenticated read access whenever security
+//              is active, preserving Jenkins default first-boot setup security
+//              without embedding any credentials or API tokens.
+// ==============================================================================
+import jenkins.model.Jenkins
+import hudson.security.AuthorizationStrategy
+import hudson.security.FullControlOnceLoggedInAuthorizationStrategy
+import hudson.security.SecurityRealm
+import hudson.security.csrf.DefaultCrumbIssuer
+
+def instance = Jenkins.getInstanceOrNull()
+if (instance != null) {
+    if (instance.getNumExecutors() != <%= @num_executors %>) {
+        instance.setNumExecutors(<%= @num_executors %>)
+    }
+
+    if (instance.getSlaveAgentPort() != -1) {
+        instance.setSlaveAgentPort(-1)
+    }
+
+    if (instance.getCrumbIssuer() == null) {
+        instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+    }
+
+    def strategy = instance.getAuthorizationStrategy()
+    if (strategy instanceof FullControlOnceLoggedInAuthorizationStrategy) {
+        strategy.setAllowAnonymousRead(false)
+    } else if (instance.getSecurityRealm() != SecurityRealm.NONE &&
+               (strategy == null || strategy instanceof AuthorizationStrategy.Unsecured)) {
+        def safeStrategy = new FullControlOnceLoggedInAuthorizationStrategy()
+        safeStrategy.setAllowAnonymousRead(false)
+        instance.setAuthorizationStrategy(safeStrategy)
+    }
+
+    instance.save()
+}
