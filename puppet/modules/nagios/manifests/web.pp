@@ -17,38 +17,18 @@ class nagios::web (
   Boolean          $manage_service            = true,
   Boolean          $enforce_production_secret = true,
 ) {
-  $operator_guidance = "A real operator-generated password hash is required in nagios::web::admin_password_hash. Generate one interactively using 'htpasswd -B -C 12 -n ${admin_user}' (never pass plaintext via -b) and configure ONLY the resulting hash via protected node Hiera (e.g., puppet/hieradata/nodes/app-server.yaml)."
+  # Credentials are decoupled from Puppet management.
+  # The htpasswd file (/etc/nagios4/htpasswd.users) must be provisioned out-of-band directly
+  # on app-server using interactive htpasswd (never store hashes in Puppet manifests or Hiera).
+  if $admin_password_hash != undef and $admin_password_hash !~ /^\s*$/ {
+    $is_known_placeholder = (
+      $admin_password_hash == '$apr1$demo$hashedpassword' or
+      $admin_password_hash =~ /^\$apr1\$demo\$/ or
+      $admin_password_hash =~ /(?i)(placeholder|hashedpassword|changeme|replace[_-]?me)/
+    )
 
-  if $admin_password_hash == undef or $admin_password_hash =~ /^\s*$/ {
-    fail("Nagios web credential error: nagios::web::admin_password_hash is absent or empty. ${operator_guidance}")
-  }
-
-  if $admin_password_hash =~ /[\s:]/ {
-    fail("Nagios web credential error: nagios::web::admin_password_hash is malformed (must not contain colons, spaces, or newlines; supply only the hash portion, not 'username:hash'). ${operator_guidance}")
-  }
-
-  $is_known_placeholder = (
-    $admin_password_hash == '$apr1$demo$hashedpassword' or
-    $admin_password_hash =~ /^\$apr1\$demo\$/ or
-    $admin_password_hash =~ /(?i)(placeholder|hashedpassword|changeme|replace[_-]?me)/
-  )
-
-  $is_valid_bcrypt = ($admin_password_hash =~ /^\$2[aby]\$(?:0[4-9]|[12][0-9]|3[01])\$[.\/A-Za-z0-9]{53}$/)
-  $is_valid_apr1   = ($admin_password_hash =~ /^\$apr1\$[.\/A-Za-z0-9]{1,8}\$[.\/A-Za-z0-9]{22}$/)
-  $is_valid_sha2   = ($admin_password_hash =~ /^\$[56]\$(?:rounds=[0-9]+\$)?[.\/A-Za-z0-9]{1,16}\$[.\/A-Za-z0-9]{43,86}$/)
-  $is_valid_hash_format = $is_valid_bcrypt or $is_valid_apr1 or $is_valid_sha2
-
-  if $enforce_production_secret {
-    if $is_known_placeholder {
-      fail("Production deployment rejected: nagios::web::admin_password_hash contains a known placeholder or demo credential. ${operator_guidance}")
-    }
-    if !$is_valid_hash_format {
-      fail("Production deployment rejected: nagios::web::admin_password_hash is malformed or uses an unsupported password hash format (expected bcrypt \$2y\$/\$2b\$, APR1 \$apr1\$, or SHA-2 \$5\$/\$6\$). ${operator_guidance}")
-    }
-  } else {
-    notify { 'nagios_placeholder_credential_warning':
-      message  => "SECURITY WARNING: Production credential enforcement is explicitly disabled for nagios::web (admin_user=${admin_user}). Replace nagios::web::admin_password_hash and set enforce_production_secret => true before live deployment.",
-      loglevel => 'warning',
+    if $enforce_production_secret and $is_known_placeholder {
+      fail("Production deployment rejected: nagios::web::admin_password_hash contains a known placeholder or demo credential. Secrets must not be stored in Puppet or Hiera; provision authentication credentials out-of-band on app-server via interactive htpasswd.")
     }
   }
 
@@ -132,13 +112,16 @@ class nagios::web (
     notify  => Exec['apache2_configtest'],
   }
 
-  # Deploy htpasswd file with strict permissions (0640, root:www-data)
+  # Manage authentication file metadata with strict permissions (0640, root:www-data).
+  # Secrets are decoupled: authentication credentials are provisioned out-of-band via interactive htpasswd.
+  # Omitting 'ensure' allows Puppet to manage ownership and mode on the file if it exists, without silently
+  # creating an empty/invalid authentication file if it does not yet exist.
+  # 'replace => false' ensures Puppet never modifies or replaces out-of-band provisioned credentials.
   file { $htpasswd_file:
-    ensure  => file,
     owner   => 'root',
     group   => 'www-data',
     mode    => '0640',
-    content => "${admin_user}:${admin_password_hash}\n",
+    replace => false,
     require => [
       Package[$apache_package],
       Exec['nagios_disable_policy_rc_d'],

@@ -249,16 +249,16 @@ echo "PASS (htpasswd.users configured with restrictive 0640 root:www-data permis
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 13. Fail-Closed Production Credential Enforcement [Catalog Compilation]
+# 13. Decoupled Authentication & Out-of-Band Secret Lifecycle [Catalog & Behavior]
 # ------------------------------------------------------------------------------
-echo -n "[Test 13/${TOTAL_COUNT}] Fail-closed credential enforcement & validation... "
+echo -n "[Test 13/${TOTAL_COUNT}] Decoupled auth & out-of-band secret lifecycle... "
 export PUPPET_DIR
 python3 - << 'EOF'
-import os, subprocess
+import json, os, subprocess, tempfile
 
 puppet_dir = os.environ['PUPPET_DIR']
 
-def run_puppet(code, hiera_cfg=None, certname='app-server'):
+def run_puppet(code, hiera_cfg=None, certname='app-server', extra_args=None):
     cmd = [
         'puppet', 'apply', '--noop',
         f'--modulepath={puppet_dir}/modules',
@@ -266,77 +266,106 @@ def run_puppet(code, hiera_cfg=None, certname='app-server'):
         '--certname', certname,
         '-e', code
     ]
+    if extra_args:
+        cmd.extend(extra_args)
     return subprocess.run(cmd, capture_output=True, text=True)
 
-# 1. Default behavior enables production credential enforcement (missing hash fails)
+# 1. Standard decoupled behavior: include nagios::web succeeds when hash is undefined
 res_default = run_puppet("include nagios::web")
-assert res_default.returncode != 0, 'Default include nagios::web MUST fail closed when hash is absent'
-assert 'real operator-generated password hash is required' in res_default.stderr, res_default.stderr
+assert res_default.returncode == 0, f'Default include nagios::web MUST compile cleanly when hash is undefined: {res_default.stderr}'
 
-# 2. Placeholder hash fails under default enforcement (enforce_production_secret omitted -> defaults true)
+# 2. In compiled catalog, File[/etc/nagios4/htpasswd.users] manages metadata but NO secret content
+with tempfile.NamedTemporaryFile('w', suffix='.pp') as mf:
+    mf.write("include nagios::web\n")
+    mf.flush()
+    res_catalog = subprocess.run([
+        'puppet', 'catalog', 'find', 'app-server',
+        '--terminus=compiler',
+        '--certname', 'app-server',
+        f'--modulepath={puppet_dir}/modules',
+        f'--hiera_config={puppet_dir}/hiera.yaml',
+        '--manifest', mf.name,
+        '--color=false',
+        '--render-as=json',
+    ], capture_output=True, text=True)
+assert res_catalog.returncode == 0, f'Catalog compile failed: {res_catalog.stderr}'
+cat = json.loads(res_catalog.stdout[res_catalog.stdout.index('{'):])
+htpasswd_res = [r for r in cat['resources'] if r['type'] == 'File' and r['title'] == '/etc/nagios4/htpasswd.users']
+assert len(htpasswd_res) == 1, 'File[/etc/nagios4/htpasswd.users] must be declared in catalog'
+params = htpasswd_res[0]['parameters']
+assert params.get('owner') == 'root', f"Expected owner root, got {params.get('owner')}"
+assert params.get('group') == 'www-data', f"Expected group www-data, got {params.get('group')}"
+assert params.get('mode') == '0640', f"Expected mode 0640, got {params.get('mode')}"
+assert params.get('replace') is False, f"Expected replace => false, got {params.get('replace')}"
+assert 'content' not in params or params['content'] is None, f"Secret content must NOT be in File resource: {params.get('content')}"
+# Ensure zero password or bcrypt hash in the entire compiled catalog JSON
+assert '$2y$' not in res_catalog.stdout and '$apr1$' not in res_catalog.stdout and '$6$' not in res_catalog.stdout, \
+    'No password hash may be present in compiled catalog'
+
+# 3. Explicit admin_password_hash => undef compiles cleanly
+res_undef = run_puppet("""
+class { 'nagios::web':
+  admin_password_hash => undef,
+}
+""")
+assert res_undef.returncode == 0, f'Explicit undef hash must succeed: {res_undef.stderr}'
+
+# 4. Known placeholder hash fails under default production enforcement
 res_placeholder = run_puppet("""
 class { 'nagios::web':
   admin_password_hash => '$apr1$demo$hashedpassword',
 }
 """)
 assert res_placeholder.returncode != 0, 'Placeholder hash must FAIL under default enforcement'
-assert 'placeholder' in res_placeholder.stderr.lower() and 'real operator-generated password hash is required' in res_placeholder.stderr
+assert 'placeholder' in res_placeholder.stderr.lower()
 
-# 3. Empty and whitespace-only hashes fail
-for bad_empty in ["''", "'   '"]:
-    res_empty = run_puppet(f"""
-    class {{ 'nagios::web':
-      admin_password_hash => {bad_empty},
+# 5. Out-of-band credential preservation & safe first-time provisioning (disposable local fixture)
+with tempfile.TemporaryDirectory() as tmpdir:
+    test_htpasswd = os.path.join(tmpdir, 'htpasswd.users')
+    test_user = os.getlogin()
+
+    # Manifest matching File[$htpasswd_file] structure without ensure and with replace => false
+    test_manifest = f"""
+    file {{ '{test_htpasswd}':
+      owner   => '{test_user}',
+      mode    => '0640',
+      replace => false,
     }}
-    """)
-    assert res_empty.returncode != 0, f'Empty hash {bad_empty} must FAIL'
-    assert 'real operator-generated password hash is required' in res_empty.stderr
+    """
 
-# 4. Missing/undef hash fails explicitly
-res_undef = run_puppet("""
-class { 'nagios::web':
-  admin_password_hash => undef,
-}
-""")
-assert res_undef.returncode != 0, 'Explicit undef hash must FAIL'
-assert 'real operator-generated password hash is required' in res_undef.stderr
+    # First-time: File does not exist yet. Puppet apply must NOT create an empty/invalid file.
+    res_first = subprocess.run(['puppet', 'apply', '--detailed-exitcodes', '-e', test_manifest], capture_output=True, text=True)
+    assert res_first.returncode == 0, f'First-time Puppet apply must exit 0, got {res_first.returncode}: {res_first.stderr}'
+    assert not os.path.exists(test_htpasswd), 'Puppet must NOT silently create an empty or invalid authentication file'
 
-# 5. Malformed hashes (plaintext, truncated, username:hash prefix) fail
-for bad_hash in ["'plaintext123'", "'$2y$12$tooshort'", "'nagiosadmin:$2y$12$TESTONLYHASHVALUEFORTESTING00000000000000000000000000'"]:
-    res_bad = run_puppet(f"""
-    class {{ 'nagios::web':
-      admin_password_hash => {bad_hash},
-    }}
-    """)
-    assert res_bad.returncode != 0, f'Malformed hash {bad_hash} must FAIL'
-    assert 'real operator-generated password hash is required' in res_bad.stderr
+    # Out-of-band provisioning: Operator creates the htpasswd file with authentic content and restrictive permissions
+    oob_content = 'nagiosadmin:$2y$12$AUTHENTICOPERATORBCRYPTHASHVALUEFORTESTING12345678\n'
+    with open(test_htpasswd, 'w') as f:
+        f.write(oob_content)
+    os.chmod(test_htpasswd, 0o600)
 
-# 6. Valid test-only hash passes cleanly under default (true) production enforcement
-res_valid = run_puppet("""
+    # Subsequent Puppet convergence: Enforces mode 0640, preserves out-of-band content byte-for-byte
+    res_converge = subprocess.run(['puppet', 'apply', '--detailed-exitcodes', '-e', test_manifest], capture_output=True, text=True)
+    assert res_converge.returncode == 2, f'Convergence apply should report change to mode (exit 2), got {res_converge.returncode}: {res_converge.stderr}'
+    assert (os.stat(test_htpasswd).st_mode & 0o777) == 0o640, f'Expected mode 0640, got {oct(os.stat(test_htpasswd).st_mode)}'
+    with open(test_htpasswd) as f:
+        assert f.read() == oob_content, 'Out-of-band provisioned credentials must NOT be modified or replaced'
+
+    # Repeated convergence (idempotency): Second run produces 0 changes
+    res_repeat = subprocess.run(['puppet', 'apply', '--detailed-exitcodes', '-e', test_manifest], capture_output=True, text=True)
+    assert res_repeat.returncode == 0, f'Repeat convergence must report 0 changes (exit 0), got {res_repeat.returncode}'
+    with open(test_htpasswd) as f:
+        assert f.read() == oob_content, 'Content must remain intact across repeated convergence'
+
+# 6. Legacy parameter compatibility: passing valid test hash compiles cleanly and never enters File resource
+res_compat = run_puppet("""
 class { 'nagios::web':
   admin_password_hash => '$2y$12$TESTONLYHASHVALUEFORTESTING00000000000000000000000000',
 }
 """)
-assert res_valid.returncode == 0, f'Valid test-only bcrypt hash must PASS: {res_valid.stderr}'
-
-# 7. Test mode requires an explicit override (both enforce_production_secret => false AND explicit test value)
-res_dev_no_hash = run_puppet("""
-class { 'nagios::web':
-  enforce_production_secret => false,
-}
-""")
-assert res_dev_no_hash.returncode != 0, 'Even with enforcement disabled, missing hash cannot fall back silently'
-
-res_dev_explicit = run_puppet("""
-class { 'nagios::web':
-  enforce_production_secret => false,
-  admin_password_hash       => '$apr1$demo$hashedpassword',
-}
-""")
-assert res_dev_explicit.returncode == 0, f'Explicit dev override with explicit placeholder must compile: {res_dev_explicit.stderr}'
-assert 'nagios_placeholder_credential_warning' in (res_dev_explicit.stdout + res_dev_explicit.stderr)
+assert res_compat.returncode == 0, f'Valid test-only bcrypt hash must compile cleanly: {res_compat.stderr}'
 EOF
-echo "PASS (default fail-closed; absent/empty/malformed/placeholder rejected; valid test hash & explicit dev override verified)"
+echo "PASS (undefined hash compiles cleanly; zero secrets in catalog; safe first-install & idempotent preservation verified)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
@@ -414,55 +443,51 @@ echo "PASS (both nagios4 and apache2 services declare full dependency chain with
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 17. Puppet Target Isolation & Fail-Closed Site Manifest [Catalog Compilation]
+# 17. Puppet Target Isolation & Decoupled Production Site Manifest [Catalog Compilation]
 # ------------------------------------------------------------------------------
 echo -n "[Test 17/${TOTAL_COUNT}] Puppet target isolation (app-server vs puppet/cicd-server)... "
 export PUPPET_DIR
 python3 - << 'EOF'
-import os, subprocess, tempfile
+import json, os, subprocess
 
 puppet_dir = os.environ['PUPPET_DIR']
 
-# 1. Production site.pp on app-server with default repo Hiera MUST fail closed (missing secret)
-cmd_fail_closed = [
+# 1. Production site.pp on app-server with default repo Hiera (zero secrets) compiles cleanly!
+cmd_app = [
     'puppet', 'apply', '--noop',
     f'--modulepath={puppet_dir}/modules',
     f'--hiera_config={puppet_dir}/hiera.yaml',
     '--certname', 'app-server',
     f'{puppet_dir}/manifests/site.pp'
 ]
-res_fc = subprocess.run(cmd_fail_closed, capture_output=True, text=True)
-assert res_fc.returncode != 0, 'Production app-server site.pp without credential MUST fail closed'
-assert 'real operator-generated password hash is required' in res_fc.stderr
+res_app = subprocess.run(cmd_app, capture_output=True, text=True)
+assert res_app.returncode == 0, f'app-server catalog failed: {res_app.stderr}'
+comb_app = res_app.stdout + res_app.stderr
+assert 'Package[nagios4]' in comb_app, 'app-server MUST manage nagios4'
+assert 'Package[apache2]' in comb_app, 'app-server MUST manage apache2'
+assert 'Package[nagios-nrpe-plugin]' in comb_app, 'app-server MUST manage nrpe client plugin'
+assert 'Package[nagios-nrpe-server]' not in comb_app, 'app-server must NOT manage nrpe server'
+assert 'Compiled catalog for app-server' in comb_app, 'app-server catalog must compile cleanly'
 
-# 2. app-server with explicit test-only Hiera fixture compiles with Nagios + Apache + nrpe::client
-with tempfile.TemporaryDirectory() as tmpdir:
-    app_hiera = os.path.join(tmpdir, 'hiera.yaml')
-    app_override = os.path.join(tmpdir, 'test_app_override.yaml')
-    with open(app_override, 'w') as f:
-        f.write("---\nnagios::web::admin_password_hash: '$2y$12$TESTONLYHASHVALUEFORTESTING00000000000000000000000000'\n")
-    with open(app_hiera, 'w') as f:
-        f.write(
-            f"---\nversion: 5\nhierarchy:\n"
-            f"  - name: 'Test app override'\n    path: '{app_override}'\n"
-            f"  - name: 'Common data'\n    path: '{puppet_dir}/hieradata/common.yaml'\n"
-        )
-    cmd_app = [
-        'puppet', 'apply', '--noop',
-        f'--modulepath={puppet_dir}/modules',
-        f'--hiera_config={app_hiera}',
-        '--certname', 'app-server',
-        f'{puppet_dir}/manifests/site.pp'
-    ]
-    res_app = subprocess.run(cmd_app, capture_output=True, text=True)
-    assert res_app.returncode == 0, f'app-server catalog failed: {res_app.stderr}'
-    comb_app = res_app.stdout + res_app.stderr
-    assert 'Package[nagios4]' in comb_app, 'app-server MUST manage nagios4'
-    assert 'Package[apache2]' in comb_app, 'app-server MUST manage apache2'
-    assert 'Package[nagios-nrpe-plugin]' in comb_app, 'app-server MUST manage nrpe client plugin'
-    assert 'Package[nagios-nrpe-server]' not in comb_app, 'app-server must NOT manage nrpe server'
+# Verify File[/etc/nagios4/htpasswd.users] is declared in compiled catalog
+cmd_cat = [
+    'puppet', 'catalog', 'find', 'app-server',
+    '--terminus=compiler',
+    '--certname', 'app-server',
+    f'--modulepath={puppet_dir}/modules',
+    f'--hiera_config={puppet_dir}/hiera.yaml',
+    '--manifest', f'{puppet_dir}/manifests/site.pp',
+    '--color=false',
+    '--render-as=json',
+]
+res_cat = subprocess.run(cmd_cat, capture_output=True, text=True)
+assert res_cat.returncode == 0, f'Catalog find failed: {res_cat.stderr}'
+cat = json.loads(res_cat.stdout[res_cat.stdout.index('{'):])
+ht_res = [r for r in cat['resources'] if r['type'] == 'File' and r['title'] == '/etc/nagios4/htpasswd.users']
+assert len(ht_res) == 1, 'app-server MUST declare File[/etc/nagios4/htpasswd.users] in catalog'
+assert ht_res[0]['parameters'].get('mode') == '0640'
 
-# 3. puppet-server and cicd-server compile cleanly against repo hiera.yaml with ZERO Nagios/Apache
+# 2. puppet-server and cicd-server compile cleanly against repo hiera.yaml with ZERO Nagios/Apache
 for node in ['puppet-server', 'cicd-server']:
     cmd_other = [
         'puppet', 'apply', '--noop',
@@ -478,7 +503,7 @@ for node in ['puppet-server', 'cicd-server']:
     assert 'Package[apache2]' not in comb_other, f'{node} must NOT manage apache2'
     assert 'Package[nagios-nrpe-server]' in comb_other, f'{node} MUST manage nrpe server'
 
-# 4. Attempting direct include nagios on non-app certnames fails fast
+# 3. Attempting direct include nagios on non-app certnames fails fast
 for rogue in ['puppet-server', 'cicd-server', 'unexpected.local']:
     cmd_rogue = [
         'puppet', 'apply', '--noop',
@@ -491,7 +516,7 @@ for rogue in ['puppet-server', 'cicd-server', 'unexpected.local']:
     assert res_rogue.returncode != 0, f'Including nagios on {rogue} must fail'
     assert 'strictly restricted to app-server' in res_rogue.stderr
 EOF
-echo "PASS (Nagios Core exclusively on app-server; fail-closed default and rogue inclusion blocked)"
+echo "PASS (Nagios Core exclusively on app-server; zero secrets required in production site.pp; rogue inclusion blocked)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------

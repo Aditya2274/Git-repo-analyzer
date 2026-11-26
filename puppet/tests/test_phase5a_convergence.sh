@@ -57,12 +57,12 @@ echo "PASS (${#PP_FILES[@]} manifests valid; production Hiera fail-closed)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------
-# 2. Fail-Closed Production Catalog Gate (app-server Without Secret Fixture)
+# 2. Decoupled Zero-Secret Catalog Gate: app-server Without Secrets in Hiera
 # ------------------------------------------------------------------------------
-echo -n "[Test 2/${TOTAL_COUNT}] Fail-closed compilation gate: app-server without secret... "
+echo -n "[Test 2/${TOTAL_COUNT}] Decoupled zero-secret catalog gate: app-server without secret... "
 export PUPPET_DIR
 python3 - << 'EOF'
-import os, subprocess
+import json, os, subprocess
 
 puppet_dir = os.environ['PUPPET_DIR']
 res = subprocess.run([
@@ -75,13 +75,20 @@ res = subprocess.run([
     '--color=false',
     '--render-as=json',
 ], capture_output=True, text=True)
-assert res.returncode != 0, 'app-server compilation without operator credential MUST fail'
-combined = res.stdout + res.stderr
-assert 'real operator-generated password hash is required' in combined, \
-    f'Unexpected error message: {combined}'
-assert '"resources"' not in res.stdout, 'Fail-closed failure must not emit a JSON catalog'
+assert res.returncode == 0, f'app-server catalog compilation failed: {res.stderr}'
+cat = json.loads(res.stdout[res.stdout.index('{'):])
+ht_res = [r for r in cat['resources'] if r['type'] == 'File' and r['title'] == '/etc/nagios4/htpasswd.users']
+assert len(ht_res) == 1, 'File[/etc/nagios4/htpasswd.users] must be declared in catalog'
+params = ht_res[0]['parameters']
+assert params.get('owner') == 'root', f"Expected owner root, got {params.get('owner')}"
+assert params.get('group') == 'www-data', f"Expected group www-data, got {params.get('group')}"
+assert params.get('mode') == '0640', f"Expected mode 0640, got {params.get('mode')}"
+assert params.get('replace') is False, f"Expected replace => false, got {params.get('replace')}"
+assert 'content' not in params or params['content'] is None, 'Secret content must NOT be managed by Puppet'
+assert '$2y$' not in res.stdout and '$apr1$' not in res.stdout and '$6$' not in res.stdout, \
+    'No password hash may be present in compiled catalog'
 EOF
-echo "PASS (app-server fails closed without operator credential)"
+echo "PASS (app-server compiles cleanly with zero secrets; htpasswd metadata enforced without content)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 # ------------------------------------------------------------------------------

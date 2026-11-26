@@ -27,11 +27,12 @@ nrpe::server::allowed_hosts:
 nrpe::server::dont_blame_nrpe: 0
 
 # Nagios Core configuration parameters
-# SECURITY (Fail-Closed): Do NOT store demo placeholders or real credentials
-# in common.yaml. Generate a real bcrypt hash interactively before deployment:
-#   htpasswd -B -C 12 -n nagiosadmin
-# Supply ONLY the generated hash via protected node Hiera configuration
-# (e.g., puppet/hieradata/nodes/app-server.yaml).
+# SECURITY: Do NOT store credentials or password hashes in Puppet manifests or Hiera.
+# Provision credentials out-of-band directly on app-server via interactive htpasswd:
+#   sudo htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin
+#   sudo chown root:www-data /etc/nagios4/htpasswd.users
+#   sudo chmod 0640 /etc/nagios4/htpasswd.users
+# Puppet enforces metadata (0640, root:www-data) and preserves provisioned contents.
 nagios::web::admin_user: 'nagiosadmin'
 nagios::web::listen_port: 8080
 nagios::web::bind_address: '127.0.0.1'
