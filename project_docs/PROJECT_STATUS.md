@@ -146,3 +146,51 @@ Before executing `terraform apply` or provisioning live AWS resources under Boun
 - **Prerequisite for Phase 5B Closure & Live Convergence on EC2 2:** Explicit audit review & closure approval under Boundary A, followed by Boundary B EC2 provisioning, Phase 4 Ansible bootstrap/enrollment, Terraform-derived `application::cors_origin` + operator `nagiosadmin` hash in node Hiera, and staged release archives (`.tar.gz` + `.sha256` sidecar).
 - **Prerequisite for Phase 7 (Jenkins Integration):** Dedicated CI/CD instance provisioned with Jenkins running, pipeline job configured, and API credentials generated.
 - **Prerequisite for Phase 8 (Monitoring Completion):** Live applications running on EC2 2 and Jenkins/Docker running on EC2 3.
+
+---
+
+## 6. Pre-Deployment Progress Checkpoint: Docker CI Correction & Working Tree State (2026-11-27)
+
+### A. Docker CI/CD Workflow Flaw Correction (`.github/workflows/docker-ci.yml`)
+- **Resolved Architectural Flaw**: Corrected the publish-before-validation issue where previous workflow configurations pushed images to Docker Hub before running the `validate-image` test job.
+- **Unified Sequential Pipeline**:
+  - Image is built locally on the GitHub Actions runner with versioned (`1.0.<run_number>`) and `latest` tags.
+  - Container validation executes against the locally built image **before** Docker Hub authentication or pushing.
+  - `GROQ_API_KEY` is injected strictly at container runtime via `${{ secrets.GROQ_API_KEY }}` without build args, layer leakage, or disk persistence.
+  - Fail-closed sequential step execution: If container validation fails, subsequent steps (Docker Hub login and push) are aborted; zero tags are pushed.
+  - Docker Hub authentication (`docker/login-action@v3`) and image publishing (`docker push`) execute strictly after validation succeeds.
+  - Preserved existing triggers: `push` to `main`, `push` to `feat/deterministic-metrics`, and `workflow_dispatch`.
+- **Validation Results**:
+  - Added dedicated test suite [`cicd/tests/test_docker_ci_workflow.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_docker_ci_workflow.sh): **8/8 checks PASSED**.
+  - Re-verified Checkpoint 7.1 test suite ([`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh)): **25/25 checks PASSED**.
+  - Re-verified Checkpoint 7.4 test suite ([`cicd/tests/test_checkpoint_7_4.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_4.sh)): **13/13 checks PASSED**.
+  - **Honest Verification Boundary**: These tests are local/static checks. The GitHub Actions workflow has **NOT** been executed on GitHub, and no Docker image has been published to Docker Hub.
+
+### B. Current Working Tree Status & Remaining Cleanup
+- **Working Tree State**:
+  - `M .github/workflows/docker-ci.yml` (modified with sequential validation-before-publish pipeline).
+  - `?? cicd/tests/test_docker_ci_workflow.sh` (untracked test suite).
+  - `?? puppet/modules/application/files/__pycache__/` (unwanted untracked generated artifact; retained for next session removal).
+- **Staging / Commit Invariant**: Zero files staged (`git diff --cached` empty). Zero commits or pushes executed.
+
+### C. Canonical Architecture & Deployment Boundary Invariants
+- **Canonical Architecture Intact**: Exactly three EC2 nodes (`puppet-server` `t3.small`, `app-server` `t3.micro`, `cicd-server` `t3.small`).
+- **Strict Boundary Status**:
+  - No `terraform apply` has occurred.
+  - Zero EC2 instances have been provisioned for this deployment.
+  - Zero Docker workflows have been triggered on GitHub Actions.
+  - Zero Docker images have been published to Docker Hub.
+  - No Pull Request has been merged into `main`.
+  - Zero new commits or pushes have been made.
+
+### D. Tomorrow's Starting Point (Ordered 10-Step Checklist)
+1. **Remove Unwanted Artifact**: Remove the untracked `puppet/modules/application/files/__pycache__/` directory.
+2. **Re-run Workflow Validation**: Execute `./cicd/tests/test_docker_ci_workflow.sh` to confirm 8/8 checks pass cleanly.
+3. **Inspect Working Tree & Diff**: Review `git status --short` and `git diff` across all modified and untracked entries.
+4. **Workflow Approval Gate**: Review and approve the Docker workflow correction before any authorized workflow dispatch.
+5. **Recheck Public IPv4**: Recheck the current workstation public IPv4 address (`curl -s https://checkip.amazonaws.com`).
+6. **Update SSH CIDR**: Update `terraform/terraform.tfvars` with the confirmed active IP in `allowed_ssh_cidr` using a strict `/32` subnet.
+7. **Regenerate Terraform Plan**: Run `terraform -chdir=terraform plan -out=tfplan`.
+8. **Plan Inspection Gate**: Verify the plan contains exactly 6 additions (3 EC2 instances + 3 Security Groups), 0 changes, 0 destructions, and zero state-bucket modifications.
+9. **Financial & Ingress Review**: Reconfirm estimated on-demand fleet running costs (~$0.0725–$0.0773/hr) and directional security group rules.
+10. **Provisioning Approval Gate**: **Stop and request explicit operator authorization before running `terraform apply`.**

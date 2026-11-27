@@ -1257,6 +1257,7 @@ To ensure absolute documentation honesty, all technical claims are classified in
   - Phase 7 Checkpoint 7.2 (`puppet/tests/test_jenkins_module.sh`, 21/21 PASS): Puppet `jenkins` module parser/ERB syntax, `cicd-server` JSON catalog compilation, official HTTPS `pkg.jenkins.io` `signed-by` keyring (`jenkins.io-2026.key`), Java 21 + Jenkins `2.580.3` baseline, systemd `override.conf` (`-Xms384m -Xmx512m`, port `8080`, `0.0.0.0` wildcard IPv4 bind with `cicd_analysis_sg` as primary network-level control and `setAllowAnonymousRead(false)` + `DefaultCrumbIssuer(true)` as additional application-layer controls), single executor & JNLP/UDP hardening, `docker` group membership (`membership => 'minimum'`), Hiera overrides, cycle-free `--graph` DAG, sandboxed `puppet apply --detailed-exitcodes` (`exit 2 -> 0 -> refresh -> 0`), fleet node placement isolation, zero embedded secrets, and NRPE/backend/SG perimeter parity.
   - Phase 7 Checkpoint 7.3 (`backend/test/backendJenkinsProtocol.test.ts`; **5 consecutive runs** of `npm --prefix backend test`, 27/27 PASS per run — 21 existing + 6 Phase 7.3 protocol integration tests): Express `/api/analyses` + `AnalysisManager` + `FileAnalysisStore` + `ArtifactIngestor` + `LiveJenkinsClient` validated end-to-end against a stateful loopback Jenkins HTTP simulator with deterministic `QUEUED`/`BUILDING` controller gates (Basic Auth with ephemeral test tokens, `DefaultCrumbIssuer(true)` CSRF headers, `201`/`302` queue dispatch, `QUEUED -> BUILDING -> COMPLETED`/`FAILED`/`CANCELLED` lifecycle, restart recovery without re-dispatch, artifact validation/rejection, controller/timeout/redirect failures, zero secret/internal-ID leaks, and `Jenkinsfile`/static-fallback parity). *(Approved & closed locally; live EC2 controller execution remains pending Boundary B).*
   - Phase 7 Checkpoint 7.4 (`cicd/tests/test_checkpoint_7_4.sh`, **13/13 PASS**; `ai/metrics.js` line 275 shell-quoting fix): Built real analyzer image `git-repo-analyzer:phase74-local` (`1.23 GB`) from [`Dockerfile`](file:///home/aditya-2274/Git-repo-analyzer/Dockerfile), verified runtime-only npm dependencies, non-root `UID 1000`, zero baked `GROQ_API_KEY`/secrets, executed containerized analyses across 10 Git repository fixtures, verified real [`ArtifactIngestor`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.js) positive and negative contracts, cgroup enforcement (`--memory=768m`, `--cpus=1.5`, `--pids-limit=100`), failure/timeout/`SIGKILL`/`>2 GB` cleanup, and recorded local telemetry (`26.35 MB` `memory.peak`, `OOMKilled: False`, `2.24s`). *(Live Docker Hub publish, Jenkins execution, and 2 GB EC2 3 `>= 300 MB` `MemAvailable` acceptance remain pending Boundary B).*
+  - Docker CI/CD Workflow Correction (`cicd/tests/test_docker_ci_workflow.sh`, **8/8 PASS**): Reordered `.github/workflows/docker-ci.yml` so that multi-tag local Docker image builds and container validation run **before** Docker Hub login and pushing. Injects `GROQ_API_KEY` strictly at runtime via secrets without build args or layer persistence. Verified fail-closed sequential ordering, checkout `fetch-depth: 0`, and trigger preservation. *(Static/local PyYAML check; workflow has NOT been executed on GitHub, and no Docker image has been published).*
   - Code validation: `terraform fmt -check`, `terraform validate`, and `git diff --check` passed cleanly with exit code 0.
   - *(Note: `terraform validate` verifies syntax and module configurations only; it does not connect to AWS or prove remote state initialization).*
 - **Validated Against Live AWS Infrastructure**:
@@ -1272,3 +1273,34 @@ To ensure absolute documentation honesty, all technical claims are classified in
   - Live Jenkins controller installation (Java 21 / LTS 2.580.3 revalidation), job creation, `cleanWs` execution, and backend-to-Jenkins API dispatch and artifact retrieval.
   - Empirical 300 MB minimum `MemAvailable` headroom acceptance validation on the actual 2 GB `t3.small` EC2 3 CI/CD instance under representative concurrent workloads.
   - Actual T3 CPU credit consumption under prolonged demonstration workloads.
+
+---
+
+## 10. Next-Session Progress Checkpoint & Starting Checklist (2026-11-27)
+
+### A. Current Operational State & Deployment Invariants
+- **Canonical Architecture**: Preserved exactly as three EC2 instances (`puppet-server` `t3.small`, `app-server` `t3.micro`, `cicd-server` `t3.small`) in `ap-south-1`.
+- **Deployment Status Invariants**:
+  - No `terraform apply` has occurred.
+  - Zero EC2 instances have been provisioned for this deployment.
+  - Zero Docker CI workflows have been triggered on GitHub Actions.
+  - Zero Docker images have been published to Docker Hub.
+  - No Pull Request has been merged into `main`.
+  - Zero new commits or pushes have been made.
+- **Working Tree State**:
+  - `M .github/workflows/docker-ci.yml` (modified locally with validation-before-publish ordering).
+  - `?? cicd/tests/test_docker_ci_workflow.sh` (untracked local test suite).
+  - `?? puppet/modules/application/files/__pycache__/` (unwanted untracked generated artifact; retained for next session removal).
+  - Zero files staged (`git diff --cached` empty).
+
+### B. Ordered Next-Session Action Checklist
+1. **Artifact Cleanup**: Remove the unwanted `puppet/modules/application/files/__pycache__/` directory.
+2. **Workflow Test Verification**: Re-run `./cicd/tests/test_docker_ci_workflow.sh` to confirm 8/8 checks pass cleanly.
+3. **Working Tree Inspection**: Verify `git status --short` and `git diff` to ensure only the intended workflow changes are present.
+4. **Docker Workflow Authorization**: Review and approve the Docker workflow correction before any authorized workflow dispatch.
+5. **Recheck Workstation IPv4**: Recheck the current workstation public IPv4 address (`curl -s https://checkip.amazonaws.com`).
+6. **Synchronize SSH CIDR**: Update `terraform/terraform.tfvars` with the confirmed active IP in `allowed_ssh_cidr` using a strict `/32` subnet.
+7. **Regenerate Plan**: Run `terraform -chdir=terraform plan -out=tfplan` to produce a fresh, deterministic plan file.
+8. **Plan Inspection Gate**: Verify the plan contains exactly 6 additions (3 EC2 instances + 3 Security Groups), 0 changes, 0 destructions, and zero state-bucket modifications.
+9. **Financial & Ingress Review**: Reconfirm estimated on-demand fleet running costs (~$0.0725–$0.0773/hr) and directional security group rules.
+10. **Provisioning Approval Gate**: **Stop and request explicit operator authorization before running `terraform apply`.**
