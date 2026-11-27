@@ -1,0 +1,33 @@
+---
+# Verification of Docker Engine, Compose plugin, and daemon status
+
+- name: Check Docker CLI binary presence
+  ansible.builtin.stat:
+    path: /usr/bin/docker
+  register: docker_cli_binary
+
+- name: Check Docker Compose CLI plugin presence
+  ansible.builtin.stat:
+    path: /usr/libexec/docker/cli-plugins/docker-compose
+  register: docker_compose_binary
+
+- name: Verify Docker CLI version
+  ansible.builtin.command:
+    cmd: docker --version
+  register: docker_version_output
+  changed_when: false
+  when: docker_cli_binary.stat.exists | default(false)
+
+- name: Verify Docker Compose plugin version
+  ansible.builtin.command:
+    cmd: docker compose version
+  register: docker_compose_version_output
+  changed_when: false
+  when: docker_compose_binary.stat.exists | default(false) or docker_cli_binary.stat.exists | default(false)
+
+- name: Report Docker Engine and Compose verification summary
+  ansible.builtin.debug:
+    msg:
+      - "Docker Engine: {{ docker_version_output.stdout | default('Not installed') | trim }}"
+      - "Docker Compose: {{ docker_compose_version_output.stdout | default('Not installed') | trim }}"
+      - "Configured Docker users: {{ docker_users | default([]) }}"

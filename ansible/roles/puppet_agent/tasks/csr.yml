@@ -1,0 +1,200 @@
+---
+# Puppet Agent SSL state assessment and controlled CSR submission
+
+- name: Set SSL file path facts for agent
+  ansible.builtin.set_fact:
+    puppet_agent_cert_file: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certs/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+    puppet_agent_key_file: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/private_keys/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+    puppet_agent_csr_file: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certificate_requests/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+
+- name: Check existence of agent certificate, private key, and CSR files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ puppet_agent_cert_file }}"
+    - "{{ puppet_agent_key_file }}"
+    - "{{ puppet_agent_csr_file }}"
+  register: agent_ssl_stat
+
+- name: Map SSL file existence facts
+  ansible.builtin.set_fact:
+    agent_cert_exists: "{{ (agent_ssl_stat.results | selectattr('item', 'equalto', puppet_agent_cert_file) | first).stat.exists }}"
+    agent_key_exists: "{{ (agent_ssl_stat.results | selectattr('item', 'equalto', puppet_agent_key_file) | first).stat.exists }}"
+    agent_csr_exists: "{{ (agent_ssl_stat.results | selectattr('item', 'equalto', puppet_agent_csr_file) | first).stat.exists }}"
+
+# ------------------------------------------------------------------------------
+# Inconsistent SSL State & Conflict Detection (Fail Fast Safely)
+# ------------------------------------------------------------------------------
+
+- name: "Safety Check: Fail if certificate exists but private key is missing"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Inconsistent Puppet Agent SSL state on {{ inventory_hostname }}.
+      Certificate file {{ puppet_agent_cert_file }} exists, but private key {{ puppet_agent_key_file }} is missing.
+      Automatic key regeneration or deletion is strictly prohibited. Manual operator investigation required.
+  when:
+    - agent_cert_exists
+    - not agent_key_exists
+
+# Validate existing certificate if present
+- name: Extract existing certificate subject CN
+  ansible.builtin.shell:
+    cmd: "openssl x509 -in {{ puppet_agent_cert_file }} -noout -subject | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\\([^, /]*\\).*/\\1/p'"
+  register: existing_cert_subject
+  changed_when: false
+  when: agent_cert_exists
+
+- name: "Safety Check: Fail if existing certificate identity conflicts with inventory certname"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Conflicting certificate identity detected on {{ inventory_hostname }}.
+      Existing certificate has CN='{{ existing_cert_subject.stdout | trim }}', but inventory defines certname='{{ puppet_agent_certname }}'.
+      Automatic certificate deletion or overwriting is strictly prohibited. Manual operator investigation required.
+  when:
+    - agent_cert_exists
+    - existing_cert_subject.stdout | trim != puppet_agent_certname
+
+- name: Validate existing certificate expiration and modulus match
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      openssl x509 -in {{ puppet_agent_cert_file }} -noout -checkend 0
+      cert_mod=$(openssl x509 -in {{ puppet_agent_cert_file }} -noout -modulus)
+      key_mod=$(openssl rsa -in {{ puppet_agent_key_file }} -noout -modulus)
+      [ "$cert_mod" = "$key_mod" ]
+  register: cert_validity_check
+  changed_when: false
+  failed_when: false
+  when:
+    - agent_cert_exists
+    - agent_key_exists
+
+- name: "Safety Check: Fail if existing certificate is corrupted, expired, or mismatched with private key"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Corrupted or mismatched certificate on {{ inventory_hostname }}.
+      Certificate {{ puppet_agent_cert_file }} is expired or does not cryptographically match private key {{ puppet_agent_key_file }}.
+      Automated deletion is strictly prohibited. Manual operator investigation required.
+  when:
+    - agent_cert_exists
+    - agent_key_exists
+    - cert_validity_check.rc != 0
+
+- name: Set certificate valid flag
+  ansible.builtin.set_fact:
+    agent_cert_valid: "{{ agent_cert_exists and agent_key_exists and (cert_validity_check.rc == 0) }}"
+
+- name: Report preserved existing certificate
+  ansible.builtin.debug:
+    msg: "Valid existing certificate for '{{ puppet_agent_certname }}' verified and preserved intact. CSR submission skipped."
+  when: agent_cert_valid | default(false)
+
+# ------------------------------------------------------------------------------
+# CSR State Assessment & Submission
+# ------------------------------------------------------------------------------
+
+# Validate existing CSR if present and certificate not yet issued
+- name: Extract existing CSR subject CN
+  ansible.builtin.shell:
+    cmd: "openssl req -in {{ puppet_agent_csr_file }} -noout -subject | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\\([^, /]*\\).*/\\1/p'"
+  register: existing_csr_subject
+  changed_when: false
+  when:
+    - not (agent_cert_valid | default(false))
+    - agent_csr_exists
+
+- name: "Safety Check: Fail if existing CSR identity conflicts with inventory certname"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Conflicting CSR identity detected on {{ inventory_hostname }}.
+      Existing CSR has CN='{{ existing_csr_subject.stdout | trim }}', but inventory defines certname='{{ puppet_agent_certname }}'.
+      Automatic CSR deletion or overwriting is strictly prohibited.
+  when:
+    - not (agent_cert_valid | default(false))
+    - agent_csr_exists
+    - existing_csr_subject.stdout | trim != puppet_agent_certname
+
+- name: Report pre-existing CSR status (preserved without resubmission)
+  ansible.builtin.debug:
+    msg: >
+      Existing Puppet Agent CSR for identity '{{ puppet_agent_certname }}' was verified on disk and preserved intact.
+      CSR was previously generated; no new key or CSR generated.
+  when:
+    - not (agent_cert_valid | default(false))
+    - agent_csr_exists
+
+- name: "Safety Check: Fail if Puppet Server is unreachable in strict live mode"
+  ansible.builtin.fail:
+    msg: >
+      Puppet Server TCP port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host }}' is unreachable.
+      CSR submission cannot proceed in strict mode (puppet_agent_require_server_reachable is true).
+  when:
+    - not (agent_cert_valid | default(false))
+    - not agent_csr_exists
+    - not (puppet_server_reachable | default(false) | bool)
+    - puppet_agent_require_server_reachable | default(true) | bool
+
+# Branch A: Server is reachable -> Submit CSR to Puppet Server CA
+- name: Submit Puppet Agent certificate signing request (CSR) to Puppet Server CA
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl submit_request --server {{ puppet_server_host | default('puppet-server') }}"
+  register: puppet_csr_submit_result
+  changed_when: puppet_csr_submit_result.rc == 0
+  failed_when: puppet_csr_submit_result.rc != 0
+  when:
+    - not (agent_cert_valid | default(false))
+    - not agent_csr_exists
+    - puppet_server_reachable | default(false) | bool
+
+# Branch B: Server is unreachable and offline mode explicitly enabled -> Generate local CSR only
+- name: Generate Puppet Agent CSR locally in offline mode (submission deferred)
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl generate_request"
+  register: puppet_csr_generate_result
+  changed_when: puppet_csr_generate_result.rc == 0
+  failed_when: puppet_csr_generate_result.rc != 0
+  when:
+    - not (agent_cert_valid | default(false))
+    - not agent_csr_exists
+    - not (puppet_server_reachable | default(false) | bool)
+    - not (puppet_agent_require_server_reachable | default(true) | bool)
+
+- name: Verify that local CSR exists
+  ansible.builtin.stat:
+    path: "{{ puppet_agent_csr_file }}"
+  register: local_csr_verify
+  failed_when: not local_csr_verify.stat.exists
+  when: not (agent_cert_valid | default(false))
+
+- name: Verify that local CSR subject matches expected certname
+  ansible.builtin.shell:
+    cmd: "openssl req -in {{ puppet_agent_csr_file }} -noout -subject | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\\([^, /]*\\).*/\\1/p'"
+  register: local_csr_subject_verify
+  changed_when: false
+  failed_when: (local_csr_subject_verify.stdout | trim) != puppet_agent_certname
+  when: not (agent_cert_valid | default(false))
+
+- name: Report successful remote CSR submission
+  ansible.builtin.debug:
+    msg: >
+      Puppet Agent CSR for identity '{{ puppet_agent_certname }}' was successfully submitted to Puppet Server CA ({{ puppet_server_host }}:{{ puppet_server_port }}).
+      The CSR is now pending CA approval on the Puppet Server in Checkpoint 4.5.
+  when:
+    - not (agent_cert_valid | default(false))
+    - puppet_csr_submit_result is defined
+    - puppet_csr_submit_result is not skipped
+    - puppet_csr_submit_result.rc is defined
+    - puppet_csr_submit_result.rc == 0
+
+- name: Report offline local CSR generation (submission deferred)
+  ansible.builtin.debug:
+    msg: >
+      Puppet Agent CSR for identity '{{ puppet_agent_certname }}' was generated locally on disk in offline mode.
+      The CSR has NOT been submitted to the Puppet Server CA because the server port {{ puppet_server_port }} was unreachable during preflight.
+      Submission must occur after the Puppet Server is provisioned and reachable.
+  when:
+    - not (agent_cert_valid | default(false))
+    - puppet_csr_generate_result is defined
+    - puppet_csr_generate_result is not skipped
+    - puppet_csr_generate_result.rc is defined
+    - puppet_csr_generate_result.rc == 0

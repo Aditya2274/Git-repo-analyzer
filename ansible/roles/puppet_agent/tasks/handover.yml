@@ -1,0 +1,141 @@
+---
+# Steps 4 through 9: Supervised Handover, Catalog Run, and Service Activation on Puppet Agents
+
+- name: Set SSL file path facts for agent handover
+  ansible.builtin.set_fact:
+    puppet_agent_cert_file: "{{ puppet_ssl_dir | default('/etc/puppetlabs/puppet/ssl') }}/certs/{{ puppet_agent_certname | default(inventory_hostname) }}.pem"
+
+# ------------------------------------------------------------------------------
+# Step 4: Certificate Enrollment Verification
+# ------------------------------------------------------------------------------
+
+- name: Check if signed certificate exists on disk
+  ansible.builtin.stat:
+    path: "{{ puppet_agent_cert_file }}"
+  register: agent_cert_disk_check
+
+- name: Download signed certificate from Puppet Server CA if not present locally
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl download_cert"
+  when: not agent_cert_disk_check.stat.exists
+  register: puppet_download_cert_result
+  changed_when: puppet_download_cert_result.rc == 0
+  failed_when: puppet_download_cert_result.rc != 0
+
+- name: "Step 4: Verify Puppet SSL certificate enrollment with Puppet Server CA"
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet ssl verify"
+  register: puppet_ssl_verify
+  changed_when: false
+  failed_when: false
+
+- name: "Step 4: Fail fast if Puppet SSL verification fails"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Puppet SSL verification failed on {{ inventory_hostname }} ({{ puppet_agent_certname }}).
+      Certificate has not been signed or CA validation failed.
+      Output: {{ puppet_ssl_verify.stderr | default(puppet_ssl_verify.stdout) }}
+  when: puppet_ssl_verify.rc != 0
+
+- name: "Step 4: Verify local agent certificate exists on disk"
+  ansible.builtin.stat:
+    path: "{{ puppet_agent_cert_file }}"
+  register: agent_cert_disk_stat
+  failed_when: not agent_cert_disk_stat.stat.exists
+
+- name: "Step 4: Extract certificate subject CN and verify identity match"
+  ansible.builtin.shell:
+    cmd: "openssl x509 -in {{ puppet_agent_cert_file }} -noout -subject | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\\([^, /]*\\).*/\\1/p'"
+  register: agent_cert_cn_check
+  changed_when: false
+  failed_when: (agent_cert_cn_check.stdout | trim) != puppet_agent_certname
+
+- name: "Step 4: Report successful certificate verification"
+  ansible.builtin.debug:
+    msg: "Puppet SSL certificate verified for {{ inventory_hostname }} with matching CN='{{ puppet_agent_certname }}'."
+
+# ------------------------------------------------------------------------------
+# Step 5: Supervised Catalog Application
+# ------------------------------------------------------------------------------
+
+- name: "Step 5: Execute supervised Puppet catalog application under bounded timeout"
+  ansible.builtin.command:
+    cmd: "timeout {{ puppet_catalog_timeout | default(300) }} {{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet agent -t --detailed-exitcodes"
+  register: puppet_catalog_run
+  changed_when: puppet_catalog_run.rc == 2
+  failed_when: false
+
+# ------------------------------------------------------------------------------
+# Step 6: Strict Exit-Code Validation (0: clean no changes, 2: clean changes applied)
+# ------------------------------------------------------------------------------
+
+- name: "Step 6: Validate Puppet catalog execution return code (Strict 0 or 2 enforcement)"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Supervised Puppet catalog application failed on {{ inventory_hostname }} with exit code {{ puppet_catalog_run.rc }}.
+      {% if puppet_catalog_run.rc == 1 %}
+      Exit code 1: General execution failure or catalog compilation failure.
+      {% elif puppet_catalog_run.rc == 4 %}
+      Exit code 4: Catalog applied with resource transaction failures.
+      {% elif puppet_catalog_run.rc == 6 %}
+      Exit code 6: Catalog applied with both resource changes and transaction failures.
+      {% elif puppet_catalog_run.rc == 124 %}
+      Exit code 124: Catalog execution timed out after {{ puppet_catalog_timeout | default(300) }} seconds.
+      {% else %}
+      Unexpected exit code {{ puppet_catalog_run.rc }}.
+      {% endif %}
+      Stdout: {{ puppet_catalog_run.stdout | default('None') }}
+      Stderr: {{ puppet_catalog_run.stderr | default('None') }}
+  when: puppet_catalog_run.rc not in [0, 2]
+
+# ------------------------------------------------------------------------------
+# Step 7: Catalog Result Verification & Reporting
+# ------------------------------------------------------------------------------
+
+- name: "Step 7: Report supervised catalog result (clean no changes)"
+  ansible.builtin.debug:
+    msg: "Supervised Puppet catalog applied cleanly with no changes on {{ inventory_hostname }} (exit code 0)."
+  when: puppet_catalog_run.rc == 0
+
+- name: "Step 7: Report supervised catalog result (changes applied)"
+  ansible.builtin.debug:
+    msg: "Supervised Puppet catalog applied cleanly with changes successfully applied on {{ inventory_hostname }} (exit code 2)."
+  when: puppet_catalog_run.rc == 2
+
+# ------------------------------------------------------------------------------
+# Step 8: Explicit Service Activation (Gated strictly on rc in [0, 2])
+# ------------------------------------------------------------------------------
+
+- name: "Step 8: Explicitly enable and start Puppet Agent systemd service"
+  ansible.builtin.systemd:
+    name: "{{ puppet_agent_service_name | default('puppet') }}"
+    enabled: true
+    state: started
+  when: puppet_catalog_run.rc in [0, 2]
+  register: agent_service_activation
+
+# ------------------------------------------------------------------------------
+# Step 9: Active Daemon Verification
+# ------------------------------------------------------------------------------
+
+- name: "Step 9: Verify Puppet Agent daemon is active"
+  ansible.builtin.command:
+    cmd: "systemctl is-active {{ puppet_agent_service_name | default('puppet') }}"
+  register: agent_is_active
+  changed_when: false
+  failed_when: (agent_is_active.stdout | trim) != 'active'
+
+- name: "Step 9: Verify Puppet Agent daemon is enabled"
+  ansible.builtin.command:
+    cmd: "systemctl is-enabled {{ puppet_agent_service_name | default('puppet') }}"
+  register: agent_is_enabled
+  changed_when: false
+  failed_when: (agent_is_enabled.stdout | trim) != 'enabled'
+
+- name: "Step 9: Report complete Puppet Agent handover"
+  ansible.builtin.debug:
+    msg: >
+      Puppet Agent handover successfully completed on {{ inventory_hostname }} (certname: {{ puppet_agent_certname }}).
+      Daemon is verified active ({{ agent_is_active.stdout | trim }}) and enabled ({{ agent_is_enabled.stdout | trim }}).
+      Supervised catalog completed cleanly with exit code {{ puppet_catalog_run.rc }}.
+      Autonomous configuration management active.

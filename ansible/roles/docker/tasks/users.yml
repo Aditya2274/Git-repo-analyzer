@@ -1,0 +1,26 @@
+---
+# Docker group and user permissions management
+
+- name: Ensure docker group exists
+  ansible.builtin.group:
+    name: "{{ docker_group | default('docker') }}"
+    state: present
+
+- name: Safety Check - Prohibit premature Jenkins user addition to docker group
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL SECURITY ALERT: Premature addition of 'jenkins' to docker group detected.
+      Jenkins is not yet installed (deferred strictly to Phase 7 per ADR 007 and AGENTS.md).
+  when:
+    - "'jenkins' in (docker_users | default([]))"
+
+- name: Add authorized users to docker group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: "{{ docker_group | default('docker') }}"
+    append: true
+  loop: "{{ docker_users | default([]) }}"
+  when:
+    - docker_users is defined
+    - docker_users | length > 0
+    - item != 'jenkins'

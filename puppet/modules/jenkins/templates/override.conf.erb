@@ -1,0 +1,23 @@
+# ==============================================================================
+# Managed by Puppet: modules/jenkins/templates/override.conf.erb
+# Purpose: Systemd drop-in configuration for Jenkins Controller on cicd-server.
+# Security & Resource Posture:
+#   - JVM heap bounded to -Xms<%= @jvm_xms %> -Xmx<%= @jvm_xmx %> for 2 GB t3.small host.
+#   - HTTP port <%= @http_port %> with JENKINS_LISTEN_ADDRESS=<%= @listen_address %>
+#     (when 0.0.0.0, binds all IPv4 host interfaces as a wildcard listener, NOT
+#     a private-only socket, so both local NRPE on 127.0.0.1 and remote
+#     app-server VPC requests succeed via single-address Winstone/Jetty).
+#   - Network security boundary: AWS SG cicd_analysis_sg restricts TCP <%= @http_port %>
+#     ingress strictly to app_monitoring_sg across EC2 1:1 public/private NAT as
+#     the primary network-level control preventing unauthorized external access.
+#   - Application-layer security: setAllowAnonymousRead(false) and
+#     DefaultCrumbIssuer(true) are additional HTTP application-layer controls;
+#     they do not prevent TCP connections or provide network isolation.
+#   - UDP discovery and mDNS multicast explicitly disabled.
+#   - Zero credentials, API tokens, or external LLM keys stored in environment.
+# ==============================================================================
+[Service]
+Environment="JENKINS_HOME=<%= @jenkins_home %>"
+Environment="JENKINS_PORT=<%= @http_port %>"
+Environment="JENKINS_LISTEN_ADDRESS=<%= @listen_address %>"
+Environment="JAVA_OPTS=-Djava.awt.headless=true -Xms<%= @jvm_xms %> -Xmx<%= @jvm_xmx %> -Dhudson.DNSMultiCast.disabled=true -Dhudson.udp=-1"

@@ -1,0 +1,7 @@
+# ==============================================================================
+# Apache Ports Configuration: ports.conf
+# Managed by Puppet: nagios::web
+# ==============================================================================
+# RESTRICTED: Listen exclusively on loopback (<%= @bind_address %>:<%= @listen_port %>)
+# Public ports 80/443 are reserved exclusively for NGINX.
+Listen <%= @bind_address %>:<%= @listen_port %>

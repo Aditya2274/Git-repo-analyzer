@@ -1,0 +1,43 @@
+---
+# ==============================================================================
+# Playbook: enroll-puppet-agents.yml
+# Purpose: Checkpoint 4.5 - Controlled Puppet CA Enrollment & Supervised Handover
+# Fleet Targets:
+#   - EC2 1: puppet_server (Dedicated Puppet Server & CA)
+#   - EC2 2: application (app-server)
+#   - EC2 3: cicd (cicd-server)
+# Workflow (9-Step Enrollment Sequence):
+#   Play 1 (Step 1): Pre-enrollment connectivity verification (agents -> server)
+#   Play 2 (Steps 2 & 3): Pending CSR inspection & controlled individual signing (server)
+#   Play 3 (Steps 4 - 9): Verification, supervised catalog run & service handover (agents)
+# ==============================================================================
+
+- name: "Checkpoint 4.5: Step 1 - Pre-Enrollment Connectivity Verification"
+  hosts: puppet_agents
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify TCP 8140 reachability from agent to Puppet Server
+      ansible.builtin.include_role:
+        name: puppet_agent
+        tasks_from: connectivity.yml
+
+- name: "Checkpoint 4.5: Steps 2 & 3 - Pending CSR Inspection and Controlled Signing"
+  hosts: puppet_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Inspect pending CSRs and perform controlled signing on Puppet CA
+      ansible.builtin.include_role:
+        name: puppet_server
+        tasks_from: signing.yml
+
+- name: "Checkpoint 4.5: Steps 4 through 9 - Supervised Handover, Catalog Run, and Service Activation"
+  hosts: puppet_agents
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Execute supervised catalog application and complete agent handover
+      ansible.builtin.include_role:
+        name: puppet_agent
+        tasks_from: handover.yml

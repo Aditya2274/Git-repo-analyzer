@@ -1,0 +1,10 @@
+---
+# Handlers for puppet_agent role
+
+- name: restart puppet agent
+  ansible.builtin.systemd:
+    name: "{{ puppet_agent_service_name | default('puppet') }}"
+    state: restarted
+  when:
+    - puppet_agent_service_state | default('stopped') == 'started'
+    - puppet_agent_service_enabled | default(false) | bool

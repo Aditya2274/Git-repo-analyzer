@@ -1,0 +1,155 @@
+---
+# Cryptographic CA State Assessment and Controlled Initialization
+
+- name: Check existence of Puppet CA certificate and key files
+  ansible.builtin.stat:
+    path: "{{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/{{ item }}"
+  loop:
+    - ca_crt.pem
+    - ca_key.pem
+    - ca_crl.pem
+    - serial
+    - inventory.txt
+  register: ca_files_stat
+
+- name: Map CA file existence facts
+  ansible.builtin.set_fact:
+    ca_crt_exists: "{{ (ca_files_stat.results | selectattr('item', 'equalto', 'ca_crt.pem') | first).stat.exists }}"
+    ca_key_exists: "{{ (ca_files_stat.results | selectattr('item', 'equalto', 'ca_key.pem') | first).stat.exists }}"
+    ca_crl_exists: "{{ (ca_files_stat.results | selectattr('item', 'equalto', 'ca_crl.pem') | first).stat.exists }}"
+    ca_serial_exists: "{{ (ca_files_stat.results | selectattr('item', 'equalto', 'serial') | first).stat.exists }}"
+    ca_inventory_exists: "{{ (ca_files_stat.results | selectattr('item', 'equalto', 'inventory.txt') | first).stat.exists }}"
+
+# ------------------------------------------------------------------------------
+# State A: Uninitialized CA (Safe to initialize)
+# ------------------------------------------------------------------------------
+
+- name: "State A: Initialize Puppet Server CA when uninitialized"
+  ansible.builtin.command:
+    cmd: >
+      {{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca setup
+      --certname {{ puppet_certname | default('puppet-server') }}
+      --subject-alt-names {{ puppet_dns_alt_names | default('puppet-server,puppet-server.ec2.internal,puppet') }}
+      --ca-name "Puppet CA: {{ puppet_certname | default('puppet-server') }}"
+  when:
+    - not ca_crt_exists
+    - not ca_key_exists
+  register: ca_setup_result
+
+# ------------------------------------------------------------------------------
+# State C: Corrupted, Incomplete, or Inconsistent CA (Fail Safely)
+# ------------------------------------------------------------------------------
+
+- name: "State C: Fail if CA certificate exists but private key is missing"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Corrupted CA State detected.
+      CA certificate exists at {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem,
+      but private key {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem is missing.
+      Automatic regeneration is strictly prohibited. Manual operator investigation required.
+  when:
+    - ca_crt_exists
+    - not ca_key_exists
+
+- name: "State C: Fail if CA private key exists but certificate is missing"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Corrupted CA State detected.
+      CA private key exists at {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem,
+      but certificate {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem is missing.
+      Automatic regeneration is strictly prohibited. Manual operator investigation required.
+  when:
+    - not ca_crt_exists
+    - ca_key_exists
+
+- name: "State C: Fail if required CA metadata files are missing"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Incomplete CA metadata detected.
+      One or more required CA support files (ca_crl.pem, serial, inventory.txt) are missing.
+      Automatic regeneration is strictly prohibited. Manual operator investigation required.
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+    - not ca_crl_exists or not ca_serial_exists or not ca_inventory_exists
+
+# ------------------------------------------------------------------------------
+# Cryptographic Modulus & Expiration Validation for Initialized CA
+# ------------------------------------------------------------------------------
+
+- name: Cryptographic validation of existing CA certificate expiration
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem -noout -checkend 0"
+  register: ca_cert_validity
+  changed_when: false
+  failed_when: false
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+
+- name: "State C: Fail if existing CA certificate is expired or corrupted"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Existing CA certificate at {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem is expired or corrupted.
+      Automatic regeneration is strictly prohibited. Manual operator investigation required.
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+    - ca_cert_validity.rc != 0
+
+- name: Extract existing CA certificate modulus
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem -noout -modulus"
+  register: ca_cert_modulus
+  changed_when: false
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+    - ca_cert_validity.rc == 0
+
+- name: Extract existing CA private key modulus
+  ansible.builtin.command:
+    cmd: "openssl rsa -in {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem -noout -modulus"
+  register: ca_key_modulus
+  changed_when: false
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+    - ca_cert_validity.rc == 0
+
+- name: "State C: Fail if CA certificate modulus does not match private key modulus"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Cryptographic mismatch in existing CA state.
+      The modulus of CA certificate does not match the modulus of CA private key.
+      Certificate and key do not form a valid cryptographic pair.
+      Automatic regeneration is strictly prohibited. Manual operator investigation required.
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+    - ca_cert_validity.rc == 0
+    - ca_cert_modulus.stdout != ca_key_modulus.stdout
+
+# ------------------------------------------------------------------------------
+# State B: Valid Existing CA (Preserve without regeneration)
+# ------------------------------------------------------------------------------
+
+- name: "State B: Confirm existing CA is cryptographically valid and complete"
+  ansible.builtin.debug:
+    msg: "Existing Puppet CA is cryptographically valid, modulus matches, and required metadata files are present. CA setup skipped."
+  when:
+    - ca_crt_exists
+    - ca_key_exists
+    - ca_crl_exists
+    - ca_serial_exists
+    - ca_inventory_exists
+    - ca_cert_validity.rc == 0
+    - ca_cert_modulus.stdout == ca_key_modulus.stdout
+
+- name: Ensure secure permissions on CA private key (0640)
+  ansible.builtin.file:
+    path: "{{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem"
+    owner: puppet
+    group: puppet
+    mode: "0640"
+  when: ca_key_exists or (ca_setup_result is defined and ca_setup_result is changed)

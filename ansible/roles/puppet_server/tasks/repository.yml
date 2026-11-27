@@ -1,0 +1,83 @@
+---
+# Puppet 8 repository setup and package installation
+
+- name: Install prerequisite packages for Puppet repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - openjdk-17-jre-headless
+    state: present
+    update_cache: false
+    lock_timeout: 300
+
+- name: Download Puppet 8 Noble release repository package
+  ansible.builtin.get_url:
+    url: "{{ puppet_release_deb_url | default('https://apt.puppet.com/puppet8-release-noble.deb') }}"
+    dest: /tmp/puppet8-release-noble.deb
+    mode: "0644"
+  register: puppet_release_download
+
+- name: Install Puppet 8 release package
+  ansible.builtin.apt:
+    deb: /tmp/puppet8-release-noble.deb
+  register: puppet_release_install
+
+- name: Clean up temporary release deb package
+  ansible.builtin.file:
+    path: /tmp/puppet8-release-noble.deb
+    state: absent
+
+- name: Update APT package cache for Puppet 8
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Configure APT preferences to prioritize official PuppetLabs packages over Ubuntu Universe
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/puppetlabs.pref
+    content: |
+      # Enforce vendor priority (900) over distro universe (500) for Puppet components
+      Package: puppetserver puppet-agent
+      Pin: origin apt.puppet.com
+      Pin-Priority: 900
+    owner: root
+    group: root
+    mode: "0644"
+  register: puppet_apt_preferences
+
+- name: Check if official PuppetLabs noble repository provides puppetserver
+  ansible.builtin.shell:
+    cmd: "apt-cache madison puppetserver | grep -E 'apt\\.puppet\\.com.*noble'"
+  register: puppetserver_noble_vendor_check
+  changed_when: false
+  failed_when: false
+
+- name: Configure upstream Puppet 8 server fallback repository if noble package is not yet published
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}] http://apt.puppet.com jammy puppet8"
+    state: present
+    filename: puppet8-server-fallback
+  when: puppetserver_noble_vendor_check.rc != 0
+  register: puppet_server_fallback_repo
+
+- name: Refresh APT cache if fallback repository or preferences changed
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 300
+  when: (puppet_server_fallback_repo is changed) or (puppet_apt_preferences is changed)
+
+- name: Install Puppet Server package
+  ansible.builtin.apt:
+    name: "{{ puppet_server_package_name | default('puppetserver') }}"
+    state: present
+    lock_timeout: 300
+  register: puppetserver_pkg_install
+
+- name: Verify installed Puppet Server version
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver --version"
+  register: puppetserver_version_output
+  changed_when: false

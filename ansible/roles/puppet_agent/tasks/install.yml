@@ -1,0 +1,28 @@
+---
+# Puppet Agent package installation and binary verification
+
+- name: Verify package candidate origin for puppet-agent
+  ansible.builtin.shell:
+    cmd: "apt-cache policy {{ puppet_agent_package_name | default('puppet-agent') }} | grep -A 2 'Candidate:'"
+  register: puppet_agent_candidate_check
+  changed_when: false
+  failed_when: false
+
+- name: Install official Puppet Agent package
+  ansible.builtin.apt:
+    name: "{{ puppet_agent_package_name | default('puppet-agent') }}"
+    state: present
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"
+  register: puppet_agent_pkg_install
+
+- name: Verify installed Puppet Agent binary path and executable status
+  ansible.builtin.stat:
+    path: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet"
+  register: puppet_binary_stat
+  failed_when: not puppet_binary_stat.stat.exists or not puppet_binary_stat.stat.executable
+
+- name: Verify installed Puppet Agent version
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppet --version"
+  register: puppet_version_output
+  changed_when: false

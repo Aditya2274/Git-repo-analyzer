@@ -1,0 +1,51 @@
+---
+# Puppet Agent configuration in /etc/puppetlabs/puppet/puppet.conf
+
+- name: Ensure Puppet configuration directory exists
+  ansible.builtin.file:
+    path: "{{ puppet_config_dir | default('/etc/puppetlabs/puppet') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure server endpoint in puppet.conf [main]
+  community.general.ini_file:
+    path: "{{ puppet_config_file | default('/etc/puppetlabs/puppet/puppet.conf') }}"
+    section: main
+    option: server
+    value: "{{ puppet_server_host | default('puppet-server') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart puppet agent
+
+- name: Configure stable certname identity in puppet.conf [main]
+  community.general.ini_file:
+    path: "{{ puppet_config_file | default('/etc/puppetlabs/puppet/puppet.conf') }}"
+    section: main
+    option: certname
+    value: "{{ puppet_agent_certname | default(inventory_hostname) }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart puppet agent
+
+- name: Configure catalog run interval in puppet.conf [main]
+  community.general.ini_file:
+    path: "{{ puppet_config_file | default('/etc/puppetlabs/puppet/puppet.conf') }}"
+    section: main
+    option: runinterval
+    value: "{{ puppet_agent_runinterval | default('30m') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart puppet agent
+
+- name: Ensure autosign setting is strictly absent from agent configuration
+  community.general.ini_file:
+    path: "{{ puppet_config_file | default('/etc/puppetlabs/puppet/puppet.conf') }}"
+    section: main
+    option: autosign
+    state: absent
+  notify: restart puppet agent

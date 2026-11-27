@@ -1,0 +1,16 @@
+---
+# Handlers for docker role
+
+- name: Restart Docker daemon
+  ansible.builtin.systemd:
+    name: "{{ docker_service_name | default('docker') }}"
+    state: restarted
+  when: docker_service_state | default('started') == 'started'
+  listen: restart docker
+
+- name: Restart containerd
+  ansible.builtin.systemd:
+    name: "{{ docker_containerd_service_name | default('containerd') }}"
+    state: restarted
+  when: docker_service_state | default('started') == 'started'
+  listen: restart containerd

@@ -1,14 +1,17 @@
 ---
-- name: Update apt package cache
-  ansible.builtin.apt:
-    update_cache: true
-    cache_valid_time: 3600
+# Common bootstrap tasks executed across all EC2 nodes in the fleet
 
-- name: Install essential system packages
-  ansible.builtin.apt:
-    name:
-      - curl
-      - git
-      - unzip
-      - ca-certificates
-    state: present
+- name: Handle APT locks and package cache
+  ansible.builtin.import_tasks: apt.yml
+
+- name: Configure timezone and system clock synchronization
+  ansible.builtin.import_tasks: time.yml
+
+- name: Install essential baseline system utilities
+  ansible.builtin.import_tasks: packages.yml
+
+- name: Configure private DNS hostname resolution via /etc/hosts
+  ansible.builtin.import_tasks: hosts.yml
+
+- name: Configure virtual memory swapfile
+  ansible.builtin.import_tasks: swap.yml

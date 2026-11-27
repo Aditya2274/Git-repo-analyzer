@@ -1,0 +1,20 @@
+---
+# Main orchestrator for puppet_agent role
+
+- name: Execute preflight checks for Puppet Agent node
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Configure Puppet 8 APT repository and priority pinning
+  ansible.builtin.include_tasks: repository.yml
+
+- name: Install official Puppet Agent package
+  ansible.builtin.include_tasks: install.yml
+
+- name: Configure Puppet Agent in puppet.conf
+  ansible.builtin.include_tasks: config.yml
+
+- name: Manage Puppet Agent SSL state and CSR submission
+  ansible.builtin.include_tasks: csr.yml
+
+- name: Manage Puppet Agent systemd service
+  ansible.builtin.include_tasks: service.yml

@@ -1,6 +1,7 @@
 ---
-- name: Test Docker role
-  hosts: local
+# Test playbook for Docker role on CI/CD & Analysis Server (EC2 3)
+- name: Test Docker role on CI/CD server
+  hosts: cicd
   become: true
   roles:
     - docker

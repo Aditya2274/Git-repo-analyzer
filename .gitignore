@@ -22,3 +22,11 @@ ansible/playbooks/template-demo.yml
 
 ansible/templates/app.conf.j2
 ansible/files/demo.txt
+
+# Ansible ephemeral runtime & SSH trust files
+ansible/known_hosts*
+ansible/ssh.cfg
+ssh.cfg
+
+# Operator notes & discussions
+questions.md

@@ -1,0 +1,31 @@
+---
+# Docker daemon configuration and security controls
+
+- name: Ensure Docker configuration directory exists
+  ansible.builtin.file:
+    path: "{{ docker_daemon_config_dir | default('/etc/docker') }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Safety Check - Verify no unauthenticated TCP endpoint is configured
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL SECURITY ALERT: Docker daemon configuration specifies unauthenticated TCP endpoint in 'hosts'.
+      Exposing Docker over unauthenticated TCP grants remote root access.
+      Docker must bind strictly to local UNIX socket (unix:///var/run/docker.sock).
+  when:
+    - docker_daemon_config is defined
+    - docker_daemon_config.hosts is defined
+    - docker_daemon_config.hosts | select('match', '^tcp://') | list | length > 0
+
+- name: Configure Docker daemon settings (daemon.json)
+  ansible.builtin.copy:
+    dest: "{{ docker_daemon_config_file | default('/etc/docker/daemon.json') }}"
+    content: "{{ docker_daemon_config | to_nice_json }}\n"
+    mode: "0644"
+    owner: root
+    group: root
+  notify: restart docker
+  when: docker_daemon_config is defined

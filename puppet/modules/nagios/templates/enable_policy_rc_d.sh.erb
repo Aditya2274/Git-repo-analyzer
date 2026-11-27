@@ -1,0 +1,65 @@
+#!/bin/sh
+set -eu
+
+POLICY_FILE="<%= @policy_file %>"
+PID_FILE="<%= @pid_file %>"
+MARKER="<%= @marker %>"
+
+# Preflight inspection before creating temporary policy or installing packages.
+if [ -e "${POLICY_FILE}" ] || [ -L "${POLICY_FILE}" ]; then
+  if [ ! -L "${POLICY_FILE}" ] && [ -f "${POLICY_FILE}" ] && /usr/bin/grep -qF "# ${MARKER}" "${POLICY_FILE}" 2>/dev/null; then
+    # Existing Puppet-managed temporary policy: validate recorded Puppet PID lifecycle
+    if [ -f "${PID_FILE}" ]; then
+      EXISTING_PID="$(/usr/bin/cat "${PID_FILE}" 2>/dev/null || true)"
+      if [ -n "${EXISTING_PID}" ] && [ "${EXISTING_PID}" != "${PPID}" ] && kill -0 "${EXISTING_PID}" 2>/dev/null; then
+        if [ -r "/proc/${EXISTING_PID}/cmdline" ] && /usr/bin/tr '\0' ' ' < "/proc/${EXISTING_PID}/cmdline" | /usr/bin/grep -q 'puppet'; then
+          echo "ERROR: Concurrent active Puppet process (PID ${EXISTING_PID}) currently holds Nagios install guard '${POLICY_FILE}'. Wait for that run to finish before retrying." >&2
+          exit 1
+        fi
+      fi
+    fi
+    # Stale/dead PID or current process: fall through to refresh PID and scoped Puppet policy cleanly.
+  else
+    # Existing administrator-managed policy (executable, non-executable, symlink, etc.):
+    # NEVER execute, probe, infer behavior, overwrite, modify, rename, or delete it.
+    echo "ERROR: An existing administrator-managed policy exists at '${POLICY_FILE}'. Puppet cannot verify startup suppression safely without executing administrator-owned code, so package installation is aborted. Operator must inspect and manually resolve '${POLICY_FILE}' before retrying Nagios installation." >&2
+    exit 1
+  fi
+fi
+
+# Record active parent Puppet process PID so policy-rc.d fails open automatically
+# (exiting 0) if Puppet aborts before cleanup executes.
+/bin/echo "${PPID}" > "${PID_FILE}"
+
+TMP_POLICY="${POLICY_FILE}.puppet-tmp.$$"
+/usr/bin/cat <<'POLICY_EOF' > "${TMP_POLICY}"
+#!/bin/sh
+# <%= @marker %>
+# Narrowly scoped temporary startup guard for Ubuntu 24.04 package installation.
+# Suppresses maintainer-script service starts ONLY for Nagios Core and Apache2
+# while the active Puppet installation process PID is alive. Returns 0 (allow)
+# for all unrelated services or if Puppet has already exited.
+
+SERVICE="${1%.service}"
+PID_FILE="<%= @pid_file %>"
+
+case "${SERVICE}" in
+  <%= @suppressed_services.join('|') %>)
+    if [ -f "${PID_FILE}" ]; then
+      GUARD_PID="$(/usr/bin/cat "${PID_FILE}" 2>/dev/null || true)"
+      if [ -n "${GUARD_PID}" ] && kill -0 "${GUARD_PID}" 2>/dev/null; then
+        if [ -r "/proc/${GUARD_PID}/cmdline" ] && /usr/bin/tr '\0' ' ' < "/proc/${GUARD_PID}/cmdline" | /usr/bin/grep -q 'puppet'; then
+          exit 101
+        fi
+      fi
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+POLICY_EOF
+
+/usr/bin/chmod 0755 "${TMP_POLICY}"
+/usr/bin/mv -f "${TMP_POLICY}" "${POLICY_FILE}"

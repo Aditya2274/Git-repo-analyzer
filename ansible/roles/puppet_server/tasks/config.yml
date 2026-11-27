@@ -1,0 +1,19 @@
+---
+# Puppet Server identity and puppet.conf configuration
+
+- name: Ensure Puppet configuration directory exists
+  ansible.builtin.file:
+    path: "{{ puppet_config_dir | default('/etc/puppetlabs/puppet') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy puppet.conf with stable identity and security settings
+  ansible.builtin.template:
+    src: puppet.conf.j2
+    dest: "{{ puppet_config_file | default('/etc/puppetlabs/puppet/puppet.conf') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart puppetserver

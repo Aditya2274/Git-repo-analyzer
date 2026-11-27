@@ -1,0 +1,111 @@
+---
+# Steps 2 & 3: Pending CSR Inspection and Controlled Allowlisted Signing on Puppet Server CA
+
+- name: "Step 2: Inspect pending CSRs and certificates on Puppet Server CA"
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca list --all --format json"
+  register: ca_list_raw
+  changed_when: false
+  failed_when: ca_list_raw.rc != 0
+
+- name: "Step 2: Parse Puppet CA certificate and CSR list safely"
+  ansible.builtin.set_fact:
+    puppet_ca_pending_csrs: >-
+      {{
+        (ca_list_raw.stdout | from_json).certificate_requests | default([]) | map(attribute='name') | list
+        if (ca_list_raw.stdout | from_json) is mapping and 'certificate_requests' in (ca_list_raw.stdout | from_json)
+        else (
+          (ca_list_raw.stdout | from_json) | selectattr('state', 'defined') | selectattr('state', 'equalto', 'requested') | map(attribute='name') | list
+          if (ca_list_raw.stdout | from_json) is sequence
+          else []
+        )
+      }}
+    puppet_ca_signed_certs: >-
+      {{
+        (ca_list_raw.stdout | from_json).signed_certificates | default([]) | map(attribute='name') | list
+        if (ca_list_raw.stdout | from_json) is mapping and 'signed_certificates' in (ca_list_raw.stdout | from_json)
+        else (
+          (ca_list_raw.stdout | from_json) | selectattr('state', 'defined') | selectattr('state', 'equalto', 'signed') | map(attribute='name') | list
+          if (ca_list_raw.stdout | from_json) is sequence
+          else []
+        )
+      }}
+
+- name: "Step 2: Display discovered pending CSRs and signed certificates"
+  ansible.builtin.debug:
+    msg:
+      - "Pending CSRs on Puppet CA: {{ puppet_ca_pending_csrs }}"
+      - "Signed certificates on Puppet CA: {{ puppet_ca_signed_certs }}"
+
+# Step 3: Identity Allowlisting Security Check
+- name: "Step 3: Security Check - Identify unauthorized pending CSRs"
+  ansible.builtin.set_fact:
+    unauthorized_csrs: "{{ puppet_ca_pending_csrs | difference(puppet_ca_allowed_agents | default(['app-server', 'cicd-server'])) }}"
+
+- name: "Step 3: Security Check - Reject any unexpected pending CSRs (Fail Fast)"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL SECURITY ALERT: Unauthorized Certificate Signing Request(s) detected on Puppet CA: {{ unauthorized_csrs }}.
+      Allowlisted agent identities: {{ puppet_ca_allowed_agents | default(['app-server', 'cicd-server']) }}.
+      Automated signing is strictly halted. Zero autosign, zero wildcard, and zero unauthorized cert signing permitted.
+  when: unauthorized_csrs | length > 0
+
+- name: "Step 3: Security Check - Identify missing allowlisted agents"
+  ansible.builtin.set_fact:
+    missing_agents: "{{ (puppet_ca_allowed_agents | default(['app-server', 'cicd-server'])) | difference(puppet_ca_pending_csrs) | difference(puppet_ca_signed_certs) }}"
+
+- name: "Step 3: Security Check - Fail if any allowlisted agent is neither pending nor signed"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Allowlisted agent(s) {{ missing_agents }} have neither a pending CSR nor a signed certificate on Puppet CA.
+      Ensure Checkpoint 4.4 CSR submission has executed successfully on all agent nodes before enrollment.
+  when:
+    - puppet_ca_require_all_allowed | default(true) | bool
+    - missing_agents | length > 0
+
+- name: "Step 3: Sign approved pending CSRs individually"
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca sign --certname {{ item }}"
+  loop: "{{ puppet_ca_allowed_agents | default(['app-server', 'cicd-server']) }}"
+  register: ca_sign_result
+  when:
+    - item in puppet_ca_pending_csrs
+    - item not in puppet_ca_signed_certs
+  changed_when: ca_sign_result.rc == 0
+  failed_when: ca_sign_result.rc != 0
+
+- name: "Step 3: Report already-signed allowlisted agent certificates (Idempotent)"
+  ansible.builtin.debug:
+    msg: "Certificate for allowlisted agent '{{ item }}' is already signed on Puppet CA. Signing skipped."
+  loop: "{{ puppet_ca_allowed_agents | default(['app-server', 'cicd-server']) }}"
+  when: item in puppet_ca_signed_certs
+
+- name: "Step 3: Re-query Puppet CA certificate list to verify signing"
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca list --all --format json"
+  register: ca_list_post_sign
+  changed_when: false
+
+- name: "Step 3: Parse post-signing certificates list"
+  ansible.builtin.set_fact:
+    post_signed_certs: >-
+      {{
+        (ca_list_post_sign.stdout | from_json).signed_certificates | default([]) | map(attribute='name') | list
+        if (ca_list_post_sign.stdout | from_json) is mapping and 'signed_certificates' in (ca_list_post_sign.stdout | from_json)
+        else (
+          (ca_list_post_sign.stdout | from_json) | selectattr('state', 'defined') | selectattr('state', 'equalto', 'signed') | map(attribute='name') | list
+          if (ca_list_post_sign.stdout | from_json) is sequence
+          else []
+        )
+      }}
+
+- name: "Step 3: Final validation that all allowed agents are confirmed signed"
+  ansible.builtin.fail:
+    msg: "One or more allowlisted agents remain unsigned after signing step: {{ (puppet_ca_allowed_agents | default(['app-server', 'cicd-server'])) | difference(post_signed_certs) }}"
+  when:
+    - puppet_ca_require_all_allowed | default(true) | bool
+    - ((puppet_ca_allowed_agents | default(['app-server', 'cicd-server'])) | difference(post_signed_certs)) | length > 0
+
+- name: "Step 3: Report successful controlled certificate signing"
+  ansible.builtin.debug:
+    msg: "Controlled CA signing complete: All allowlisted agent certificates {{ puppet_ca_allowed_agents | default(['app-server', 'cicd-server']) }} are verified signed."

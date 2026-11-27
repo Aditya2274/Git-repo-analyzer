@@ -1,0 +1,105 @@
+# ==============================================================================
+# Nagios Services Configuration: services.cfg
+# Managed by Puppet: nagios::objects
+# ==============================================================================
+
+# Base Service Template
+define service {
+    name                            generic-service
+    active_checks_enabled           1
+    passive_checks_enabled          1
+    parallelize_check               1
+    obsess_over_service             1
+    check_freshness                 0
+    notifications_enabled           1
+    event_handler_enabled           1
+    flap_detection_enabled          1
+    process_perf_data               0
+    retain_status_information      1
+    retain_nonstatus_information   1
+    is_volatile                     0
+    check_period                    24x7
+    max_check_attempts              3
+    check_interval                  5
+    retry_interval                  1
+    contact_groups                  admins
+    notification_options            w,u,c,r
+    notification_interval           60
+    notification_period             24x7
+    register                        0
+}
+
+# ------------------------------------------------------------------------------
+# Services for puppet-server (EC2 1)
+# Strictly: NRPE Connectivity + Puppet Server Service. Zero Docker/Jenkins checks.
+# ------------------------------------------------------------------------------
+define service {
+    use                             generic-service
+    host_name                       puppet-server
+    service_description             NRPE Connectivity
+    check_command                   check_nrpe!check_load
+}
+
+define service {
+    use                             generic-service
+    host_name                       puppet-server
+    service_description             Puppet Server Service
+    check_command                   check_nrpe!check_puppetserver
+}
+
+# ------------------------------------------------------------------------------
+# Services for cicd-server (EC2 3)
+# Strictly: NRPE Connectivity + Jenkins Service + Docker Service. Zero Puppetserver checks.
+# ------------------------------------------------------------------------------
+define service {
+    use                             generic-service
+    host_name                       cicd-server
+    service_description             NRPE Connectivity
+    check_command                   check_nrpe!check_load
+}
+
+define service {
+    use                             generic-service
+    host_name                       cicd-server
+    service_description             Jenkins Service
+    check_command                   check_nrpe!check_jenkins
+}
+
+define service {
+    use                             generic-service
+    host_name                       cicd-server
+    service_description             Docker Service
+    check_command                   check_nrpe!check_docker
+}
+
+# ------------------------------------------------------------------------------
+# Services for app-server (EC2 2 - Local Monitoring)
+# Strictly: Local system health, disk, load, processes, NGINX web server.
+# ------------------------------------------------------------------------------
+define service {
+    use                             generic-service
+    host_name                       app-server
+    service_description             Root Filesystem Disk Space
+    check_command                   check_local_disk!20%!10%!/
+}
+
+define service {
+    use                             generic-service
+    host_name                       app-server
+    service_description             Current CPU Load
+    check_command                   check_local_load!5.0,4.0,3.0!10.0,6.0,4.0
+}
+
+define service {
+    use                             generic-service
+    host_name                       app-server
+    service_description             Total Running Processes
+    check_command                   check_local_procs!250!400!RSZDT
+}
+
+define service {
+    use                             generic-service
+    host_name                       app-server
+    service_description             NGINX Web Server Port 80
+    check_command                   check_http_port!80
+}

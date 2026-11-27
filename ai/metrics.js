@@ -272,7 +272,7 @@ function summarizeHotspots(files, now) {
 }
 
 function summarizeBranchDrift(now, mainBranch) {
-    const branches = run('git for-each-ref --format=%(refname:short) refs/heads/')
+    const branches = run("git for-each-ref --format='%(refname:short)' refs/heads/")
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean)

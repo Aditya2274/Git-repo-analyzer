@@ -1,0 +1,80 @@
+---
+# ==============================================================================
+# Hiera Common Configuration - Git Repository Analyzer Platform
+# ==============================================================================
+
+# Common baseline configuration
+common::timezone: 'UTC'
+common::manage_puppet_agent: true
+common::puppet_agent_service: 'puppet'
+common::packages:
+  - 'curl'
+  - 'wget'
+  - 'git'
+  - 'htop'
+  - 'unzip'
+  - 'tar'
+  - 'jq'
+  - 'ca-certificates'
+
+# NRPE configuration parameters
+# Restricted strictly to loopback and actual Nagios monitoring host (app-server)
+nrpe::server::server_port: 5666
+nrpe::server::allowed_hosts:
+  - '127.0.0.1'
+  - '::1'
+  - 'app-server'
+nrpe::server::dont_blame_nrpe: 0
+
+# Nagios Core configuration parameters
+# SECURITY: Do NOT store credentials or password hashes in Puppet manifests or Hiera.
+# Provision credentials out-of-band directly on app-server via interactive htpasswd:
+#   sudo htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin
+#   sudo chown root:www-data /etc/nagios4/htpasswd.users
+#   sudo chmod 0640 /etc/nagios4/htpasswd.users
+# Puppet enforces metadata (0640, root:www-data) and preserves provisioned contents.
+nagios::web::admin_user: 'nagiosadmin'
+nagios::web::listen_port: 8080
+nagios::web::bind_address: '127.0.0.1'
+nagios::web::enforce_production_secret: true
+
+# ------------------------------------------------------------------------------
+# Phase 5B: Application Deployment Defaults (app-server / EC2 2 exclusively)
+# Non-secret baseline only. Release versions, SHA-256 digests, CORS origins,
+# and live Jenkins API tokens are injected out-of-band via node/env Hiera data.
+# ------------------------------------------------------------------------------
+application::node_major: 24
+application::retain_releases: 3
+application::node_env: 'production'
+application::backend_host: '127.0.0.1'
+application::backend_port: 3000
+application::listen_port: 80
+application::ssrf_check_dns: true
+application::analysis_timeout_ms: 600000
+application::poll_interval_ms: 1500
+application::jenkins_mock_mode: true
+application::jenkins_job_name: 'git-repo-analyzer'
+application::jenkins_request_timeout_ms: 5000
+application::enforce_production_cors: true
+
+# ------------------------------------------------------------------------------
+# Phase 7.2: Jenkins Controller Defaults (cicd-server / EC2 3 exclusively)
+# Non-secret baseline only. Zero credentials, passwords, or API tokens may be
+# stored here. Exact package availability (2.580.3 baseline) and Java 21
+# compatibility must be revalidated prior to Boundary B deployment.
+# ------------------------------------------------------------------------------
+jenkins::java_package: 'openjdk-21-jre-headless'
+jenkins::jenkins_version: '2.580.3'
+jenkins::pin_package_version: true
+jenkins::http_port: 8080
+# Wildcard IPv4 bind (not a private-only socket) required so Winstone/Jetty serves
+# both local NRPE (127.0.0.1:8080) and app-server VPC calls without an extra proxy.
+# Network boundary: AWS SG cicd_analysis_sg (app_monitoring_sg -> TCP 8080) is
+# the primary network-level control across EC2 1:1 NAT; Jenkins authentication
+# and CSRF are additional application-layer controls (not network isolation).
+jenkins::listen_address: '0.0.0.0'
+jenkins::jvm_xms: '384m'
+jenkins::jvm_xmx: '512m'
+jenkins::num_executors: 1
+jenkins::jenkins_home: '/var/lib/jenkins'
+jenkins::manage_docker_group: true

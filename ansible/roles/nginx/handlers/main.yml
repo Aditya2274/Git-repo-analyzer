@@ -1,5 +1,20 @@
 ---
+# Handlers for nginx role
+
+- name: Reload NGINX
+  ansible.builtin.systemd:
+    name: "{{ nginx_service_name | default('nginx') }}"
+    state: reloaded
+  when: nginx_service_state | default('started') == 'started'
+  listen:
+    - reload nginx
+    - Reload NGINX
+
 - name: Restart NGINX
-  ansible.builtin.systemd_service:
-    name: nginx
+  ansible.builtin.systemd:
+    name: "{{ nginx_service_name | default('nginx') }}"
     state: restarted
+  when: nginx_service_state | default('started') == 'started'
+  listen:
+    - restart nginx
+    - Restart NGINX

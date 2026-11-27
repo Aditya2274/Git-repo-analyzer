@@ -1,0 +1,24 @@
+---
+# Step 1: Pre-Enrollment Connectivity Verification (Agent -> Puppet Server)
+
+- name: "Step 1: Verify TCP 8140 reachability to Puppet Server with bounded timeout"
+  ansible.builtin.wait_for:
+    host: "{{ puppet_server_host | default('puppet-server') }}"
+    port: "{{ puppet_server_port | default(8140) }}"
+    timeout: "{{ puppet_ca_connect_timeout | default(10) }}"
+    state: started
+  register: puppet_server_port_probe
+  ignore_errors: true
+
+- name: "Step 1: Fail fast if Puppet Server port is unreachable"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Puppet Server port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host | default('puppet-server') }}'
+      is unreachable from {{ inventory_hostname }} after {{ puppet_ca_connect_timeout | default(10) }}s timeout.
+      Pre-enrollment verification failed. Ensure Puppet Server is running and security group rules allow TCP 8140 ingress from this node.
+  when: puppet_server_port_probe is failed
+
+- name: "Step 1: Report pre-enrollment connectivity success"
+  ansible.builtin.debug:
+    msg: "Pre-enrollment connectivity confirmed: Puppet Server port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host | default('puppet-server') }}' is reachable from {{ inventory_hostname }}."
+  when: puppet_server_port_probe is not failed

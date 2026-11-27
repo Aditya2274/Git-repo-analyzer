@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+POLICY_FILE="<%= @policy_file %>"
+PID_FILE="<%= @pid_file %>"
+MARKER="<%= @marker %>"
+
+# Remove temporary policy-rc.d ONLY if it is a regular file created by Puppet.
+# Never remove or alter an unrelated administrator-managed policy-rc.d.
+if [ -f "${POLICY_FILE}" ] && ! [ -L "${POLICY_FILE}" ]; then
+  if /usr/bin/grep -qF "# ${MARKER}" "${POLICY_FILE}" 2>/dev/null; then
+    /usr/bin/rm -f "${POLICY_FILE}"
+  fi
+fi
+
+/usr/bin/rm -f "${PID_FILE}"

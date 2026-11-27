@@ -1,0 +1,21 @@
+---
+- name: Set system timezone link to /etc/localtime
+  ansible.builtin.file:
+    src: "/usr/share/zoneinfo/{{ system_timezone | default('Etc/UTC') }}"
+    dest: /etc/localtime
+    state: link
+    force: true
+
+- name: Ensure /etc/timezone contains configured timezone
+  ansible.builtin.copy:
+    content: "{{ system_timezone | default('Etc/UTC') }}\n"
+    dest: /etc/timezone
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure systemd-timesyncd service is enabled and started
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd
+    state: started
+    enabled: true

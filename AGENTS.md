@@ -1,16 +1,53 @@
-# AGENTS.md — Git Repository Analyzer Project Source of Truth
+# AGENTS.md
 
-This document is the permanent primary source of truth, architectural standard, and governance specification for the **Git Repository Analyzer** project. All human operators, autonomous agents, and tool integrations must adhere to the decisions, constraints, patterns, and workflows defined herein.
+# AI-Powered Git Repository Analyzer
+
+## Permanent Project Instructions and Architecture Specification
 
 ---
 
-## 1. Project Overview & Architecture
+# 1. PROJECT OVERVIEW
 
-The objective of this project is to provide an enterprise-grade, automated system that accepts arbitrary Git repository URLs, analyzes their code health, contributor dynamics, code churn, and architectural posture using deterministic metrics and Groq LLM inference, renders visual activity charts, and displays actionable reports via a modern web interface.
+Project name: **AI-Powered Git Repository Analyzer – Automated Contribution and Activity Tracking System**
 
-The approved production architecture consists of **exactly three dedicated AWS EC2 instances**:
+The objective is to develop and deploy a complete Git Repository Analyzer platform that allows users to submit a public GitHub repository URL and receive:
 
-```
+- Repository contribution statistics.
+- Commit activity analysis.
+- Author-wise contribution analysis.
+- Lines added and removed.
+- Most modified files.
+- Stale branch detection.
+- Activity charts.
+- Automated Markdown reports.
+- AI-generated repository insights.
+
+The project combines:
+
+- React and Node.js for the application.
+- Docker for analyzer execution.
+- Jenkins for CI/CD.
+- GitHub Actions for existing automation.
+- Terraform for AWS infrastructure provisioning.
+- Ansible for initial server configuration and bootstrap.
+- Puppet for centralized configuration management.
+- Nagios Core and NRPE for monitoring.
+
+## Core development principle
+
+**Extend the existing project. Do not rebuild it from scratch.**
+
+The repository already contains working components. Inspect their implementation before modifying anything.
+
+Preserve existing working functionality, interfaces, scripts, configurations, and integrations unless a change is technically necessary.
+
+---
+
+# 2. FINAL INFRASTRUCTURE ARCHITECTURE
+
+The approved architecture consists of exactly THREE EC2 instances:
+
+```text
                                   [ Operator CIDR ]
                                           │
                                     (SSH: Port 22)
@@ -21,7 +58,7 @@ The approved production architecture consists of **exactly three dedicated AWS E
    │                                                                             │
    │   ┌────────────────────────┐         ┌──────────────────────────────────┐   │
    │   │     Puppet Server      │         │ Application + Monitoring Server  │   │
-   │   │  (Instance 1: t3.small)│         │     (Instance 2: t3.small)       │   │
+   │   │  (Instance 1: t3.small)│         │     (Instance 2: t3.micro)       │   │
    │   │                        │         │                                  │   │
    │   │ • Puppet Server 8      │         │ • React Frontend (Vite / Build)  │   │
    │   │ • Puppet CA            │◄──8140──│ • Node.js / Express Backend API  │   │
@@ -35,192 +72,925 @@ The approved production architecture consists of **exactly three dedicated AWS E
    │                │                                  ▼        ▼                │
    │   ┌─────────────────────────────────────────────────────────────────────┐   │
    │   │                    CI/CD + Analysis Server                          │   │
-   │   │                     (Instance 3: t3.medium)                         │   │
+   │   │                     (Instance 3: t3.small)                          │   │
    │   │                                                                     │   │
    │   │ • Jenkins Controller (Port 8080 — Internal Only)                    │   │
    │   │ • Docker Engine & Compose                                           │   │
-   │   │ • Dockerized Git Repository Analyzer Container                      │   │
+   │   │ • Ephemeral Git Repo Analyzer Container                             │   │
    │   │ • NRPE Monitoring Daemon (Port 5666 — Internal Only)                │   │
    │   │ • Puppet Agent                                                      │   │
    │   └─────────────────────────────────────────────────────────────────────┘   │
    └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.1 Dedicated Server Roles
-1. **Puppet Server (Instance 1):**
-   - Role: Dedicated Central Configuration Management & Certificate Authority (CA).
-   - Components: Puppet Server (v8.x), Puppet CA, internal Puppet code repository, Puppet Agent.
-2. **Application + Monitoring Server (Instance 2):**
-   - Role: User-facing application delivery, API orchestration, and infrastructure monitoring.
-   - Components: React Single Page Application (SPA), Node.js / Express REST API, NGINX Reverse Proxy, Nagios Core monitoring server, Puppet Agent.
-3. **CI/CD + Analysis Server (Instance 3):**
-   - Role: Isolated operational pipeline execution, containerized code analysis, and system health telemetry.
-   - Components: Jenkins Automation Controller, Docker CE Engine, Dockerized Git Repository Analyzer (`adityaashok2274/git-repo-analyzer:latest`), Nagios Remote Plugin Executor (NRPE) daemon, Puppet Agent.
+Do not introduce additional EC2 instances without explaining the technical necessity and obtaining explicit approval.
+
+Deployment Model: Strict On-Demand Ephemeral Lifecycle (ADR 011). Instances are provisioned for development and demonstrations via `terraform apply` and destroyed via `terraform destroy` when done. Instances do NOT run continuously 24/7. Fleet estimated running cost is ~$0.0773/hour across compute, 50 GB gp3 storage, and 3 public IPv4 addresses (~$0.31 per 4-hour demonstration).
+
+## EC2 1 — Dedicated Puppet Server
+
+Purpose: Centralized configuration management.
+
+Provisional Sizing: `t3.small` (2 vCPU, 2 GB RAM, 15 GB gp3 EBS). JVM heap tuned down from default `-Xms2g -Xmx2g` to `-Xms1g -Xmx1g` in `/etc/default/puppetserver`.
+
+Components:
+
+- Ubuntu 24.04 LTS.
+- Puppet Server.
+- Puppet Certificate Authority (CA).
+
+Responsibilities:
+
+- Manage Puppet Agent certificates.
+- Receive agent requests.
+- Compile Puppet catalogs.
+- Distribute configurations.
+- Enforce centralized configuration across managed nodes.
+
+Restrictions:
+
+- No Nagios Core.
+- No Jenkins.
+- No application hosting.
+- No Docker workloads.
+- No unnecessary services.
+
+This instance must remain dedicated to Puppet Server.
+
+## EC2 2 — Application and Monitoring Server
+
+Purpose: Host the public-facing application and centralized monitoring.
+
+Provisional Sizing: `t3.micro` (2 vCPU, 1 GB RAM, 15 GB gp3 EBS). Steady-state memory footprint is ~420 MB, leaving ~580 MB free RAM.
+
+Components:
+
+- Ubuntu 24.04 LTS.
+- NGINX.
+- React production build.
+- Node.js/Express backend.
+- Nagios Core.
+- Nagios Plugins.
+- Puppet Agent.
+
+Responsibilities:
+
+- Serve the React frontend.
+- Handle API requests.
+- Communicate with Jenkins over private networking.
+- Run NGINX as a reverse proxy.
+- Monitor itself and the CI/CD server.
+- Run Puppet Agent.
+
+Restrictions:
+
+- Nagios Core must run only here.
+- Do not install Puppet Server.
+- Do not install Jenkins.
+
+## EC2 3 — CI/CD and Analysis Server
+
+Purpose: Run CI/CD and repository analysis workloads.
+
+Provisional Sizing: `t3.small` (2 vCPU, 2 GB RAM, 20 GB gp3 EBS). Jenkins JVM tuned to `-Xms384m -Xmx512m` + 1–2 GB swapfile. Storage accommodates Docker image layers, Jenkins home, and workspaces.
+
+Components:
+
+- Ubuntu 24.04 LTS.
+- Jenkins.
+- Docker Engine.
+- Docker Compose plugin.
+- Dockerized Git Repository Analyzer.
+- NRPE.
+- Nagios Plugins.
+- Puppet Agent.
+
+Responsibilities:
+
+- Execute Jenkins pipelines.
+- Execute Docker-based repository analysis.
+- Generate reports and charts.
+- Produce artifacts for backend retrieval.
+- Respond to Nagios monitoring requests through NRPE.
+- Run Puppet Agent.
+
+Restrictions:
+
+- No Nagios Core.
+- No Puppet Server.
+- Jenkins must not be publicly accessible.
+- NRPE must not be publicly accessible.
 
 ---
 
-## 2. Infrastructure & Networking Standards (Terraform)
+# 3. COMPONENT COMMUNICATION
 
-### 2.1 S3 Remote State Backend Preservation
-- The Terraform S3 remote backend configuration defined in `terraform/main.tf` is **permanent and must be preserved without modification, destruction, or recreation**:
-  ```hcl
-  terraform {
-    backend "s3" {
-      bucket       = "git-repo-analyzer-terraform-state-2026"
-      key          = "git-repo-analyzer/terraform.tfstate"
-      region       = "ap-south-1"
-      encrypt      = true
-      use_lockfile = true
-    }
+The application workflow:
+
+1. User opens the public React application.
+2. User submits a GitHub repository URL.
+3. React sends the request to the Express backend.
+4. Backend validates the URL.
+5. Backend communicates with Jenkins over the private network.
+6. Jenkins triggers the parameterized analysis job.
+7. Jenkins executes the Dockerized analyzer.
+8. Analyzer generates reports, metrics, and charts.
+9. Report generation produces insights (current Phase 7 policy retains the analyzer's deterministic static-report fallback without injecting `GROQ_API_KEY` via Jenkins credentials or analyzer container environment variables; earlier standalone analyzer testing also supported optional Groq AI integration).
+10. Backend retrieves the results securely.
+11. React displays the analysis dashboard.
+
+The frontend must never communicate directly with Jenkins.
+
+## Infrastructure communication
+
+- EC2 1 communicates with EC2 2 and EC2 3 through private networking.
+- EC2 2 communicates with Jenkins on EC2 3 through private networking.
+- Nagios Core on EC2 2 communicates with NRPE on EC2 3.
+- Puppet Agents on EC2 2 and EC2 3 communicate with Puppet Server on EC2 1.
+
+Use private DNS or appropriate private addresses.
+
+Do not hardcode temporary public IP addresses.
+
+---
+
+# 4. NETWORKING AND SECURITY
+
+Implement least-privilege security groups verified against `terraform/modules/ec2/main.tf`.
+
+| Port | Service | Source                          | Destination   | Protocol & Ingress Policy |
+| ---- | ------- | ------------------------------- | ------------- | ------------------------- |
+| 22   | SSH     | Operator public IP (/32 only)   | EC2 1, 2, 3   | TCP ingress restricted to `var.allowed_ssh_cidr` |
+| 80   | HTTP    | Public internet (0.0.0.0/0)     | EC2 2 only    | TCP public web ingress for React frontend |
+| 443  | HTTPS   | Public internet (0.0.0.0/0)     | EC2 2 only    | TCP public secure web ingress |
+| 8080 | Jenkins | EC2 2 security group only       | EC2 3 only    | TCP ingress restricted to `app_monitoring_sg` |
+| 8140 | Puppet  | EC2 2 and EC2 3 security groups | EC2 1 only    | TCP ingress restricted to `app_monitoring_sg` and `cicd_analysis_sg` |
+| 5666 | NRPE    | EC2 2 security group only       | EC2 1 and 3   | TCP ingress restricted to `app_monitoring_sg` for Nagios checks |
+
+Security requirements:
+
+- **Public Ingress Rule:** Public HTTP/HTTPS ingress (ports 80 and 443) is permitted **exclusively on EC2 2**. Neither EC2 1 nor EC2 3 accepts public HTTP/HTTPS traffic.
+- Never expose Jenkins publicly (TCP 8080 restricted to EC2 2 SG).
+- Never expose Puppet Server publicly (TCP 8140 restricted to agent SGs).
+- Never expose NRPE publicly (TCP 5666 restricted to EC2 2 SG).
+- Restrict SSH access to operator public IP /32 only.
+- Use security group references for internal traffic wherever possible.
+- Keep Nagios administrative access restricted: Apache loopback strictly on `127.0.0.1:8080`, accessible only via encrypted SSH tunnel (`ssh -L 8080:127.0.0.1:8080`).
+- Do not expose secrets in frontend code.
+- Do not commit AWS credentials or private keys.
+- Do not permit arbitrary shell execution through repository URL inputs.
+
+Review the existing VPC and subnet configuration before provisioning.
+
+All three instances configure `associate_public_ip_address = true` within Default VPC public subnets for direct outbound connectivity, while strict ingress boundaries protect all internal management services.
+
+---
+
+# 5. APPLICATION REQUIREMENTS
+
+Preferred backend:
+
+- Node.js.
+- Express.
+- TypeScript.
+- Zod.
+
+Preferred frontend:
+
+- React.
+- TypeScript.
+- Vite.
+- Tailwind CSS.
+- Recharts.
+
+Proposed API:
+
+```http
+GET /api/health
+POST /api/analyses
+GET /api/analyses/:id
+GET /api/analyses/:id/results
+```
+
+Canonical API Request & Response Contracts:
+- `GET /api/health`: Returns HTTP 200 `{ "status": "UP", "timestamp": "..." }`.
+- `POST /api/analyses`: Accepts `{ "repositoryUrl": "https://github.com/owner/repository" }`.
+  - Validates repository URL and executes SSRF checks.
+  - Generates application-level UUID v4 `analysisId`.
+  - Returns HTTP 202 Accepted `{ "analysisId": "550e8400-e29b-41d4-a716-446655440000", "status": "QUEUED", "createdAt": "..." }`.
+- `GET /api/analyses/:id`: Returns HTTP 200 with strictly application-level attributes:
+  ```json
+  {
+    "analysisId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "BUILDING",
+    "progress": "Analyzing commit activity...",
+    "createdAt": "2026-11-22T18:00:00.000Z",
+    "updatedAt": "2026-11-22T18:00:15.000Z",
+    "error": null
   }
   ```
-- State locking utilizes Terraform 1.10+ native S3 lockfiles (`use_lockfile = true`). No DynamoDB table is required.
+- `GET /api/analyses/:id/results`: Returns HTTP 200 `{ "analysisId": "550e8400-e29b-41d4-a716-446655440000", "status": "COMPLETED", "metrics": { ... }, "summaryMarkdown": "...", "charts": { ... } }`.
+- Legacy endpoints (`POST /api/analyze`, `GET /api/status/:buildId`, `GET /api/reports/:buildId`) are retired and superseded.
+- **Identifier Abstraction Policy:** The public API exposes strictly application-generated UUIDs (`analysisId`). Internal Jenkins queue item IDs and build numbers are resolved and mapped internally by the Express backend (`analysisId` $\rightarrow$ `queueId` $\rightarrow$ `buildNumber`) and are never leaked to React clients.
 
-### 2.2 Provisional Instance & Storage Sizing (On-Demand Model)
-Infrastructure sizing decisions are **strictly provisional, unapproved, and subject to explicit cost review and written operator authorization** before Terraform provisioning. The architecture operates under an **on-demand demonstration lifecycle** (provisioned when needed, destroyed after demonstration/testing):
-- **Puppet Server:** Provisional candidate: `t3.small` (2 vCPU, 2 GB RAM, 15 GB gp3 EBS). The default vendor JVM heap (`-Xms2g -Xmx2g`) **must be tuned down** to `-Xms1g -Xmx1g` (or `-Xms512m -Xmx512m`) in `/etc/default/puppetserver` to comfortably fit within 2 GB RAM for a two-agent fleet.
-- **Application + Monitoring Server:** Provisional candidate: `t3.micro` (2 vCPU, 1 GB RAM, 15 GB gp3 EBS). Steady-state memory footprint (NGINX + Node.js Express + Nagios Core C-daemon + periodic Puppet Agent) is ~420 MB, fitting comfortably within 1 GB RAM. Eligible under the AWS Free plan.
-- **CI/CD + Analysis Server:** Provisional candidate: `t3.small` (2 vCPU, 2 GB RAM, 20 GB gp3 EBS). With Jenkins controller JVM tuned to `-Xms384m -Xmx512m`, concurrent execution of Jenkins, Docker daemon, and the containerized analyzer requires ~1,232 MB RAM at peak, leaving ~816 MB headroom on a 2 GB instance. A 1–2 GB swapfile acts as a supplementary safety cushion. Sized with 20 GB gp3 storage to accommodate Jenkins home, Docker image cache (`git-repo-analyzer`), build artifacts, and cloned workspaces.
-- **Fleet Storage Allocation:** Exactly 50 GB gp3 across the fleet (15 GB Puppet + 15 GB App/Monitoring + 20 GB CI/CD).
-- **Storage & Outbound Internet Strategy:** 
-  - All three instances are allocated in the public subnet with Public IPv4 addresses to provide direct, low-cost outbound internet connectivity (package repositories, Docker Hub, Jenkins plugins, GitHub, Groq API). This avoids the heavy recurring cost of an AWS NAT Gateway ($0.056/hr = ~$40.88/mo) and the operational failure risks of a NAT instance.
-  - Public IPv4 charges ($0.005/hr per instance) are incurred only while instances are running during on-demand sessions (e.g., $0.06 total for a 4-hour demonstration across all 3 instances).
-  - All internal services (Jenkins 8080, Puppet 8140, NRPE 5666) are strictly blocked from public ingress via directional security groups.
+Strict Security Specification for Untrusted Repository Input & Execution Sandboxing:
+- **Strict GitHub Hostname Allowlisting:** The backend validates that submitted repository URLs target `github.com` exclusively. All other Git forges, arbitrary IP addresses, or local domain names are strictly rejected.
+- **Canonical URL Parsing:** Validate input using standard Node.js `URL` parsing (`new URL(input)`).
+- **Reject Dangerous URL Components:** Embedded credentials (`https://user:pass@...`), non-standard ports (anything other than 443), query parameters, fragments, and non-HTTPS protocols (`http://`, `ssh://`, `git://`, `file://`) are strictly rejected.
+- **SSRF Protection:** Validate that host resolution does not target loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`), AWS Instance Metadata Service (`169.254.169.254`), or RFC 1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`). Protect against redirect-based SSRF bypass.
+- **Zero Direct Shell Command Interpolation:** Never interpolate user-controlled repository URLs into shell execution strings. All parameters passed to Jenkins or tools must be structured.
+- **Analyzer Container Isolation & Execution Sandboxing:**
+  - Git hooks must **never execute**; Git commands enforce `-c core.hooksPath=/dev/null` on clone, fetch, and checkout.
+  - Repository scripts, makefiles, and binaries must **never be executed** under any circumstances.
+  - Submodules must not be recursively initialized (`--no-recurse-submodules`).
+  - Analysis is restricted strictly to Git metadata inspection (`git log`, `git shortlog`, `git rev-parse`) and static line counting (`cloc`).
+  - Bounded resource allocation (Current Phase 7 Approved Baseline): Container memory limit `768 MB` (`--memory=768m`, superseding the historical `--memory=1g` pre-Phase 7 specification), CPU limit `1.5` (`--cpus=1.5`), process limit `100` (`--pids-limit=100`), and repository disk allocation capped at 2 GB (pre-clone free-space checks, clone timeout, shallow clone, and post-clone size checks do not constitute a hard filesystem quota; disk exhaustion remains an acknowledged residual risk).
+  - Bounded execution timeouts: Git clone operations timeout at 5 minutes; analysis container execution times out at 10 minutes.
+  - Non-root execution: Container executes strictly as an unprivileged user (`--user $(id -u):$(id -g)`).
+  - Workspace hygiene: Cloned repository files and temporary data are wiped from disk after report generation and on aborted/failed builds via Jenkins `post` cleanup (subject to the limitation that hard host failure or agent loss can prevent post-build cleanup).
+- **Jenkins & Docker Security Rules:**
+  - Jenkins TCP 8080 is accessible strictly from EC2 2's security group (`app_monitoring_sg`).
+  - Backend execution user: Dedicated unprivileged system user `gitrepo` and group `gitrepo`.
+  - Backend environment directory `/etc/git-repo-analyzer` owned by `root:gitrepo` with permissions `0750` (`rwxr-x---`).
+  - Backend environment file `/etc/git-repo-analyzer/backend.env` owned by `root:gitrepo` with permissions `0640` (`rw-r-----` - root read/write, `gitrepo` group read-only, others no access).
+  - Jenkins credentials and unrelated host secrets must not be passed into the ephemeral analyzer container.
+  - `GROQ_API_KEY` must **not** be injected through Jenkins credentials or analyzer container environment variables; the analyzer must retain and use its existing deterministic static-report fallback when the Groq key is unavailable.
+  - The host Docker socket (`/var/run/docker.sock`) is **never mounted** inside the analyzer container.
+  - Docker group membership on EC2 3 is treated as root-equivalent access and strictly restricted.
 
-### 2.3 Strict Directional Security Group Rules
-No internal management port may ever be exposed to `0.0.0.0/0`. Security groups must reference peer security group IDs:
+Backend requirements:
 
-1. **`sg_puppet_server`:**
-   - Ingress TCP `8140`: Restricted strictly to `sg_app_monitoring` and `sg_cicd_analysis`. (No public access).
-   - Ingress TCP `22`: Restricted to `var.allowed_ssh_cidr` (operator only).
-   - Egress: Outbound all (for apt and Puppet package repositories).
-2. **`sg_app_monitoring`:**
-   - Ingress TCP `80`, `443`: Allowed from `0.0.0.0/0` (public access to frontend and authenticated reverse proxy).
-   - Ingress TCP `22`: Restricted to `var.allowed_ssh_cidr` (operator only).
-   - Internal API ports (`3000` / `5000`): Bound to `127.0.0.1` locally; **not** exposed in SG ingress.
-   - Egress: Outbound all.
-3. **`sg_cicd_analysis`:**
-   - Ingress TCP `8080` (Jenkins): Restricted strictly to `sg_app_monitoring` (allowing the Express backend to trigger jobs and query build artifacts). **No public or operator-CIDR ingress.**
-   - Ingress TCP `5666` (NRPE): Restricted strictly to `sg_app_monitoring` (allowing Nagios to execute remote checks). **No public access.**
-   - Ingress TCP `22`: Restricted to `var.allowed_ssh_cidr` (operator only).
-   - Egress: Outbound all (for Docker Hub pulls, GitHub cloning, Groq API, Jenkins updates).
+- Validate public GitHub repository URLs using strict Zod schemas and standard URL parsing.
+- Enforce SSRF protection and prevent arbitrary command execution.
+- Abstract Jenkins integration behind an `IJenkinsClient` interface with a `MockJenkinsClient` for development and testing.
+- Store Jenkins credentials in environment variables (`/etc/git-repo-analyzer/backend.env`).
+- Trigger parameterized Jenkins jobs over the private network.
+- Track queue IDs and resolve build numbers asynchronously.
+- Poll Jenkins status and ingest archived artifacts upon completion.
+- Maintain job status across backend restarts.
 
-### 2.4 Administrative Access & SSH Tunneling
-- **Nagios Administration:** Public HTTP/HTTPS must serve the user application only. Nagios administration (`/nagios`) must never be exposed publicly. Administrative access must be restricted to an SSH tunnel (e.g., `ssh -L 8080:localhost:80 ...` or `127.0.0.1` binding with NGINX IP whitelisting).
-- **Jenkins Administration:** Because port 8080 is private to the Application Server SG, operator UI access to Jenkins must be conducted via SSH port forwarding (`ssh -L 8081:localhost:8080 -i key.pem ubuntu@<cicd-ip>`).
+Frontend requirements:
 
-### 2.5 On-Demand Infrastructure Lifecycle & Reproducibility
-The three EC2 instances are **temporary, ephemeral demonstration infrastructure**. They are not permanent 24/7 cloud workloads:
-1. **Lifecycle Workflow:**
-   $$\text{terraform apply} \longrightarrow \text{Ansible Bootstrap} \longrightarrow \text{Puppet Enforce} \longrightarrow \text{Application Deploy} \longrightarrow \text{Demonstrate} \longrightarrow \text{terraform destroy}$$
-2. **Stop vs. Destroy Standard:**
-   - When a session ends, the infrastructure must be terminated using `terraform destroy` to release compute, storage, and IPv4 resources completely.
-   - Stopping instances halts compute charges but continues accruing EBS storage and static IP charges. Therefore, full teardown (`terraform destroy`) is the approved baseline.
-3. **Stateful Data Boundaries:**
-   - All code, configurations, Ansible playbooks, and Puppet manifests must be preserved in version control (Git).
-   - The Terraform S3 remote state backend (`git-repo-analyzer-terraform-state-2026`) is permanent, independent of instance lifecycle, and must never be destroyed.
-   - Re-provisioning through `terraform apply` and re-running Ansible/Puppet must automatically restore all services, certificates, and configurations from scratch without manual intervention.
+Display:
 
----
+- Total commits.
+- Commits in the last 7 and 30 days.
+- Commits per author.
+- Lines added and removed.
+- Most modified files.
+- Stale branches.
+- Daily activity charts.
+- AI-generated insights.
 
-## 3. Configuration Management & Automation Separation
+Preserve the existing analyzer output format and Jenkins integration contract wherever possible.
 
-To prevent resource conflict and configuration drift, automation responsibilities are strictly partitioned between Ansible and Puppet:
+Do not replace working functionality unnecessarily.
 
-### 3.1 Ansible: Day 0 / Day 1 Bootstrap
-Ansible is the initial provisioning and bootstrapping orchestrator. Once an instance is provisioned by Terraform, Ansible executes:
-1. Base OS setup, system updates, and installation of baseline utilities via `roles/common` (`curl`, `git`, `unzip`, `ca-certificates`).
-2. Installation of Docker CE and Compose on the CI/CD server via `roles/docker`.
-3. Installation of the official Puppet 8 repository and `puppetserver` package on Instance 1.
-4. Tuning of Puppet Server JVM memory parameters (`-Xms1g -Xmx1g`).
-5. Installation of `puppet-agent` on Instances 2 and 3, setting `server = <puppet-server-fqdn/ip>` in `/etc/puppetlabs/puppet/puppet.conf`, and triggering certificate signing requests (CSR). On the Puppet Server, CSRs must be inspected via `puppetserver ca list` and verified against host identities, followed by explicit per-certname signing (`puppetserver ca sign --certname <agent-name>`); indiscriminate bulk signing (`--all`) and blind autosigning are strictly disallowed.
+## Production deployment
 
-### 3.2 Puppet: Day 2+ Continuous Configuration Management
-Once Puppet agents are enrolled, Puppet owns all desired-state configuration and ongoing enforcement:
-1. **Application Server State:**
-   - NGINX installation, virtual host configurations, and SSL certificates.
-   - Node.js runtime environment and backend systemd service definition (`git-repo-analyzer-api.service`).
-   - Nagios Core package installation, daemon configuration, contact definitions, host definitions, and service check commands.
-2. **CI/CD Server State:**
-   - NRPE daemon package installation, `/etc/nagios/nrpe.cfg` configuration, and plugin scripts.
-   - System users, permissions, and directory structures.
-3. **Drift Prevention:** Periodic runs (every 30 minutes) ensure manual changes are automatically remediated. Ansible never touches application configuration files managed by Puppet.
+- Build the React application for production.
+- Serve static files through NGINX.
+- Reverse proxy `/api/` to the backend.
+- Never use the Vite development server in production.
 
 ---
 
-## 4. Application Subsystems & Integration Workflow
+# 6. ANSIBLE CONFIGURATION MANAGEMENT
 
-### 4.1 Git Repository Analyzer Subsystem
-- **Core Script (`analyze2.sh`):**
-  - Must support both interactive terminal execution (`show_menu`, `show_commit_summary`) and non-interactive Docker/CI execution (`run_full_analysis`).
-  - Zero-commit detection (`git rev-list --count HEAD`) must be explicitly evaluated and stored in `ZERO_COMMITS` before executing metric commands, avoiding crashes on empty repositories.
-- **Deterministic Metrics (`ai/metrics.js`):**
-  - Bus Factor: Implements Degree of Authorship (DOA) formula:
-    $$\text{DOA}(e,f) = 3.293 + 1.098(\text{FA}) + 0.164(\text{DL}) - 0.321\ln(1 + \text{AC})$$
-  - Code Churn & Hotspots: Exponential decay churn scoring ($\lambda = 0.05$) over 30 days.
-  - Branch Drift: Measures unmerged divergence days and drift scores.
-  - Generates `reports/metrics.json`.
-- **Visual Visualizations (`ai/chartGenerator.js`):**
-  - Generates `reports/charts/commits_per_author.png` (bar chart).
-  - Generates `reports/charts/daily_commit_activity.png` (line chart).
-- **AI Architectural Review (`ai/reportGenerator.js`, `ai/prompt.js`, `ai/providers/groqProvider.js`):**
-  - Interprets deterministic metrics using Groq LLM (`groq/compound-mini`).
-  - **Static Fallback:** If `GROQ_API_KEY` is unset or API invocation fails, automatically outputs a complete static Markdown report (`reports/summary.md`) without error.
+Ansible is already installed and partially implemented.
 
-### 4.2 CI/CD Execution Model
-- **Analyzer Image CI (GitHub Actions):** Defined in `.github/workflows/docker-ci.yml`. On push to `main`, builds the Docker image, tests it, and publishes versioned and `latest` tags to Docker Hub (`adityaashok2274/git-repo-analyzer`).
-- **Operational Analysis Pipeline (Jenkins):** Defined in `Jenkinsfile`. Runs on Instance 3:
-  1. Pulls `adityaashok2274/git-repo-analyzer:latest` from Docker Hub.
-  2. Clones the target repository supplied via build parameter `REPO_URL`.
-  3. Mounts the target repo into `/repo` inside the analyzer container with `--user $(id -u):$(id -g)`.
-  4. Injects `GROQ_API_KEY` from Jenkins credentials store.
-  5. Archives `target-repo/reports/**/*`.
+Existing structure:
 
-### 4.3 Backend $\rightarrow$ Jenkins Integration Flow
-- **Express Backend Responsibilities:**
-  1. `POST /api/analyze`: Validates Git repository URL, sends authenticated HTTP POST to Jenkins REST API (`POST http://<cicd-private-ip>:8080/job/git-repo-analyzer/buildWithParameters?REPO_URL=<url>`).
-  2. Captures Jenkins queue item location header, polls queue until build number is assigned.
-  3. Polls build status (`/job/git-repo-analyzer/<build_number>/api/json`) until completion.
-  4. Downloads archived artifacts (`summary.md`, `metrics.json`, `charts/*.png`) from Jenkins artifact endpoints and caches them.
-  5. `GET /api/reports/:id`: Serves structured analysis data and report content to the frontend.
+```text
+ansible/
+├── ansible.cfg
+├── inventory/
+│   └── hosts.ini
+├── playbooks/
+│   ├── site.yml
+│   ├── test-common.yml
+│   ├── test-docker.yml
+│   └── test-nginx.yml
+└── roles/
+    ├── common/
+    ├── docker/
+    └── nginx/
+```
 
-### 4.4 Frontend UI Responsibilities
-- React Single Page Application (Vite-based):
-  1. Input view: Form for submitting Git URLs with validation.
-  2. Live progress tracker: Visual indicator showing Queued $\rightarrow$ Cloning $\rightarrow$ Analyzing $\rightarrow$ Completed.
-  3. Report presentation view: Renders `summary.md` with embedded Chart.js PNG visualizations and deterministic risk badges (Bus Factor, Hotspots, Drift).
+The existing common, Docker, and NGINX roles have been tested.
+
+Preserve them.
+
+Extend the inventory:
+
+```ini
+[puppet_server]
+puppet-server
+
+[application]
+app-server
+
+[cicd]
+cicd-server
+
+[puppet_agents:children]
+application
+cicd
+```
+
+Do not invent IP addresses.
+
+Configure actual addresses only after Terraform provisioning.
+
+## Required roles
+
+```text
+roles/
+├── common/
+├── docker/
+├── nginx/
+├── puppet_server/
+├── puppet_agent/
+├── nagios/
+└── nrpe/
+```
+
+### puppet_server
+
+Target: EC2 1 only.
+
+Responsibilities:
+
+- Install Puppet Server.
+- Configure hostname.
+- Configure Puppet CA.
+- Enable and start Puppet Server.
+- Configure appropriate JVM settings.
+- Prepare for certificate requests.
+
+### puppet_agent
+
+Target: EC2 2 and EC2 3.
+
+Responsibilities:
+
+- Install Puppet Agent.
+- Configure Puppet Server address.
+- Configure certificate identity.
+- Enable and start Puppet Agent.
+
+### nagios
+
+Target: EC2 2 only.
+
+Responsibilities:
+
+- Install Nagios Core.
+- Install monitoring plugins.
+- Configure hosts and services.
+- Configure application-server checks.
+- Configure remote CI/CD checks through NRPE.
+- Configure authentication.
+- Enable and start Nagios.
+
+### nrpe
+
+Target: EC2 3 only.
+
+Responsibilities:
+
+- Install NRPE.
+- Install monitoring plugins.
+- Configure allowed hosts.
+- Configure monitoring commands.
+- Enable and start NRPE.
+
+### Existing roles
+
+- common: all three instances.
+- docker: EC2 3.
+- nginx: EC2 2.
+
+Do not recreate functioning roles without a demonstrated reason.
 
 ---
 
-## 5. Security & Secret Management Requirements
+# 7. ANSIBLE AND PUPPET OWNERSHIP
 
-1. **Private Keys:**
-   - The RSA private key `git-repo-analyzer.pem` must be moved to `~/.ssh/` and deleted from the repository workspace to avoid accidental exposure. Permissions must remain `0400`.
-2. **Jenkins Docker Group Trade-Off:**
-   - Adding the `jenkins` user to the `docker` group grants root-equivalent privileges on Instance 3. This is an accepted engineering trade-off for containerized analysis, but requires that the Jenkins instance remain strictly internal, unexposed to public networks, and accessible only by the Backend service account.
-3. **No Embedded Secrets:**
-   - API tokens (`GROQ_API_KEY`, Docker Hub tokens, Jenkins API tokens) must never be committed to Git, hardcoded in scripts, or baked into Docker images.
-   - Secrets must be injected via Jenkins credential store or systemd environment files (`chmod 0600`).
-4. **Terraform Variables:**
-   - `terraform.tfvars` must remain in `.gitignore`. No credentials or public IPs shall be committed to version control.
+Ansible and Puppet must have clearly separated responsibilities governed by an explicit resource ownership matrix:
+
+| Resource / Subsystem | Bootstrap Owner (Ansible) | Desired-State Owner (Puppet) | Handover & Operational Policy |
+| :--- | :--- | :--- | :--- |
+| **Base OS Packages & Tools** | Installs initial packages | Maintains package baseline | Ansible bootstraps once; Puppet manages ongoing packages. |
+| **Swapfile Configuration** | Creates & activates swapfile | - | Ansible configures `/swapfile` (1 GB EC2 2, 2 GB EC2 3). |
+| **Private DNS (`/etc/hosts`)** | Injects initial private IPs | Enforces `/etc/hosts` drift | Ansible injects before Puppet; Puppet enforces consistency. |
+| **Docker Engine & Plugins** | Installs Docker CE on EC2 3 | - | Ansible configures Docker; adds `ubuntu` to `docker` group. |
+| **Puppet Server & CA** | Installs & tunes JVM heap | - | Ansible installs packages, tunes JVM, starts `puppetserver`. |
+| **Puppet Agent & Enrollment**| Installs agent & CSR submit | - | Ansible oversees controlled CSR signing; hands over to agent. |
+| **NGINX Virtual Host & Config**| Installs baseline package | **Exclusively Owns** | Ansible installs package; Puppet manages virtual hosts and proxies. |
+| **Node.js 24 LTS Runtime** | - | **Exclusively Owns** | Puppet deploys and manages Node.js 24 LTS runtime on EC2 2. |
+| **Backend Systemd Service** | - | **Exclusively Owns** | Puppet deploys `git-repo-analyzer-backend.service` and env files. |
+| **Nagios Core & Plugins** | - | **Exclusively Owns** | Puppet compiles, configures, and manages Nagios on EC2 2. |
+| **NRPE Daemon & Checks** | - | **Exclusively Owns** | Puppet configures `nrpe.cfg` and check scripts on EC2 1 & EC2 3. |
+
+Handover Policy:
+- Ansible bootstraps Puppet and the base OS.
+- Puppet manages ongoing desired configuration and drift remediation.
+- Do not let both tools continuously overwrite the same files or services.
+- Once a node is enrolled in Puppet, Ansible will never execute tasks that manage or overwrite NGINX virtual hosts, application systemd units, environment files, or Nagios/NRPE configurations.
 
 ---
 
-## 6. Implementation Guardrails & Agent Rules
+# 8. PUPPET CONFIGURATION
 
-1. **Strict Phased Progression:** Implementation must proceed sequentially through the approved stages. Never jump ahead to coding or provisioning without explicit approval.
-2. **Preserve Working Code:** Existing working implementations—including the S3 backend, the Dockerfile graphics stack, the deterministic metrics engine, and the GitHub Actions CI—must be preserved and extended, not rewritten from scratch.
-3. **Verification Before Assertion:** Never declare that a feature works or exists without verifying it through direct file inspection or read-only CLI commands. Distinguish clearly between *implemented*, *configured*, *tested*, and *verified*.
-4. **Explicit Infrastructure Approval:** No Terraform apply, destroy, or AWS resource provisioning may ever be executed without prior human operator review and explicit written authorization.
+Puppet Server must run exclusively on EC2 1.
+
+Puppet Agent must run on EC2 2 and EC2 3.
+
+Suggested structure:
+
+```text
+puppet/
+├── manifests/
+│   └── site.pp
+└── modules/
+    ├── common/
+    ├── application/
+    ├── cicd/
+    ├── nginx/
+    ├── docker/
+    ├── jenkins/
+    ├── nagios/
+    └── nrpe/
+```
+
+Adapt this structure to the existing repository if necessary.
+
+## Application node
+
+Puppet should enforce:
+
+- Common packages.
+- Puppet Agent.
+- NGINX.
+- Nagios Core.
+- Required monitoring configuration.
+
+## CI/CD node
+
+Puppet should enforce:
+
+- Common packages.
+- Puppet Agent.
+- Docker.
+- Jenkins.
+- NRPE.
+- Required monitoring configuration.
+
+Use appropriate Puppet resources:
+
+- package
+- service
+- file
+- class
+- node
+- notify
+- require
+
+Use exec only when necessary.
+
+Ensure manifests are idempotent.
+
+## Certificate security
+
+Do not automatically sign all certificate requests.
+
+Use controlled certificate approval.
+
+Use the Puppet Server's stable private hostname.
+
+## Completion criteria
+
+Puppet is not considered complete merely because packages are installed.
+
+Both agents must:
+
+1. Request certificates.
+2. Receive approved certificates.
+3. Successfully connect to Puppet Server.
+4. Retrieve catalogs.
+5. Apply catalogs successfully.
 
 ---
 
-## 7. Infrastructure Cost Governance & Provisioning Approval
+# 9. PUPPET SERVER RESOURCE MANAGEMENT
+
+Puppet Server uses the JVM.
+
+Because it has a dedicated EC2 instance, its memory allocation can be managed independently.
+
+However:
+
+- Check current official Puppet requirements.
+- Evaluate JVM heap settings.
+- Avoid unnecessary memory allocation.
+- Consider the number of agents.
+- Monitor actual memory consumption.
+- Select the instance size based on workload.
+
+Do not assume that a dedicated instance automatically eliminates every resource limitation.
+
+---
+
+# 10. NAGIOS AND NRPE
+
+Nagios Core runs exclusively on EC2 2.
+
+NRPE runs on EC2 1 and EC2 3.
+
+## Application monitoring
+
+Nagios Core on EC2 2 will monitor itself locally through monitoring plugins:
+
+- Host availability.
+- CPU load.
+- Memory.
+- Disk.
+- NGINX process.
+- Backend health endpoint.
+- Frontend HTTP response.
+- Nagios service.
+
+## Remote infrastructure monitoring (NRPE)
+
+Through NRPE over TCP 5666, Nagios Core on EC2 2 will monitor:
+
+- **EC2 1 (Puppet Server):**
+  - Host availability.
+  - CPU load.
+  - Memory.
+  - Disk space.
+  - `puppetserver` service status.
+  - Port 8140 responsiveness.
+- **EC2 3 (CI/CD Server):**
+  - Host availability.
+  - CPU load.
+  - Memory.
+  - Disk space.
+  - Jenkins service status.
+  - Docker daemon status.
+  - NRPE daemon status.
+
+## NRPE communication flow
+
+```text
+                           ┌──────────────────────────────┐
+                           │    Application & Nagios      │
+                           │           (EC2 2)            │
+                           └──────────────┬───────────────┘
+                                          │
+                  ┌───────────────────────┴───────────────────────┐
+                  │ check_nrpe (TCP 5666)                         │ check_nrpe (TCP 5666)
+                  ▼                                               ▼
+   ┌──────────────────────────────┐                ┌──────────────────────────────┐
+   │        Puppet Server         │                │     CI/CD & Analysis         │
+   │           (EC2 1)            │                │           (EC2 3)            │
+   │                              │                │                              │
+   │ • Host ping & SSH            │                │ • Host ping & SSH            │
+   │ • NRPE: CPU load, RAM, disk  │                │ • NRPE: CPU load, RAM, disk  │
+   │ • NRPE: Puppetserver service │                │ • NRPE: Docker & Jenkins     │
+   └──────────────────────────────┘                └──────────────────────────────┘
+```
+
+Only EC2 2 is permitted to connect to NRPE on EC2 1 and EC2 3.
+
+## Nagios Web Architecture & Administrative Access
+
+- **Web Server:** Nagios Core uses an Apache (`apache2`) virtual host / CGI module.
+- **Port Binding:** Apache will bind strictly to loopback: `127.0.0.1:8080`.
+- **Authentication:** Enforces HTTP Basic Authentication via `.htpasswd` (e.g. for `nagiosadmin`).
+- **Reverse Proxy Separation:** NGINX runs on `0.0.0.0:80` and `443` for public application traffic. NGINX will **not** expose or proxy `/nagios`.
+- **Encrypted SSH Tunneling:** Administrators access the dashboard via an encrypted SSH tunnel:
+  ```bash
+  ssh -i ~/.ssh/git-repo-analyzer.pem -L 8080:127.0.0.1:8080 ubuntu@<app-server-public-ip>
+  ```
+- **Browser Endpoint:** `http://localhost:8080/nagios`
+- **Zero Public Access:** The Nagios interface is completely inaccessible from the public internet.
+
+## Implementation Status Distinction
+
+Important: Nagios and NRPE are approved designs scheduled for subsequent deployment, not currently running services.
+
+| Component | Current Status |
+|---|---|
+| Terraform SG rules for NRPE (TCP 5666) | Implemented and validated |
+| Nagios Core | Planned; not installed |
+| NRPE daemon and plugins | Planned; not installed |
+| Apache loopback configuration (`127.0.0.1:8080`) | Planned; not installed |
+| HTTP Basic Authentication | Planned; not configured |
+| SSH tunnel access | Design documented; not tested |
+
+## Accepted limitation
+
+Nagios Core runs on EC2 2.
+
+If EC2 2 fails, its Nagios dashboard also becomes unavailable.
+
+This limitation is accepted for the demonstration and should be documented.
+
+Do not introduce another monitoring server to solve it.
+
+---
+
+# 11. INFRASTRUCTURE COST GOVERNANCE & PROVISIONING APPROVAL
 
 1. No AWS infrastructure resource may be provisioned until its estimated cost, Free Tier eligibility, and potential additional charges have been reviewed and explicitly approved by the project owner.
-2. Before provisioning, evaluate EC2 compute, EBS storage, public IPv4 addresses, data transfer, and other applicable charges.
-3. Never assume Free Tier eligibility based solely on an instance family, size, or service category. Verify eligibility against the applicable account offer and AWS region.
-4. Provide cost comparisons and technical justification before requesting approval.
-5. Never execute Terraform apply, create AWS resources, or incur infrastructure charges without explicit approval.
-6. Cost optimization must not silently compromise the approved architecture, security requirements, or minimum workload requirements.
-7. Treat all infrastructure sizes and cost estimates as provisional until explicitly approved.
+2. Before provisioning, evaluate:
+
+   - EC2 instance type eligibility and expected monthly instance-hours.
+   - EBS volume type, capacity, and monthly storage charges.
+   - Public IPv4 address charges.
+   - Data transfer costs.
+   - Other applicable AWS service charges.
+3. Never assume an AWS resource is Free Tier eligible solely because of its instance family, size, or service category. Verify eligibility against the project's AWS account creation date, applicable Free Tier offer, and region (`ap-south-1`).
+4. Provide a cost comparison and technical justification for alternative resource configurations before requesting approval.
+5. Do not execute `terraform apply`, create AWS resources, or incur infrastructure charges without explicit approval.
+6. Cost optimization must not silently compromise the approved three-EC2 architecture, security requirements, or minimum workload requirements. Any architectural changes require separate approval.
+7. Treat all instance sizes, storage capacities, and infrastructure cost estimates as provisional until explicitly approved.
+
+---
+
+# 12. TERRAFORM INFRASTRUCTURE
+
+Terraform already exists.
+
+Current environment:
+
+- Terraform 1.16.6.
+- AWS Provider 6.70.0.
+- AWS region: ap-south-1.
+- Ubuntu 24.04 LTS.
+- Existing S3 remote state backend.
+
+Existing backend:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "git-repo-analyzer-terraform-state-2026"
+    key          = "git-repo-analyzer/terraform.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+```
+
+Preserve this backend.
+
+Do not recreate it unnecessarily.
+
+## Required resources
+
+Provision three EC2 instances:
+
+1. Puppet Server.
+2. Application Server.
+3. CI/CD Server.
+
+Implementation Status: Complete and validated in commit `3dc78707a0329774152137fac6a225970793ef3d` on branch `feat/terraform-infrastructure`. Live deployment operates strictly on demand; `terraform apply` has **NOT** been run.
+
+## Instance sizing & Lifecycle Strategy
+
+Provisional sizing candidates (ADR 005 & ADR 010):
+- Puppet Server: `t3.small` (2 vCPU, 2 GB RAM, 15 GB gp3 EBS).
+- Application + Monitoring: `t3.micro` (2 vCPU, 1 GB RAM, 15 GB gp3 EBS).
+- CI/CD + Analysis: `t3.small` (2 vCPU, 2 GB RAM, 20 GB gp3 EBS).
+
+Fleet Storage Total: Exactly 50 GB gp3 across all 3 nodes (15 GB + 15 GB + 20 GB).
+
+On-Demand Ephemeral Lifecycle (ADR 011):
+- Provision on-demand via `terraform apply`.
+- Conduct demonstration or assessment.
+- Completely tear down via `terraform destroy` when done.
+- Instances do NOT run continuously 24/7. Fleet running rate is ~$0.0773/hour across compute, 50 GB gp3 storage, and 3 public IPv4 addresses (~$0.31 per 4-hour demonstration session).
+
+## Networking and Security Groups
+
+- **Public IPv4 Allocation:** All three instances explicitly configure `associate_public_ip_address = true` within the Default VPC public subnets, routing to the active Internet Gateway without an expensive NAT Gateway.
+- **Inbound Security Boundaries:** Public IPv4 allocation does not grant unrestricted public inbound access; security groups strictly enforce least-privilege boundaries:
+
+| Destination | Port | Allowed Source | Security Rationale |
+|---|---:|---|---|
+| EC2 2 — Application | 80, 443 | Public internet (`0.0.0.0/0`) | Public web app delivery (React UI / NGINX) |
+| All three EC2 instances | 22 | Operator CIDR (`var.allowed_ssh_cidr`) | Administrative SSH access |
+| EC2 1 — Puppet | 8140 | EC2 2 and EC2 3 security groups | Internal Puppet agent-to-master communication |
+| EC2 3 — Jenkins | 8080 | EC2 2 security group | Internal backend API to Jenkins pipeline |
+| EC2 1 — Puppet | 5666 | EC2 2 security group | Internal Nagios NRPE monitoring checks |
+| EC2 3 — CI/CD | 5666 | EC2 2 security group | Internal Nagios NRPE monitoring checks |
+
+- **Outbound Egress:** Enabled to `0.0.0.0/0` across all instances for apt, Docker Hub, and GitHub (historical pre-Phase 7 design also noted outbound Groq API egress; current Phase 7 pipeline policy does not inject `GROQ_API_KEY` into the analyzer container and uses the deterministic static-report fallback).
+
+## Persistent Remote State Backend
+
+The S3 state bucket (`git-repo-analyzer-terraform-state-2026`) is permanent, independent infrastructure and must **never** be destroyed as part of the ephemeral EC2 fleet lifecycle.
+
+## Outputs
+
+Expose appropriate outputs:
+
+- Puppet Server public/private IP, DNS, and ID.
+- Application public/private IP, DNS, and ID.
+- CI/CD public/private IP, DNS, and ID.
+- Dynamically formatted Ansible inventory template (`ansible_inventory_template`).
+
+Use outputs to configure Ansible inventory. Never invent IP addresses.
+
+## Sensitive information
+
+Never commit:
+
+- `.pem` files.
+- AWS credentials.
+- `terraform.tfvars`.
+- Terraform state files.
+- Terraform plan files.
+- Jenkins credentials.
+
+Review `.gitignore`.
+
+---
+
+# 13. IMPLEMENTATION WORKFLOW
+
+Implementation must be incremental and strictly adhere to the authoritative 9-phase roadmap defined in IMPLEMENTATION_PLAN.md:
+
+Do not attempt to implement the entire project in one operation.
+
+## Phase 1 — Repository Inspection & Alignment (Completed)
+- Inspect existing codebase, verify live AWS state, and establish unified project governance.
+- Verified: AWS caller identity, remote S3 state bucket active and empty, zero untagged resources.
+
+## Phase 2 — Analyzer Script Fixes & Local Container Validation (Completed)
+- Repaired `analyze2.sh`: restored `show_menu`, `show_commit_summary`, and `ZERO_COMMITS` initialization.
+- Validated container execution in Docker locally for active and zero-commit repositories with exit code 0.
+
+## Phase 3 — Terraform Multi-Instance Infrastructure & Networking (Completed)
+- Defined three dedicated EC2 instances and directional security groups under the on-demand lifecycle model (ADR 011).
+- Outbound internet access via Public IPv4; ingress strictly locked (ports 8140, 8080, 5666 restricted to peer security groups; SSH port 22 to operator CIDR; public 80/443 on Application Server only).
+- Verified and validated with `terraform fmt -check`, `terraform validate`, and `git diff --check`. Committed in `3dc78707a0329774152137fac6a225970793ef3d` on branch `feat/terraform-infrastructure`.
+- `terraform apply` has **NOT** been executed; zero live AWS resources have been provisioned or mutated. Live provisioning operates strictly on demand under ADR 010.
+
+## Phase 4 — Ansible Bootstrap & Puppet Master/Agent Setup (Next Phase)
+- Configure canonical inventory groups in `ansible/inventory/hosts.ini`: `[puppet_server]`, `[application]`, `[cicd]`, `[puppet_agents:children]`.
+- Establish deterministic SSH host-key verification via EC2 serial console output and git-ignored `ansible/known_hosts`.
+- Apply `roles/common` across all nodes (inject `/etc/hosts` private DNS mappings and configure swap).
+- Author `roles/puppet_server`: install Puppet Server 8, tune JVM heap to `-Xms1g -Xmx1g`, start service.
+- Author `roles/puppet_agent`: install `puppet-agent` on Instances 2 and 3, configure server address, submit CSRs.
+- Controlled certificate signing: inspect CSRs with `puppetserver ca list` and sign explicitly per certname (`puppetserver ca sign --certname <agent-name>`). Bulk signing (`--all`) and autosigning are prohibited.
+- Extend `roles/docker`: install Docker CE on Instance 3 and add `ubuntu` to `docker` group (adding `jenkins` user is deferred to Phase 7).
+
+## Phase 5A — Puppet Foundations & Monitoring Prerequisites
+- Author Puppet manifests/modules for foundational system configuration:
+  - Base packages and directory structures on all nodes.
+  - Deploy NRPE daemon on EC2 1 and EC2 3 (restrict `allowed_hosts` strictly to EC2 2 private IP).
+  - Deploy Nagios Core build prerequisites and Apache loopback virtual host (`127.0.0.1:8080`) on EC2 2.
+- Verify catalog compilation and execution on all nodes.
+- Enforce Ansible-to-Puppet ownership handover boundaries.
+
+## Phase 6 — Application Development (Backend API & Frontend UI with Mock Jenkins)
+- Backend: Express API with canonical `/api/analyses` endpoints, Zod URL parsing & SSRF guards, and `IJenkinsClient` abstraction with `MockJenkinsClient`.
+- Frontend: React/Vite SPA with submission form, polling hook with backoff, and report/chart visualization dashboard.
+- Author automated tests verifying API contracts and mock pipeline progression.
+- Finalize systemd service unit, NGINX routing, and environment variable contracts for Puppet Phase 5B.
+
+## Phase 5B — Puppet-Managed Application Configuration
+- Author Puppet manifests to deploy finalized application contracts on EC2 2:
+  - Deploy Node.js 24 LTS runtime.
+  - Deploy backend systemd service unit (`git-repo-analyzer-backend.service`) and environment file (`/etc/git-repo-analyzer/backend.env`).
+  - Deploy NGINX production virtual host serving React static assets and reverse-proxying `/api/` to Express.
+- Verify desired-state enforcement and configuration drift correction.
+
+## Phase 7 — Jenkins Pipeline Configuration & Real Backend Integration
+- **Current Approved Requirements & Boundary A Checkpoints (`7.1`–`7.5`):**
+  - `7.1` — Jenkinsfile hardening and analyzer sandboxing: non-root `--user "$(id -u):$(id -g)"`, `--memory=768m`, `--cpus=1.5`, `--pids-limit=100`, `-c core.hooksPath=/dev/null`, `--no-recurse-submodules`, `--depth 500`, 5 GB pre-clone gate / 2 GB post-clone cap, `post` cleanup, zero Jenkins credential injection, and **zero `GROQ_API_KEY` injection** (retaining the deterministic static-report fallback).
+  - `7.2` — Puppet Jenkins module (Java 21, Jenkins LTS 2.580.3 baseline subject to deploy-time revalidation, `-Xms384m -Xmx512m`, single executor, `jenkins` system user in `docker` group).
+  - `7.3` — Backend–Jenkins protocol integration tests.
+  - `7.4` — Docker analyzer execution and artifact validation.
+  - `7.5` — Boundary B deployment runbook.
+- **Boundary B Live Execution (Blocked Pending Explicit Authorization):** Install and configure Jenkins Controller on Instance 3 via Puppet, create the parameterized pipeline job loaded with `Jenkinsfile`, switch Express backend from Mock to Live Jenkins client via private network API (`JENKINS_MOCK_MODE=false`), verify end-to-end flow (Frontend submission → Backend → Jenkins → Docker Analyzer → Artifacts archived → Backend retrieval → Frontend display), and empirically validate the amended **>= 300 MB** minimum host `MemAvailable` headroom threshold on the live 2 GB `t3.small` CI/CD instance.
+- **Historical Context (Superseded):** Earlier pre-Phase 7 project instructions specified storing `GROQ_API_KEY` in the Jenkins Credentials Store as secret text and bounding the container to `--memory=1g`. Both are superseded by current Phase 7 security policy (`--memory=768m`, no Jenkins credential or `GROQ_API_KEY` injection into Jenkins/container, and deterministic static-report fallback).
+
+## Phase 8 — Monitoring Configuration & End-to-End System Verification
+- Finalize Nagios Core active service checks on Instance 2 for Instance 1 (Puppet), Instance 2 (Local App), and Instance 3 (Remote NRPE).
+- Verify Nagios administrative dashboard access over encrypted SSH tunnel (`localhost:8080/nagios`).
+- Validate configuration drift correction: modify NGINX manually, verify Puppet run reverts changes.
+- Perform end-to-end validation on public repositories (standard, high-churn, and zero-commit).
+- Execute `terraform destroy` to verify clean ephemeral teardown.
+
+---
+
+# 14. STRICT DEVELOPMENT RULES
+
+1. Never discard existing working code without justification.
+2. Never rewrite the analyzer unnecessarily.
+3. Never introduce Kubernetes without approval.
+4. Never introduce Redis or an additional database without justification and approval.
+5. Never introduce a fourth EC2 instance without approval.
+6. Never install Puppet Server on EC2 2 or EC2 3.
+7. Never install Nagios Core outside EC2 2.
+8. Never install NRPE outside EC2 1 or EC2 3 (never on EC2 2).
+9. Never expose Jenkins publicly.
+10. Never expose Puppet publicly.
+11. Never expose NRPE publicly.
+12. Never expose secrets in source code.
+13. Never use the Vite development server in production.
+14. Never hardcode temporary IP addresses.
+15. Never allow arbitrary shell execution through user input.
+16. Never let Ansible and Puppet compete for the same resource.
+17. **Strictly Separate Implementation vs Provisioning Approvals**:
+    - **Approval Boundary A (Implementation Approval):** Permission to author or edit project code, Ansible roles, Puppet manifests, tests, and documentation.
+    - **Approval Boundary B (AWS Provisioning Approval):** Permission to execute `terraform apply` and create billable AWS infrastructure.
+    - **Rule:** Approval for Boundary A **never implies** approval for Boundary B. Authoring Phase 4 code does not authorize live AWS infrastructure creation or live Ansible execution against EC2 instances.
+18. Never execute Terraform apply without explicit written approval (Boundary B).
+19. Never execute Terraform destroy without explicit approval.
+20. Never overwrite or reconfigure the existing S3 remote state backend (`git-repo-analyzer-terraform-state-2026`).
+21. Store private keys outside the repository: Target canonical location is `~/.ssh/git-repo-analyzer.pem` with restrictive permissions (`0400`). `.gitignore` is not an equivalent security substitute for keeping private keys outside project workspaces.
+22. Always inspect before modifying.
+23. Always test after implementation.
+24. Always explain significant architectural decisions.
+25. Always report files changed and commands executed.
+26. Work incrementally and wait for approval between major stages.
+
+---
+
+# 15. GIT AND CHANGE MANAGEMENT
+
+Before every major implementation phase:
+
+Inspect:
+
+```bash
+git status
+```
+
+Create a checkpoint after reviewing the changes:
+
+```bash
+git add <reviewed-files>
+git commit -m "checkpoint: <phase-name>"
+```
+
+Do not blindly stage all files.
+
+Exclude:
+
+- Private keys.
+- Credentials.
+- Terraform state.
+- Terraform plans.
+- Local environment files.
+- Sensitive configuration.
+
+Never rewrite Git history or force-push without explicit approval.
+
+---
+
+# 16. REPORTING REQUIREMENTS
+
+At the end of every implementation stage, report:
+
+1. What was implemented.
+2. Files created.
+3. Files modified.
+4. Existing functionality preserved.
+5. Commands executed.
+6. Tests performed.
+7. Test results.
+8. Outstanding issues.
+9. Security considerations.
+10. Next recommended stage.
+
+Do not claim something works without testing it.
+
+Clearly distinguish:
+
+- Implemented.
+- Configured.
+- Locally tested.
+- Deployed.
+- Verified in AWS.
+
+---
+
+# FINAL INSTRUCTION
+
+This file is the permanent source of truth for the project's approved architecture and constraints.
+
+If a later request appears to conflict with this architecture, identify the conflict before making changes.
+
+Do not silently change architectural decisions.
+
+Start with Stage 1: Repository Inspection Only.
+
+Do not modify any files until the inspection report is reviewed and approved.

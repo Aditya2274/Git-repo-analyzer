@@ -1,0 +1,34 @@
+---
+# Group variables applicable to all nodes in the Git Repository Analyzer fleet
+
+# SSH connection settings
+ansible_user: ubuntu
+ansible_ssh_private_key_file: "~/.ssh/git-repo-analyzer.pem"
+ansible_python_interpreter: /usr/bin/python3
+
+# Defense-in-depth: Enforce strict host-key verification and project-scoped known_hosts
+# Regardless of working directory or OpenSSH configuration file location
+ansible_ssh_common_args: "-o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ inventory_dir }}/../known_hosts -o IdentitiesOnly=yes"
+
+# Fleet internal domain and private networking
+fleet_domain: ec2.internal
+
+# Puppet Master identities (Derived strictly from inventory hostvars; zero hardcoded fallback)
+puppet_server_hostname: puppet-server
+puppet_server_fqdn: puppet-server.ec2.internal
+puppet_server_private_ip: "{{ hostvars['puppet-server']['private_ip'] | mandatory('hostvars[\"puppet-server\"][\"private_ip\"] must be defined in inventory') }}"
+
+# Application & Monitoring node identities
+app_server_hostname: app-server
+app_server_fqdn: app-server.ec2.internal
+app_server_private_ip: "{{ hostvars['app-server']['private_ip'] | mandatory('hostvars[\"app-server\"][\"private_ip\"] must be defined in inventory') }}"
+
+# CI/CD & Analysis node identities
+cicd_server_hostname: cicd-server
+cicd_server_fqdn: cicd-server.ec2.internal
+cicd_server_private_ip: "{{ hostvars['cicd-server']['private_ip'] | mandatory('hostvars[\"cicd-server\"][\"private_ip\"] must be defined in inventory') }}"
+
+# Common OS settings
+apt_cache_valid_time: 3600
+apt_lock_timeout: 300
+system_timezone: "Etc/UTC"

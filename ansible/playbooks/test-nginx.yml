@@ -1,6 +1,7 @@
 ---
-- name: Test NGINX role
-  hosts: local
+# Test playbook for NGINX role on Application & Monitoring Server (EC2 2)
+- name: Test NGINX role on application server
+  hosts: application
   become: true
   roles:
     - nginx

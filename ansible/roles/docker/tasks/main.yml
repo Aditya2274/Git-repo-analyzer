@@ -1,43 +1,20 @@
 ---
-- name: Install Docker prerequisites
-  ansible.builtin.apt:
-    name:
-      - ca-certificates
-      - curl
-    state: present
-    update_cache: true
+# Main orchestrator for docker role (EC2 3: CI/CD & Analysis Server)
 
-- name: Create directory for APT keyrings
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
+- name: Execute preflight checks for Docker installation
+  ansible.builtin.include_tasks: preflight.yml
 
-- name: Download Docker GPG key
-  ansible.builtin.get_url:
-    url: https://download.docker.com/linux/ubuntu/gpg
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
+- name: Configure official Docker APT repository and keyring
+  ansible.builtin.include_tasks: repository.yml
 
-- name: Add Docker official APT repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
-    state: present
-    filename: docker
+- name: Install official Docker Engine and Compose plugin packages
+  ansible.builtin.include_tasks: install.yml
 
-- name: Install Docker Engine and Compose plugin
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
+- name: Configure Docker daemon settings and security controls
+  ansible.builtin.include_tasks: config.yml
 
-- name: Enable and start Docker service
-  ansible.builtin.systemd_service:
-    name: docker
-    state: started
-    enabled: true
+- name: Manage containerd and Docker systemd services
+  ansible.builtin.include_tasks: service.yml
+
+- name: Manage Docker group membership and user permissions
+  ansible.builtin.include_tasks: users.yml

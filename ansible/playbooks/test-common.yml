@@ -1,6 +1,6 @@
 ---
-- name: Test common role
-  hosts: local
+- name: Test common role across fleet
+  hosts: all
   become: true
   roles:
     - common

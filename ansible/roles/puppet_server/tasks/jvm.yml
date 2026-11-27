@@ -1,0 +1,36 @@
+---
+# JVM Heap tuning and JRuby concurrency limits for Puppet Server
+
+- name: Ensure /etc/default/puppetserver exists
+  ansible.builtin.stat:
+    path: "{{ puppet_server_default_file | default('/etc/default/puppetserver') }}"
+  register: puppet_default_stat
+
+- name: Tune JVM heap memory in /etc/default/puppetserver (-Xms1g -Xmx1g)
+  ansible.builtin.replace:
+    path: "{{ puppet_server_default_file | default('/etc/default/puppetserver') }}"
+    regexp: '-Xms[0-9]+[gGmMkK]\s+-Xmx[0-9]+[gGmMkK]'
+    replace: "-Xms{{ puppet_jvm_xms | default('1g') }} -Xmx{{ puppet_jvm_xmx | default('1g') }}"
+  when: puppet_default_stat.stat.exists
+  notify: restart puppetserver
+
+- name: Ensure conf.d directory exists for Puppet Server
+  ansible.builtin.file:
+    path: "{{ puppet_server_conf_dir | default('/etc/puppetlabs/puppetserver/conf.d') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure puppetserver.conf exists
+  ansible.builtin.stat:
+    path: "{{ puppet_server_conf_file | default('/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf') }}"
+  register: puppetserver_conf_stat
+
+- name: Configure max-active-jrubies in puppetserver.conf
+  ansible.builtin.replace:
+    path: "{{ puppet_server_conf_file | default('/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf') }}"
+    regexp: 'max-active-jrubies:\s*[0-9]+'
+    replace: "max-active-jrubies: {{ puppet_max_active_jrubies | default(1) }}"
+  when: puppetserver_conf_stat.stat.exists
+  notify: restart puppetserver

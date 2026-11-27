@@ -1,0 +1,35 @@
+---
+# Docker official APT repository configuration
+
+- name: Install repository prerequisites
+  ansible.builtin.apt:
+    name: "{{ docker_prerequisite_packages | default(['ca-certificates', 'curl']) }}"
+    state: present
+    update_cache: false
+
+- name: Ensure APT keyrings directory exists with secure permissions
+  ansible.builtin.file:
+    path: "{{ docker_keyring_dir | default('/etc/apt/keyrings') }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Download official Docker GPG ASCII armor key
+  ansible.builtin.get_url:
+    url: "{{ docker_gpg_url | default('https://download.docker.com/linux/ubuntu/gpg') }}"
+    dest: "{{ docker_keyring_path | default('/etc/apt/keyrings/docker.asc') }}"
+    mode: "0644"
+    owner: root
+    group: root
+    force: false
+
+- name: Add official Docker APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ docker_apt_arch | default('amd64') }} signed-by={{ docker_keyring_path | default('/etc/apt/keyrings/docker.asc') }}]
+      {{ docker_apt_repo_url | default('https://download.docker.com/linux/ubuntu') }}
+      {{ docker_apt_release | default(ansible_distribution_release | default('noble')) }} stable
+    state: present
+    filename: "{{ docker_apt_repo_filename | default('docker') }}"
+    update_cache: true

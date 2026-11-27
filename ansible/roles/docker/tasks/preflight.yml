@@ -1,0 +1,29 @@
+---
+# Preflight checks for Docker role (EC2 3 - CI/CD & Analysis Server)
+
+- name: Validate inventory targeting for Docker installation
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL SAFETY ERROR: Docker role targeting violation.
+      Docker must be installed exclusively on '{{ docker_target_host | default('cicd-server') }}' (EC2 3 in group '{{ docker_target_group | default('cicd') }}').
+      Attempted execution on '{{ inventory_hostname }}'. Execution halted to protect dedicated instances.
+  when:
+    - (inventory_hostname != (docker_target_host | default('cicd-server'))) or
+      ((docker_target_group | default('cicd')) not in group_names)
+
+- name: Validate target operating system is Ubuntu 24.04 LTS
+  ansible.builtin.fail:
+    msg: >
+      Unsupported operating system: {{ ansible_distribution | default('Unknown') }} {{ ansible_distribution_version | default('Unknown') }}.
+      Docker bootstrap requires {{ docker_target_distribution | default('Ubuntu') }} {{ docker_target_release | default('24.04') }} (Noble Numbat).
+  when:
+    - ansible_distribution is defined
+    - (ansible_distribution != (docker_target_distribution | default('Ubuntu'))) or
+      (ansible_distribution_version != (docker_target_release | default('24.04')))
+
+- name: Validate CPU architecture
+  ansible.builtin.fail:
+    msg: "Unsupported architecture '{{ ansible_architecture }}'. Docker packages require x86_64 / amd64 or aarch64 / arm64."
+  when:
+    - ansible_architecture is defined
+    - ansible_architecture not in ['x86_64', 'amd64', 'aarch64', 'arm64']

@@ -1,0 +1,50 @@
+# ==============================================================================
+# Apache VirtualHost Configuration for Nagios Core: nagios.conf
+# Managed by Puppet: nagios::web
+# ==============================================================================
+# Binds exclusively to <%= @bind_address %>:<%= @listen_port %> (loopback)
+# Zero public exposure; access via SSH tunnel: ssh -L <%= @listen_port %>:127.0.0.1:<%= @listen_port %> ubuntu@<app-server-ip>
+
+<VirtualHost <%= @bind_address %>:<%= @listen_port %>>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /usr/share/nagios4/htdocs
+
+    ScriptAlias /nagios4/cgi-bin /usr/lib/cgi-bin/nagios4
+    ScriptAlias /cgi-bin/nagios4 /usr/lib/cgi-bin/nagios4
+    ScriptAlias /cgi-bin /usr/lib/cgi-bin/nagios4
+
+    Alias /nagios4/stylesheets /etc/nagios4/stylesheets
+    Alias /nagios4 /usr/share/nagios4/htdocs
+    Alias /nagios /usr/share/nagios4/htdocs
+
+    <Directory /usr/share/nagios4/htdocs>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        AuthType Basic
+        AuthName "Nagios Access"
+        AuthUserFile <%= @htpasswd_file %>
+        Require valid-user
+    </Directory>
+
+    <Directory /usr/lib/cgi-bin/nagios4>
+        Options +ExecCGI
+        AddHandler cgi-script .cgi
+        AllowOverride None
+        AuthType Basic
+        AuthName "Nagios Access"
+        AuthUserFile <%= @htpasswd_file %>
+        Require valid-user
+    </Directory>
+
+    <Directory /etc/nagios4/stylesheets>
+        Options FollowSymLinks
+        AllowOverride None
+        AuthType Basic
+        AuthName "Nagios Access"
+        AuthUserFile <%= @htpasswd_file %>
+        Require valid-user
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/nagios_error.log
+    CustomLog ${APACHE_LOG_DIR}/nagios_access.log combined
+</VirtualHost>

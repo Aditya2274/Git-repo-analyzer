@@ -137,8 +137,12 @@
 - **Actions Completed:**
   - Integrated verified AWS Console Billing data (as of November 18, 2026):
     - Account Plan: AWS Free plan.
-    - Expiration: March 12, 2027 (115 days remaining).
-    - Available Promotional Credits: $107.98 total ($94.68 AWS Free Tier active, $20.00 EC2 Launch active; $5.32 used, estimated used $12.02).
+    - Expiration: March 12, 2027 (115 days remaining from snapshot).
+    - Total Promotional Credits Issued: $120.00 ($100.00 AWS Free Tier promotion + $20.00 EC2 Launch promotion).
+    - Invoiced Credits Consumed: $5.32 (drawn from AWS Free Tier grant).
+    - Active Promotional Credit Balance: $114.68 ($94.68 AWS Free Tier active, $20.00 EC2 Launch active).
+    - Estimated Net Credit Balance: $107.98 (reflecting $114.68 active balance minus $6.70 in estimated unbilled month-to-date usage from Cost Explorer).
+    - Promotional Credit Expiration: September 12, 2027.
     - Current month cost: $6.70; forecasted month-end cost: $11.73.
   - Formulated On-Demand Lifecycle Strategy:
     - Shifted deployment model from continuous 24/7 hosting to ephemeral demonstration infrastructure (`terraform apply` $\rightarrow$ setup/demo $\rightarrow$ `terraform destroy`).
@@ -186,3 +190,1845 @@
     - Confirmed Phase 3 remains strictly blocked pending operator written authorization.
   - Zero AWS resources created, modified, or destroyed.
 - **Outcome:** Project documentation fully audited, consistent, and ready for clean session handoff.
+
+---
+
+### Phase 3: Terraform Multi-Instance Infrastructure & Networking Implementation: 2026-11-22
+- **Objective:** Author reproducible Terraform configuration for the three dedicated EC2 instances and multi-tier security groups, designed for on-demand provisioning and complete teardown (`terraform apply` $\rightarrow$ demo $\rightarrow$ `terraform destroy`) while preserving the existing S3 backend and enforcing strict cost governance.
+- **Actions Completed:**
+  - Completed documentation cleanup and alignment:
+    - Updated `.gitignore` to organize Ansible demo files and retain `questions.md` under `# Operator notes & discussions`.
+    - Aligned `AGENTS.md` section numbering, roadmap phases, and restored approved architecture details.
+    - Updated `PROJECT_STATUS.md` to reflect Phase 1 and Phase 2 completion.
+    - Verified via `git diff --check` and committed in `dd0150645dbe73c2137a5267217cf8a1af0823bf`. Fast-forward merged into branch `feat/terraform-infrastructure`.
+  - Authored Terraform Multi-Instance Infrastructure in `terraform/`:
+    - `terraform/main.tf`: Preserved persistent S3 backend configuration (`git-repo-analyzer-terraform-state-2026`, `ap-south-1`, `encrypt = true`, `use_lockfile = true`) exactly; passed fleet sizing and storage variables to `modules/ec2`.
+    - `terraform/variables.tf`: Defined region, operator SSH CIDR, key pair, instance types, and storage variables with approved defaults.
+    - `terraform/output.tf`: Exposed individual IDs, public/private IPs, DNS, and dynamic Ansible inventory output.
+    - `terraform/modules/ec2/variables.tf`: Declared variables for instance types, storage, key pair, and SSH CIDR.
+    - `terraform/modules/ec2/outputs.tf`: Formatted outputs and dynamic Ansible inventory block (`ansible_inventory_template`).
+    - `terraform/modules/ec2/main.tf`:
+      - Defined three dedicated EC2 instances: `puppet_server` (`t3.small`, 15 GB gp3), `app_monitoring` (`t3.micro`, 15 GB gp3), `cicd_analysis` (`t3.small`, 20 GB gp3) with encrypted root volumes. Fleet total storage: exactly 50 GB gp3.
+      - Dynamic AMI lookup using Ubuntu 24.04 LTS SSM Parameter Store (`/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id`).
+      - Explicitly configured `associate_public_ip_address = true` on all 3 instances.
+      - Security Groups & Directional Ingress:
+        - `app_monitoring_sg`: Port 22 from operator CIDR; Ports 80 & 443 from `0.0.0.0/0`; all egress to `0.0.0.0/0`.
+        - `cicd_analysis_sg`: Port 22 from operator CIDR; Port 8080 (Jenkins API) strictly from `app_monitoring_sg.id`; Port 5666 (NRPE) strictly from `app_monitoring_sg.id`; all egress to `0.0.0.0/0`.
+        - `puppet_server_sg`: Port 22 from operator CIDR; Port 8140 (Puppet) strictly from `app_monitoring_sg.id` and `cicd_analysis_sg.id`; Port 5666 (NRPE) strictly from `app_monitoring_sg.id`; all egress to `0.0.0.0/0`.
+  - Public Networking Audit:
+    - Queried live AWS state in `ap-south-1`: verified default VPC `vpc-03c7cd4e69db107ba` and subnets have an active default route `0.0.0.0/0` via Internet Gateway `igw-09303a1be1ad67bf3`. Confirmed direct outbound connectivity without an expensive NAT Gateway.
+  - Nagios Architecture Clarification:
+    - Confirmed Nagios Core Apache web interface will bind strictly to loopback `127.0.0.1:8080` with HTTP Basic Authentication (`.htpasswd`), completely decoupled from NGINX on `0.0.0.0:80/443`.
+    - Documented administrative access via encrypted SSH tunnel (`ssh -L 8080:127.0.0.1:8080`).
+    - Formally documented distinction: Terraform SG rules for TCP 5666 are implemented and validated; Nagios Core, NRPE daemons, and Apache loopback configurations are planned for Phases 5 and 8 and not currently running.
+  - Cost Recalculation:
+    - Compute: $0.0560/hr + Public IPv4 (3 IPs): $0.0150/hr + Storage (50 GB gp3): $0.00625/hr = **~$0.0773 / running hour** (~$0.31 per 4-hour demonstration session; ~$1.24/month for weekly demos).
+  - Validation:
+    - Executed `terraform fmt -check`, `terraform validate`, and `git diff --check`. All passed with exit code 0.
+  - Committed to Git:
+    - Staged all 6 Terraform files and committed to branch `feat/terraform-infrastructure` in commit `3dc78707a0329774152137fac6a225970793ef3d` (`feat(terraform): implement three-node EC2 architecture and directional security groups`).
+  - Governance & Non-Actions:
+    - `terraform apply` and `terraform destroy` were **NOT** executed.
+    - Zero AWS resources were created, modified, or deleted.
+    - Live provisioning operates strictly on demand under ADR 010 and ADR 011.
+    - Phase 4 implementation has not started.
+- **Outcome:** Phase 3 Terraform authoring, validation, and documentation complete. Ready for Phase 4 planning or operator deployment authorization.
+
+---
+
+### Task: Final Documentation Correction & Technical Readiness Pass: 2026-11-22
+- **Objective:** Perform exhaustive documentation correction and technical-readiness review across `AGENTS.md`, `project_docs/PROJECT_STATUS.md`, `project_docs/IMPLEMENTATION_PLAN.md`, `project_docs/ARCHITECTURE_DECISIONS.md`, and `project_docs/WORK_LOG.md`.
+- **Actions Completed:**
+  - Corrected ADR 003 Public Ingress Contradiction:
+    - Resolved phrasing ambiguity in `project_docs/ARCHITECTURE_DECISIONS.md` and `AGENTS.md`.
+    - Verified against `terraform/modules/ec2/main.tf`: public HTTP/HTTPS (ports 80 and 443) is permitted exclusively on EC2 2 (`app_monitoring_sg`). EC2 1 and EC2 3 have zero public HTTP/HTTPS ingress. Internal management ports (Puppet 8140, Jenkins 8080, NRPE 5666) are strictly restricted through security group cross-references. SSH (port 22) is restricted to operator CIDR /32 across all instances.
+  - Standardized Ansible Inventory Naming Convention:
+    - Inspected `terraform/modules/ec2/outputs.tf` (`ansible_inventory_template`).
+    - Standardized canonically on: `[puppet_server]`, `[application]`, `[cicd]`, and `[puppet_agents:children]` with host aliases `puppet-server`, `app-server`, and `cicd-server`.
+    - Aligned all documentation and implementation plans to this canonical naming convention.
+  - Corrected Phase 5 / Phase 6 Dependency Ordering:
+    - Resolved the architectural dependency inversion by splitting Phase 5 into two distinct stages:
+      - **Phase 5A (Puppet & Monitoring Foundations):** Manifest structure, base packages, NRPE daemon foundation on EC2 1 & EC2 3, Nagios prerequisites on EC2 2, and Ansible-to-Puppet ownership handovers.
+      - **Phase 6 (Application Development):** Node.js Express API and React SPA development with MockJenkinsClient, automated tests, and finalized systemd, NGINX, and environment contracts.
+      - **Phase 5B (Puppet-Managed Application Configuration):** Puppet deployment of Node.js 20 runtime, backend systemd service, NGINX reverse proxy, and environment files using finalized contracts from Phase 6.
+  - Reconciled Backend & Frontend API Contracts:
+    - Officially retired legacy endpoints (`/api/analyze`, `/api/status/:buildId`, `/api/reports/:buildId`).
+    - Adopted canonical resource-oriented `/api/analyses` design in ADR 009: `GET /api/health`, `POST /api/analyses`, `GET /api/analyses/:id`, and `GET /api/analyses/:id/results`.
+    - Corrected UUID v4 example to valid RFC 4122 format: `550e8400-e29b-41d4-a716-446655440000`.
+    - Completely abstracted Jenkins internal identifiers from public API responses (`GET /api/analyses/:id` returns only `analysisId`, `status`, `progress`, `createdAt`, `updatedAt`, `error`). Backend internally maintains `analysisId` $\rightarrow$ `queueId` $\rightarrow$ `buildNumber`.
+  - Strengthened Untrusted Repository Input & Execution Sandboxing Specification:
+    - Added strict GitHub hostname allowlisting (`github.com` only; reject all others).
+    - Mandated canonical URL parsing via Node.js `URL` constructor; rejected embedded credentials, non-standard ports, query strings, and fragments.
+    - Implemented SSRF protection rejecting loopback, link-local, AWS metadata (`169.254.169.254`), and RFC 1918 private subnets.
+    - Prohibited direct shell command interpolation.
+    - Enforced comprehensive container execution sandboxing: Git hooks strictly disabled (`-c core.hooksPath=/dev/null`), zero repository scripts/binaries executed, `--no-recurse-submodules`, bounded clone (5m) and analysis (10m) timeouts, resource caps (`--memory=1g`, `--cpus=1.5`, `--pids-limit=100`, max 2 GB disk), non-root execution (`--user $(id -u):$(id -g)`), and post-analysis ephemeral workspace wipe.
+    - Isolated Jenkins port 8080 to private networking; prohibited passing Jenkins tokens or mounting Docker socket (`/var/run/docker.sock`) inside the analyzer container.
+    - Defined consistent backend execution user and environment permissions: dedicated unprivileged user `gitrepo`, group `gitrepo`, directory `/etc/git-repo-analyzer` (`0750`), and file `/etc/git-repo-analyzer/backend.env` (`root:gitrepo`, mode `0640` - root read/write, `gitrepo` group read-only, others none).
+  - Corrected Security Control Status Taxonomy:
+    - Replaced ambiguous completion checkmarks with explicit status labels: `SPECIFIED` (design documented), `IMPLEMENTED` (code/config exists), `TESTED` (test demonstrates control), and `LIVE-VERIFIED` (validated in deployed cloud infrastructure).
+  - Formalized Two-Tier Cost Governance Approval Boundaries:
+    - Separated Approval Boundary A (Phase Implementation Approval: permission to author code, playbooks, manifests, tests) from Approval Boundary B (AWS Provisioning Approval: permission to execute `terraform apply` and create billable AWS resources).
+    - Established that approval for Boundary A never implies approval for Boundary B. Live Ansible execution against EC2 requires provisioned instances and explicit operator authorization.
+  - Reclassified Technical Verification Evidence:
+    - Segmented claims into: Official Documentation & Vendor Specification Verified, Source/Package Implementation Inspected, Executed Successfully in Local Test Environment, Validated Against Live AWS Infrastructure, and Not Yet Verified.
+    - Clarified that `terraform validate` verifies syntax and local module wiring only, not remote S3 state initialization or state locking.
+  - Separated AWS Account Expiration Timelines:
+    - Separated the AWS Free Plan window expiration (**March 12, 2027**) from the promotional credit validity expiration (**September 12, 2027** for the $107.98 active credit balance).
+  - Resolved Private Key Storage Security & Location:
+    - Verified actual key location: currently residing in project root `/home/aditya-2274/Git-repo-analyzer/git-repo-analyzer.pem` with mode `0400`.
+    - Established target security requirement: key must be relocated to `~/.ssh/git-repo-analyzer.pem` with mode `0400` and removed from project root before provisioning.
+    - Documented that `.gitignore` is not an equivalent security substitute for keeping private keys outside project repositories.
+  - Formalized Ansible and Puppet Resource Ownership Matrix:
+    - Detailed Day 0/1 bootstrap vs. Day 2+ desired-state responsibilities in ADR 006 and `AGENTS.md`.
+    - Documented explicit handover process ensuring Ansible never overwrites Puppet-managed NGINX virtual hosts, systemd services, or Nagios/NRPE manifests.
+  - Re-examined Puppet CA and SSH Technical Claims:
+    - Validated 3-state CA integrity model (Uninitialized $\rightarrow$ setup; Initialized & Valid $\rightarrow$ skip; Corrupted $\rightarrow$ fail safe); prohibited automated `--force`.
+    - Verified Puppet 8 CA JSON array output schema (`puppetserver ca list --all --format json`) and deterministic CSR enrollment CLI commands.
+    - Formulated deterministic SSH host-key verification via absolute pathing in `ansible/ssh.cfg` targeting git-ignored `ansible/known_hosts`, with out-of-band serial console log verification as standard and TOFU as an explicit manual exception.
+    - Segregated technical status into Verified (code/tests), Estimated (memory/cost calculations), and Unverified (requires live AWS).
+  - Corrected Resource Performance and Sizing Estimates:
+    - Labeled all memory footprints, compilation times, and costs as pre-deployment estimates.
+    - Standardized swap thresholds (< 50 MB steady-state, < 200 MB peak).
+    - Removed speculative CPU credit guarantees; listed live monitoring metrics (CloudWatch credits, load average, `MemAvailable`).
+  - Added Formal Pre-Deployment Readiness Checklist:
+    - Consolidated 9-point checklist covering SSH CIDR /32, key pair, private key permissions, S3 backend integrity, promotional credit verification, plan inspection, cost review, teardown readiness, and explicit owner approval.
+  - Clarified On-Demand Ephemeral Lifecycle & Data Management:
+    - Documented 10-step lifecycle under ADR 011.
+    - Defined persistent data boundaries (Git repo, S3 backend bucket) vs. ephemeral resources (EC2, EBS, CA database, Jenkins jobs, Docker caches, Nagios history).
+    - Defined artifact export requirements prior to `terraform destroy`.
+    - Clarified project target as demonstration-ready rather than enterprise production-ready.
+  - Clarified Historical and Status Consistency:
+    - Explicitly confirmed Phase 3 is completed and validated in code/documentation only, but NOT deployed to AWS (`terraform apply` has not been run, zero AWS resources exist).
+    - Explicitly confirmed Phase 4 is planned but NOT implemented.
+    - Labeled older historical cost and architecture estimates as superseded.
+  - Strict Boundary Enforcement:
+    - No implementation code authored.
+    - No Git branches created or switched.
+    - No commits or pushes performed.
+    - No Terraform commands executed.
+    - Zero AWS resources provisioned or modified.
+- **Outcome:** All five project documentation files fully audited, cross-referenced, and aligned. Technical readiness established for Phase 4 awaiting explicit operator authorization.
+
+---
+
+### Task: Final Documentation Verification and Reconciliation Before Phase 4: 2026-11-22
+- **Objective:** Perform a final, narrowly scoped verification and correction pass across all five project documentation files before Phase 4 begins.
+- **Actions Completed:**
+  - Reconciled AWS Credit Arithmetic and Expirations:
+    - Audited billing console evidence (November 18, 2026 snapshot) and corrected credit terminology.
+    - Total Promotional Credits Issued: **$120.00** ($100.00 AWS Free Tier Promotion + $20.00 EC2 Launch Promotion).
+    - Invoiced Promotional Credits Consumed: **$5.32** (drawn from the $100.00 grant).
+    - Remaining Active Promotional Credit Balance: **$114.68** ($94.68 Free Tier active + $20.00 EC2 Launch active).
+    - Estimated Net Remaining Credit Balance: **$107.98** (reflecting $114.68 active balance minus $6.70 estimated unbilled month-to-date usage from Cost Explorer).
+    - Separated distinct expiration timelines: AWS Free Plan window expires **March 12, 2027** (6-month evaluation period); promotional credit validity expires **September 12, 2027** (12-month validity window).
+    - Explicitly labeled all figures outside this snapshot evidence as unverified estimates.
+  - Inspected Jenkins Workspace Cleanup and Reclassified Security Controls:
+    - Inspected `Jenkinsfile` and verified analyzer execution flow.
+    - Confirmed that `docker run --rm` removes container runtimes upon exit (**IMPLEMENTED**).
+    - Confirmed that host-mounted workspace directory cleanup across all failure paths is missing from `Jenkinsfile` (only pre-build `rm -rf target-repo` exists; missing `post { cleanup { cleanWs() } }` covering success, failure, abort, and timeout paths).
+    - Corrected security control implementation table: split into Ephemeral Container Cleanup (**IMPLEMENTED**) and Host Workspace Directory Cleanup across all paths (**SPECIFIED**, to be implemented and tested in Phase 7).
+  - Documented Instance Memory Sizing Risks and Live Telemetry Metrics:
+    - Reaffirmed that all memory sizing allocations across the three nodes (`t3.small` Puppet, `t3.micro` App, `t3.small` CI/CD) are provisional pre-deployment estimates.
+    - Documented specific operational risks: Puppet Server JRuby heap and Metaspace bloat; Application Server memory contention on 1 GB physical RAM during concurrent Puppet Agent catalog compilation and HTTP requests; CI/CD server concurrent execution spikes between Jenkins JVM and Docker analyzer container; fleet-wide T3 CPU credit exhaustion under Unlimited mode during initial bootstrap.
+    - Specified active live validation metrics to measure during deployment: CloudWatch `CPUCreditBalance`, `CPUSurplusCreditCharged`, `CPUUtilization`; host OS load averages (`/proc/loadavg`); memory distribution (`/proc/meminfo` `MemAvailable`, `SwapTotal`, `SwapFree`); and real-time container statistics (`docker stats --no-stream`).
+    - Retained provisional sizing without recommending resizing until empirical live data is captured.
+  - Verified Documentation Path Consistency:
+    - Verified all paths reference canonical locations (`AGENTS.md` in root, all other documentation in `project_docs/`); zero references to invalid `docs/` paths exist.
+  - Final Consistency Review:
+    - Confirmed sequential ADR numbering (ADR 001 through ADR 011).
+    - Verified Phase 5A $\rightarrow$ Phase 6 $\rightarrow$ Phase 5B sequencing.
+    - Verified canonical API contracts (`/api/analyses`) and internal backend identifier abstraction (`analysisId` mapped internally to `queueId` / `buildNumber`).
+    - Verified canonical inventory groups (`[puppet_server]`, `[application]`, `[cicd]`, `[puppet_agents:children]`), ownership matrix, 3-instance architecture, and S3 backend configuration.
+    - Reaffirmed two-tier governance: Boundary A (Phase Implementation Approval) vs Boundary B (AWS Provisioning Approval).
+  - Strict Boundary Compliance:
+    - No implementation code authored.
+    - No Git branches created or switched.
+    - No commits or pushes performed.
+    - No Terraform commands executed (`init`, `plan`, `apply`, `destroy`).
+    - Zero AWS cloud resources provisioned or modified.
+- **Outcome:** All five documentation files thoroughly verified, corrected, and synchronized. Project is in a verified documentation state, awaiting explicit operator authorization before beginning Phase 4.
+
+---
+
+### Task: Checkpoint 4.1 Implementation & Timeout Hardening: 2026-11-22
+- **Objective:** Implement Checkpoint 4.1 (Inventory & Deterministic SSH Configuration) and harden serial console fingerprint polling against AWS Nitro asynchronous latency.
+- **Actions Completed:**
+  - Configured canonical inventory structure in `ansible/inventory/hosts.ini` and created group variable hierarchies in `ansible/inventory/group_vars/` (`all.yml`, `puppet_server.yml`, `application.yml`, `cicd.yml`, `puppet_agents.yml`).
+  - Relocated private key from repository workspace to external canonical location `~/.ssh/git-repo-analyzer.pem` with mode `0400`.
+  - Resolved OpenSSH and Ansible path ambiguity: added root `ansible.cfg`, root `ssh.cfg` symlink, absolute pathing in `ansible/ssh.cfg`, and injected `ansible_ssh_common_args` into `group_vars/all.yml`.
+  - Implemented atomic Terraform inventory synchronization in `ansible/scripts/sync_terraform_inventory.sh` with canonical group and syntax validation.
+  - Implemented deterministic SSH host-key verification in `ansible/scripts/verify_ssh_host_keys.sh`:
+    - Reconciled polling timeout mismatch: made console polling timeout configurable (`CONSOLE_TIMEOUT_SECONDS`, default 360s) and polling interval configurable (`CONSOLE_POLL_INTERVAL_SECONDS`, default 10s), covering the 2–5 minute Nitro hypervisor latency window.
+    - Documented that the 360s timeout is an operational limit against script hangs, not an AWS-guaranteed console-output delivery SLA.
+    - Preserved immediate termination for AWS authentication/authorization/invalid-instance errors.
+    - Preserved strict host-key verification with immediate rejection of fingerprint mismatches and explicit-only `--tofu` opt-in.
+  - Authored automated test fixture suites:
+    - `ansible/tests/test_sync_inventory.sh` (5 scenarios: state empty, valid, whitespace, malformed, command error; 5/5 passed).
+    - `ansible/tests/test_verify_ssh_keys.sh` (8 scenarios: immediate arrival, delayed arrival within timeout, timeout expiration, AWS auth error immediate termination, mismatch rejection, TOFU refusal, explicit TOFU warning, unprovisioned state; 8/8 passed).
+- **Outcome:** Checkpoint 4.1 fully implemented, hardened, and locally validated. Zero AWS resources provisioned.
+
+---
+
+### Task: Checkpoint 4.2 Common Role Enhancement: 2026-11-22
+- **Objective:** Implement Checkpoint 4.2 (Common Role Enhancement) to bootstrap baseline OS prerequisites, time synchronization, system utilities, `/etc/hosts` private DNS, and per-instance swapfile allocation.
+- **Actions Completed:**
+  - Enhanced `ansible/roles/common` with modular task organization: `apt.yml`, `time.yml`, `packages.yml`, `hosts.yml`, `swap.yml`, and `defaults/main.yml`.
+  - Implemented safe, non-destructive APT lock wait logic in `tasks/apt.yml` (waits up to 300s for locks to clear naturally; zero broad process killing). Configured `lock_timeout: 300` and `cache_valid_time: 3600`.
+  - Configured timezone and clock synchronization in `tasks/time.yml` (`/etc/localtime`, `/etc/timezone`, and enabled/started `systemd-timesyncd`).
+  - Configured essential system packages in `tasks/packages.yml` (`curl`, `wget`, `git`, `unzip`, `ca-certificates`, `gnupg`, `htop`, `jq`, `software-properties-common`, `systemd-timesyncd`, `net-tools`).
+  - Configured fleet private DNS entries in `tasks/hosts.yml` via `blockinfile` for `puppet-server.ec2.internal puppet-server puppet` (`10.0.0.10`), `app-server.ec2.internal app-server` (`10.0.0.11`), and `cicd-server.ec2.internal cicd-server` (`10.0.0.12`).
+  - Implemented safe, idempotent, non-destructive swapfile configuration in `tasks/swap.yml` adhering strictly to approved per-instance settings:
+    - EC2 1 (`puppet-server`): `swap_size_mb: 0` (swap disabled; all swap tasks skipped).
+    - EC2 2 (`app-server`): `swap_size_mb: 1024` (1.0 GB swap shock-absorber on 15 GB EBS).
+    - EC2 3 (`cicd-server`): `swap_size_mb: 2048` (2.0 GB swap cushion on 20 GB EBS).
+    - Avoids destructive operations: checks `stat`, creates with `dd` and formats with `mkswap` only if missing, sets mode `0600`, activates with `swapon` only if inactive, and persists via `lineinfile` in `/etc/fstab`.
+  - Authored automated test fixture suite `ansible/tests/test_common_role.sh` (YAML parsing, playbook syntax check from project root and `ansible/`, swap variable resolution, private IP mapping, safe non-destructive lock check: 6/6 PASS).
+  - Preserved strict boundaries: no Puppet, Docker, or NGINX configurations deployed in this role; zero AWS resources provisioned.
+- **Outcome:** Checkpoint 4.2 initial implementation authored. Proceeded to focused technical audit.
+
+---
+
+### Task: Checkpoint 4.2 Focused Technical Audit & Verification: 2026-11-22
+- **Objective:** Perform rigorous technical audit of Checkpoint 4.2 covering private IP consistency, non-destructive APT lock contention detection, and comprehensive swapfile safety controls under Approval Boundary A.
+- **Actions Completed:**
+  - **Audit 1: Private IP Allocation Consistency**:
+    - Inspected `terraform/modules/ec2/main.tf` and confirmed instances launch into Default VPC public subnets receiving dynamic AWS DHCP private IPs. Static IPs (`10.0.0.10-12`) were documentation placeholders.
+    - Eliminated static fallbacks (`10.0.0.x`) in `ansible/inventory/group_vars/all.yml` using `mandatory` assertions.
+    - Derived `/etc/hosts` mappings dynamically from `hostvars[host]['private_ip']` populated by Terraform inventory generation.
+    - Added pre-flight assertions in `ansible/roles/common/tasks/hosts.yml` verifying private IP presence before modifying `/etc/hosts`.
+    - Added tests verifying correct mapping and dynamic update resilience when inventory IPs change.
+  - **Audit 2: APT Lock Contention Handling**:
+    - Inspected Debian/Ubuntu APT locking architecture: confirmed lock files (`/var/lib/dpkg/lock-frontend`, `/var/lib/dpkg/lock`, `/var/lib/apt/lists/lock`) permanently exist on disk, rendering file-existence checks invalid.
+    - Implemented non-destructive lock inspection using Python `fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)` to test active kernel file lock contention without killing background processes.
+    - Added bounded wait loop with explicit diagnostics identifying contended lock files and active process IDs on timeout. Paired with `lock_timeout: 300` in `ansible.builtin.apt`.
+    - Added fixture tests verifying: (a) file presence without contention, (b) active contention detection without process killing, (c) clean acquisition upon lock release, and (d) timeout failure with clear diagnostics.
+  - **Audit 3: Swapfile Safety Controls**:
+    - Hardened `ansible/roles/common/tasks/swap.yml` against data loss and unsafe resizing:
+      - Validated existing `/swapfile` with `stat.isreg` (fails safely if directory or symlink).
+      - Verified existing byte size against configured `swap_size_mb * 1024 * 1024` (fails safely on mismatch to prevent destructive truncation or corruption).
+      - Validated swap signature via `blkid -p` confirming `TYPE="swap"` before activation (fails safely on unformatted or foreign files).
+      - Enforced mode `0600` permissions.
+      - Checked active swaps via `swapon --show=NAME` to avoid duplicate swapon calls.
+      - Guaranteed zero task execution on nodes with `swap_size_mb: 0` (EC2 1).
+    - Added fixture tests verifying: (a) zero swap skip on EC2 1, (b) missing swap signature rejection, (c) size mismatch rejection, and (d) active swap duplicate skip.
+  - **Audit 4: Re-Run Validation & Syntax Checks**:
+    - Executed `test_sync_inventory.sh`: 5/5 PASS.
+    - Executed `test_verify_ssh_keys.sh`: 8/8 PASS.
+    - Executed `test_common_role.sh`: 11/11 PASS.
+    - Executed `ansible-inventory --graph` and `ansible-playbook --syntax-check` from both project root and `ansible/`: all PASS.
+    - Executed `git diff --check`: 0 errors.
+  - **Strict Boundary Compliance**:
+    - Operating strictly under Approval Boundary A.
+    - Zero AWS cloud resources provisioned (`terraform apply` was not run).
+    - Zero Git commits or pushes made.
+- **Outcome:** Checkpoint 4.2 passed technical audit and fixture validation. All 4 mandatory documentation files synchronized. Ready for operator review before proceeding to Checkpoint 4.3.
+
+---
+
+### Task: Checkpoint 4.2 APT POSIX Locking Correction & Complete Swapfile Test Coverage: 2026-11-22
+- **Objective:** Address technical audit review findings by correcting the APT locking mechanism to POSIX record locking (`fcntl.lockf`), expanding swapfile fixture test coverage across all 9 lifecycle and safety scenarios, and re-validating the complete test harness under Approval Boundary A.
+- **Actions Completed:**
+  - **Part 1: APT POSIX Record Locking Correction**:
+    - Investigated Linux locking architecture: confirmed that Linux maintains independent locking namespaces for BSD `flock()` and POSIX `fcntl(F_SETLK)` record locks. A process using `flock()` cannot detect an active `fcntl(F_SETLK)` lock held by another process.
+    - Verified that APT (`apt-pkg/contrib/fileutl.cc`) and dpkg (`lib/dpkg/lock.c`) use `fcntl(fd, F_SETLK, &fl)` with `l_type = F_WRLCK`, `l_start = 0`, `l_len = 0` (exclusive POSIX record lock covering entire file).
+    - Replaced `fcntl.flock()` with Python `fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)` in `ansible/roles/common/tasks/apt.yml`. `fcntl.lockf` invokes `fcntl(fd, F_SETLK, &fl)` with `F_WRLCK`, directly mirroring APT/dpkg semantics.
+    - Verified non-blocking contention detection, idle file non-contention, lock release continuation, and bounded timeout diagnostics across independent processes. Preserved 300s timeout; zero processes killed.
+  - **Part 2: Complete Swapfile Safety and Lifecycle Coverage**:
+    - Added explicit fail tasks in `ansible/roles/common/tasks/swap.yml` for directory and symlink paths.
+    - Implemented fixture tests in `ansible/tests/test_common_role.sh` covering all 9 required scenarios:
+      1. Existing valid swapfile is preserved (verified SHA-256 hash unchanged, `mkswap` / `dd` skipped).
+      2. Existing directory at `/swapfile` is rejected (`stat.isdir` detected, destructive overwrite refused).
+      3. Existing symlink at `/swapfile` is rejected (`stat.islnk` detected, destructive overwrite refused).
+      4. Missing swapfile is created with configured size (verified exact byte size, mode 0600, `TYPE="swap"` signature).
+      5. Existing incorrect-size swapfile is rejected without modification (verified file size unchanged).
+      6. Existing file without swap signature is rejected without modification (verified `TYPE="swap"` check fails safely, file preserved).
+      7. Existing active swap is not activated again (verified duplicate `swapon` skipped when in active swap list).
+      8. `/etc/fstab` is updated idempotently across repeated runs (verified exactly 1 entry after repeated updates).
+      9. Zero-swap configuration leaves host untouched (verified all swap tasks skipped on EC2 1).
+  - **Part 3: Complete Validation Execution**:
+    - Shell syntax validation (`bash -n` on all 5 scripts): PASS.
+    - YAML parsing (`yaml.safe_load` on all Ansible YAML files): PASS.
+    - `ansible/tests/test_sync_inventory.sh`: 5/5 PASS.
+    - `ansible/tests/test_verify_ssh_keys.sh`: 8/8 PASS.
+    - `ansible/tests/test_common_role.sh`: 16/16 PASS.
+    - Inventory graph checks from repository root and `ansible/`: PASS.
+    - Ansible playbook syntax checks (`ansible/playbooks/test-common.yml`) from root and `ansible/`: PASS.
+    - `git diff --check`: 0 errors.
+  - **Part 4: Documentation Synchronization & Boundary Governance**:
+    - Updated `IMPLEMENTATION_PLAN.md`, `PROJECT_STATUS.md`, `ARCHITECTURE_DECISIONS.md`, and `WORK_LOG.md`.
+    - Preserved historical work log entries; distinguished simulated fixture tests from actual host validation.
+    - Operating strictly under Approval Boundary A: zero AWS cloud resources provisioned or modified (`terraform apply` not run); zero Git commits or pushes.
+- **Outcome:** Checkpoint 4.2 fully corrected, audited, and verified locally across 16 test scenarios. Ready for operator review before proceeding to Checkpoint 4.3.
+
+---
+
+### Task: Checkpoint 4.3 Puppet Server Installation & Cryptographic CA Initialization: 2026-11-22
+- **Objective:** Implement dedicated Ansible automation for Puppet Server 8 installation, JVM heap tuning, stable identity configuration, 3-state cryptographic CA validation, and service health checks on EC2 1 (`puppet-server`) under Approval Boundary A.
+- **Actions Completed:**
+  - **Pre-Implementation Package & Repository Inspection**:
+    - Verified `https://apt.puppet.com/puppet8-release-noble.deb` availability (HTTP 200).
+    - Inspected `apt.puppet.com` repository indices: confirmed `puppet-agent` (8.10.0-1noble) and `puppet8-release` are published for Noble, but `puppetserver` 8 is not yet published in `dists/noble/puppet8/`.
+    - Identified upstream package `puppetserver_8.7.0-1jammy_all.deb` (`Architecture: all`) depending on `openjdk-17-jre-headless` and `puppet-agent (>= 6.16.0)`.
+    - Implemented intelligent repository handling in `tasks/repository.yml`: installs `puppet8-release-noble.deb`, evaluates `apt-cache show puppetserver`, and configures official upstream fallback if noble package is not yet published, ensuring reliable installation without modifying target OS.
+  - **Dedicated Role Implementation (`ansible/roles/puppet_server/`)**:
+    - `tasks/preflight.yml`: Validates target OS (`Ubuntu 24.04 LTS Noble`) and inventory targeting (`puppet-server` in `[puppet_server]`).
+    - `tasks/repository.yml`: Configures Puppet 8 repository, GPG keyring, installs `openjdk-17-jre-headless` and `puppetserver`, and verifies version.
+    - `tasks/jvm.yml`: Tunes JVM heap in `/etc/default/puppetserver` to `-Xms1g -Xmx1g` while preserving other JVM flags; configures `max-active-jrubies: 1` in `/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf`.
+    - `tasks/config.yml` & `templates/puppet.conf.j2`: Deploys `puppet.conf` with stable identity (`certname = puppet-server`, `server = puppet-server`, `dns_alt_names = puppet-server,puppet-server.ec2.internal,puppet`) and security policy (`autosign = false`).
+    - `tasks/ca.yml`: Implements strict 3-state cryptographic CA validation:
+      - *State A (Uninitialized)*: Executes `/opt/puppetlabs/bin/puppetserver ca setup` when neither cert nor key exists.
+      - *State B (Initialized & Valid)*: Checks `openssl x509 -checkend 0` and validates modulus equality between certificate and private key; skips setup idempotently preserving existing keys and certificates.
+      - *State C (Inconsistent/Corrupt)*: Detects missing cert, missing key, missing metadata (CRL, serial, inventory), expired cert, or modulus mismatch; triggers immediate safe failure with diagnostic. Prohibits `--force` and automated regeneration.
+      - Enforces permissions `0640` on `ca_key.pem`.
+    - `tasks/service.yml`: Enables and starts `puppetserver` systemd unit, waits for TCP port 8140 locally (timeout 180s), and checks CA status via `/opt/puppetlabs/bin/puppetserver ca status`.
+    - `handlers/main.yml`: Handles `restart puppetserver` on configuration changes.
+  - **Testing & Verification (`ansible/tests/test_puppet_server_role.sh`)**:
+    - Authored comprehensive 18-test isolated fixture test suite exercising all requirements:
+      1. Target OS compatibility (PASS)
+      2. Puppet 8 repository package URL & keyring check (PASS)
+      3. Package candidate evaluation logic (PASS)
+      4. JVM heap tuning (-Xms1g -Xmx1g) (PASS)
+      5. Existing JVM settings preservation (PASS)
+      6. Puppet identity configuration (PASS)
+      7. SAN configuration (PASS)
+      8. CA State A: uninitialized permits setup (PASS)
+      9. CA State B: initialized preserves valid CA (PASS)
+      10. CA State C1: missing private key fails safely (PASS)
+      11. CA State C2: missing certificate fails safely (PASS)
+      12. CA State C3: modulus mismatch fails safely (PASS)
+      13. CA State C4: corrupted cert fails safely (PASS)
+      14. CA State C5: incomplete metadata fails safely (PASS)
+      15. Autosign disabled assertion (`autosign = false`) (PASS)
+      16. Service enablement & port 8140 configuration (PASS)
+      17. Service health check command configuration (PASS)
+      18. Role execution idempotency (PASS)
+    - Full test harness executed:
+      - Shell syntax validation (6 scripts): PASS
+      - YAML parsing across all files: PASS
+      - `test_sync_inventory.sh`: 5/5 PASS
+      - `test_verify_ssh_keys.sh`: 8/8 PASS
+      - `test_common_role.sh`: 16/16 PASS
+      - `test_puppet_server_role.sh`: 18/18 PASS
+      - Inventory graph & playbook syntax checks (`test-common.yml`, `test-puppet-server.yml`): PASS
+      - `git diff --check`: 0 errors.
+  - **Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not run).
+    - Zero Git commits or pushes made.
+- **Outcome:** Checkpoint 4.3 fully implemented and locally validated. Ready for operator review before proceeding to Checkpoint 4.4.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.3 Follow-up Audit: Puppet Server Package Compatibility on Ubuntu 24.04
+
+- **Task**: Focused technical audit of the Puppet Server installation strategy on EC2 1 (Dedicated Puppet Server, Ubuntu 24.04 LTS Noble).
+- **Objective**: Empirically evaluate whether using the native Ubuntu Universe package (`8.4.0-1`) is preferable to the upstream PuppetLabs Jammy fallback package (`8.7.0-1jammy`), resolve candidate detection defects, enforce APT pinning, preserve CA safety mechanisms, and verify test suites.
+- **Actions Completed**:
+  - **Empirical Package Investigation**:
+    - Inspected Ubuntu Noble Universe package: `puppetserver 8.4.0-1` (`Architecture: all`, depends on `default-jre-headless`, `jruby`, `puppet-agent (>= 8~~)`). Confirmed it deploys to Debian filesystem hierarchy: `/usr/bin/puppetserver`, `/etc/puppet/puppetserver/conf.d/`, and `/etc/puppet/puppet.conf`. Crucially, it depends on distro-packaged `puppet-agent` (`/usr/bin/puppet`), creating severe filesystem conflicts with official `puppet-agent` (`/opt/puppetlabs/bin/puppet`) deployed across the fleet.
+    - Inspected PuppetLabs Jammy fallback package: `puppetserver 8.7.0-1jammy` (`Architecture: all`, pure Java bytecode jar archive). Confirmed it installs into the standard vendor hierarchy: `/opt/puppetlabs/server/apps/puppetserver/`, `/opt/puppetlabs/bin/puppetserver`, `/etc/puppetlabs/puppetserver/conf.d/`, `/etc/default/puppetserver`. Runs seamlessly on OpenJDK 17 (`openjdk-17-jre-headless`), which is natively packaged in Ubuntu 24.04 LTS.
+    - Technical Verdict: Option B (PuppetLabs Upstream Jammy Fallback) is technically superior and architecturally consistent with our fleet. Option A introduces severe path fracturing, version skew, and agent incompatibilities.
+  - **Ansible Implementation Corrections (`ansible/roles/puppet_server/tasks/repository.yml`)**:
+    - Identified critical defect: `apt-cache show puppetserver` on Noble with Universe returns exit code 0, incorrectly causing the fallback check to evaluate to false and installing the distro-packaged Universe package.
+    - Replaced with vendor-specific check: `apt-cache madison puppetserver | grep -E 'apt\.puppet\.com.*noble'`. Returns non-zero, correctly detecting absence in vendor Noble repository and triggering the fallback repository.
+    - Added APT preference `/etc/apt/preferences.d/puppetlabs.pref`: pins `origin apt.puppet.com` with priority 900, ensuring vendor packages always take precedence over distro Universe (priority 500).
+  - **Fixture Test Suite Enhancement (`ansible/tests/test_puppet_server_role.sh`)**:
+    - Enhanced Test 3 to validate vendor repository isolation in the presence of distro Universe packages.
+    - Added Test 19: APT pinning priority enforcement (`Pin: origin apt.puppet.com` @ 900 > 500).
+    - Added Test 20: Filesystem hierarchy isolation (`/opt/puppetlabs` vs `/usr/bin/`).
+    - Updated total test count to 20/20.
+  - **Verification & Regression Testing**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - Total test suite: 49/49 PASS across all 4 suites.
+    - Syntax validation: `test-common.yml` and `test-puppet-server.yml` pass cleanly.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Boundary Compliance & Git Status**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not run).
+    - Zero remote Ansible executions or live CA initializations performed.
+    - Analyzed Git commit isolation requirements under Section 9: the working tree contains uncommitted Phase 4 work from Checkpoints 4.1, 4.2, and 4.3 across all documentation files and role directories. Per Section 9 instructions, creating a mixed commit of uncommitted Phase 4 work would violate isolation safeguards; reported exact working tree state to operator.
+- **Outcome**: Technical audit complete with PASS verdict. Puppet Server packaging strategy verified and hardened. Ready for operator review before proceeding to Checkpoint 4.4.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.4 Final Service Lifecycle Correction: Complete Service Gating (Disabled & Stopped)
+
+- **Task**: Correct the remaining service lifecycle vulnerability identified during independent review of commit `61f0bb8` under Approval Boundary A.
+- **Objective**:
+  - Enforce full service gating during Checkpoint 4.4 by setting both `puppet_agent_service_enabled: false` and `puppet_agent_service_state: "stopped"` in `defaults/main.yml` and `tasks/service.yml`.
+  - Guarantee that host reboots cannot automatically trigger the Puppet Agent daemon before CA certificate signing and initial catalog compilation.
+  - Guard configuration handlers in `handlers/main.yml` against starting or restarting the service while gated, strictly requiring both `state == 'started'` and `enabled == true`.
+  - Establish the authoritative 9-step Checkpoint 4.5 handover contract: the agent service must **never** be started merely because a CSR has been signed, but only after successful supervised catalog application via `puppet agent -t --detailed-exitcodes` (codes 0 or 2).
+- **Actions Completed**:
+  - **Role Defaults & Tasks**:
+    - `ansible/roles/puppet_agent/defaults/main.yml`: Set `puppet_agent_service_enabled: false` (changed from `true`) and confirmed `puppet_agent_service_state: "stopped"`.
+    - `ansible/roles/puppet_agent/tasks/service.yml`: Updated `enabled` parameter default to `default(false)`.
+    - `ansible/roles/puppet_agent/handlers/main.yml`: Hardened `restart puppet agent` handler to require both `puppet_agent_service_state | default('stopped') == 'started'` and `puppet_agent_service_enabled | default(false) | bool`.
+  - **Handover Contract**:
+    - Documented the strict 9-step Checkpoint 4.5 sequence in `IMPLEMENTATION_PLAN.md` and authored ADR 012 in `ARCHITECTURE_DECISIONS.md`.
+  - **Fixture Test Suite Extension (`ansible/tests/test_puppet_agent_role.sh`)**:
+    - Expanded test suite from 35 to 37 comprehensive tests:
+      - Verified `puppet_agent_service_enabled` defaults to `false` and `puppet_agent_service_state` defaults to `stopped`.
+      - Verified `tasks/service.yml` declares `enabled default(false)` and `state default('stopped')`.
+      - Verified `handlers/main.yml` requires both `state == 'started'` and `enabled == true`.
+      - Evaluated full truth table across all 4 service lifecycle states (`stopped/false`, `stopped/true`, `started/false`, `started/true`), proving handler cannot bypass the gate.
+      - Verified explicit overrides support Checkpoint 4.5 handover (`enabled: true`, `state: "started"`).
+      - Re-verified all CSR preservation, conflict detection, and strict reachability tests.
+- **Verification & Regression Results**:
+  - `sync_terraform_inventory.sh`: 5/5 PASS
+  - `verify_ssh_host_keys.sh`: 8/8 PASS
+  - `test_common_role.sh`: 16/16 PASS
+  - `test_puppet_server_role.sh`: 20/20 PASS
+  - `test_puppet_agent_role.sh`: 37/37 PASS
+  - Total regression suite: 86/86 checks passed across all 5 test suites.
+  - Ansible syntax checks: `test-puppet-agent.yml` (PASS) and `site.yml` (PASS).
+  - Whitespace check: `git diff --check` exits with 0 errors.
+- **Boundary Compliance**:
+  - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+  - Zero remote executions or live certificate signing performed.
+  - Checkpoint 4.4 complete at local implementation and fixture validation level. Checkpoint 4.5 remains unstarted.
+- **Outcome**: Service lifecycle fully corrected and verified. Milestone ready for commit.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.4 Corrective Follow-up: Gating Puppet Agent Startup & Eliminating Misleading CSR Success
+
+- **Task**: Implement the two focused corrections identified in the source-level audit of commit `a6289d8` under Approval Boundary A.
+- **Objective**:
+  1. **Correction A (Gating Puppet Agent Service Startup)**: Ensure the Puppet Agent daemon defaults to `stopped` (while `enabled: true`) in `defaults/main.yml`, ensuring it does not run in the background prior to CA certificate signing, and guarding handlers against starting stopped services.
+  2. **Correction B (Eliminating Misleading CSR Success)**: Ensure `puppet_agent_require_server_reachable: true` defaults to strict enforcement, failing fast on unreachable TCP 8140 in live deployments. In `tasks/csr.yml`, distinguish remote submission (`puppet ssl submit_request`, failing fast on `rc != 0` when server is reachable) from local offline generation (`puppet ssl generate_request` when server is unreachable and offline mode is explicitly requested), eliminating false "pending CA approval" notices.
+- **Actions Completed**:
+  - **Correction A — Service Startup Gating**:
+    - `ansible/roles/puppet_agent/defaults/main.yml`: Updated `puppet_agent_service_state: "stopped"` and kept `puppet_agent_service_enabled: true`.
+    - `ansible/roles/puppet_agent/tasks/service.yml`: Updated default state fallback to `stopped`.
+    - `ansible/roles/puppet_agent/handlers/main.yml`: Guarded `restart puppet agent` with `when: puppet_agent_service_state | default('stopped') == 'started'` so configuration updates never accidentally start a stopped service.
+    - Handover Guarantee: Checkpoint 4.5 will explicitly control initial catalog application via supervised `puppet agent -t --detailed-exitcodes` before starting the daemon.
+  - **Correction B — Eliminating Misleading CSR Success**:
+    - `ansible/roles/puppet_agent/defaults/main.yml`: Updated `puppet_agent_require_server_reachable: true` by default.
+    - `ansible/roles/puppet_agent/tasks/preflight.yml`: Enforced strict port 8140 reachability assertion by default; registered explicit boolean fact `puppet_server_reachable`.
+    - `ansible/roles/puppet_agent/tasks/csr.yml`:
+      - Server reachable branch: Executes `puppet ssl submit_request --server <host>` with `failed_when: puppet_csr_submit_result.rc != 0` (eliminating `failed_when: false`). Real submission errors fail fast.
+      - Offline testing branch: When `puppet_server_reachable` is false and `puppet_agent_require_server_reachable` is explicitly false, executes `puppet ssl generate_request` to produce local keys and CSRs without attempting network connections.
+      - Added defense-in-depth safety assertion halting execution if server is unreachable in strict mode.
+      - Distinct reporting: Remote submission reports "successfully submitted to Puppet Server CA and pending CA approval in Checkpoint 4.5" only on verified `rc == 0`. Offline local generation reports that CSR was generated locally and submission is deferred, never claiming pending CA approval.
+      - Preserved pre-existing CSRs on disk without resubmission or key regeneration.
+  - **Regression Test Suite Extension**:
+    - Extended `ansible/tests/test_puppet_agent_role.sh` from 25 to 35 comprehensive checks: service stopped defaults, service task state enforcement, handler guards, strict preflight reachability, server reachable + successful submission, real failure enforcement (no `failed_when: false`), strict mode CSR safety failure, offline mode `generate_request`, offline report truthfulness, remote report condition gating, pre-existing CSR preservation, valid cert preservation, and playbook syntax validation.
+- **Verification & Regression Results**:
+  - `sync_terraform_inventory.sh`: 5/5 PASS
+  - `verify_ssh_host_keys.sh`: 8/8 PASS
+  - `test_common_role.sh`: 16/16 PASS
+  - `test_puppet_server_role.sh`: 20/20 PASS
+  - `test_puppet_agent_role.sh`: 35/35 PASS
+  - Total regression suite: 84/84 PASS across all 5 test suites.
+  - Ansible syntax checks: `test-puppet-agent.yml` (PASS) and `site.yml` (PASS).
+  - Whitespace check: `git diff --check` exits with 0 errors.
+- **Boundary Compliance**:
+  - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` was not run).
+  - Zero remote Ansible executions or live CA certificate signing performed.
+  - Checkpoint 4.4 complete at local implementation and fixture validation level. Checkpoint 4.5 remains unstarted.
+- **Outcome**: Both corrections implemented, tested, and documented. Ready for operator review and commit.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.4: Puppet Agent Installation and Configuration
+
+- **Task**: Implement Ansible role `ansible/roles/puppet_agent/` for installing and configuring Puppet Agents on EC2 2 (`app-server`) and EC2 3 (`cicd-server`).
+- **Objective**: Author modular tasks, configuration templates, group variables, and fixture tests to configure agent identities, enforce repository pinning, validate network preflights, and perform controlled CSR submission without signing.
+- **Actions Completed**:
+  - **Group Variables & Identities**:
+    - Injected `puppet_certname: "app-server"` into `ansible/inventory/group_vars/application.yml`.
+    - Injected `puppet_certname: "cicd-server"` into `ansible/inventory/group_vars/cicd.yml`.
+    - Declared `puppet_server_host: "puppet-server"` in `ansible/inventory/group_vars/puppet_agents.yml`.
+  - **Dedicated Role Implementation (`ansible/roles/puppet_agent/`)**:
+    - `defaults/main.yml`: Defined target OS (`Ubuntu 24.04`), package name (`puppet-agent`), paths (`/opt/puppetlabs/bin`, `/etc/puppetlabs/puppet`), schedules (`30m`), and service defaults.
+    - `tasks/preflight.yml`: Validated OS distribution and version, checked inventory targeting (`app-server` or `cicd-server`), resolved `puppet-server` against expected inventory private IP, and probed TCP 8140 reachability with actionable diagnostics.
+    - `tasks/repository.yml`: Configured `puppet8-release-noble.deb` repository and deployed `/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` at priority 900 over distro 500. No Jammy fallback required as vendor natively publishes Noble `puppet-agent`.
+    - `tasks/install.yml`: Verified package candidate origin and installed official vendor `puppet-agent` package, asserting executable binary path at `/opt/puppetlabs/bin/puppet`.
+    - `tasks/config.yml`: Non-destructively updated `/etc/puppetlabs/puppet/puppet.conf` via `community.general.ini_file`: configured `server = puppet-server`, stable certname (`app-server` or `cicd-server`), `runinterval = 30m`, preserved unrelated sections, and asserted `autosign` is absent.
+    - `tasks/csr.yml`: Implemented controlled CSR lifecycle and SSL state safety:
+      - Validated existing certificates against certname CN, expiration, and private key modulus equality; preserved valid certificates without regeneration.
+      - Triggered safe fast-failure on conflicting certnames, missing private keys, or corrupted moduli without deleting existing files.
+      - Submitted CSR via `/opt/puppetlabs/bin/puppet ssl submit_request --server puppet-server` when no certificate exists.
+      - Verified local CSR existence on disk and subject CN match against expected identity.
+      - Enforced strict security rules: zero autosigning, zero CA signing (`puppetserver ca sign` prohibited), zero CA key copying, zero key sharing, and zero destructive SSL cleanups.
+    - `tasks/service.yml`: Managed `puppet` systemd unit (`enabled=true`, `state=started`).
+    - `handlers/main.yml`: Provided `restart puppet agent` handler for configuration updates.
+  - **Playbook & Fixture Test Suite**:
+    - Created test playbook `ansible/playbooks/test-puppet-agent.yml`.
+    - Implemented comprehensive 25-scenario fixture test suite `ansible/tests/test_puppet_agent_role.sh` covering OS validation, repository reachability, candidate selection, APT priority pinning, executable path, identities, server hostname, run interval, config preservation, DNS preflight, port 8140 success/failure diagnostics, fresh CSR submission, valid cert preservation, conflict rejection, inconsistent SSL state rejection, CSR identity verification, autosign absence, zero CA signing, zero key copying, zero destructive cleanup, service enablement, handler notifications, and playbook syntax.
+  - **Verification & Regression Results**:
+    - `sync_terraform_inventory.sh`: 5/5 PASS
+    - `verify_ssh_host_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 25/25 PASS
+    - Total test suite: 74/74 PASS across all 5 suites.
+    - Ansible syntax checks: `test-common.yml` (PASS), `test-puppet-server.yml` (PASS), `test-puppet-agent.yml` (PASS).
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not run).
+    - Zero remote Ansible executions or live CA certificate signing performed.
+    - Certificate approval and catalog compilation belong exclusively to Checkpoint 4.5. Checkpoint 4.5 remains unstarted.
+- **Outcome**: Checkpoint 4.4 fully implemented and locally validated. Ready for operator review before beginning Checkpoint 4.5.
+
+---
+
+## 2026-11-23: Phase 4 — Milestone Consolidation of Checkpoints 4.1–4.3
+
+- **Task**: Consolidate and commit completed Phase 4 bootstrap checkpoints (Checkpoints 4.1, 4.2, and 4.3).
+- **Objective**: Unify the completed, verified local implementations of Checkpoints 4.1–4.3 into a single coherent Git milestone commit with synchronized documentation, comprehensive test verification, and strict operational boundaries.
+- **Components Consolidated**:
+  - **Checkpoint 4.1 (Inventory & Deterministic SSH Configuration)**:
+    - Canonical inventory definition (`ansible/inventory/hosts.ini`) and group variables (`ansible/inventory/group_vars/`).
+    - Dynamic inventory synchronization script (`ansible/scripts/sync_terraform_inventory.sh`, 5/5 tests PASS).
+    - Deterministic out-of-band SSH host-key verification script (`ansible/scripts/verify_ssh_host_keys.sh`, 8/8 tests PASS) with configurable timeout (360s default) and polling interval (10s default).
+    - Strict host-key checking configurations (`ansible/ansible.cfg`, `ansible.cfg`, `ansible/ssh.cfg`).
+  - **Checkpoint 4.2 (Common Ansible Role Enhancements)**:
+    - Modular `ansible/roles/common` implementation (`apt.yml`, `time.yml`, `packages.yml`, `hosts.yml`, `swap.yml`, `defaults/main.yml`).
+    - Non-destructive APT lock contention wait using Python POSIX record locking (`fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)`).
+    - Safe, idempotent, non-destructive swapfile lifecycle management across 9 safety scenarios.
+    - Dynamic `/etc/hosts` private IP derivation directly from inventory host variables without hardcoded fallbacks.
+    - Comprehensive fixture audit suite (`ansible/tests/test_common_role.sh`, 16/16 tests PASS).
+  - **Checkpoint 4.3 (Puppet Server Role & Package Compatibility Audit)**:
+    - Dedicated `ansible/roles/puppet_server` implementation (`preflight.yml`, `repository.yml`, `jvm.yml`, `config.yml`, `ca.yml`, `service.yml`, `defaults/main.yml`, `handlers/main.yml`, `templates/puppet.conf.j2`).
+    - JVM heap tuning to `-Xms1g -Xmx1g` with `max-active-jrubies: 1`.
+    - Stable identity (`puppet-server`, `puppet`) and security policy (`autosign = false`).
+    - 3-State cryptographic CA validation (State A setup, State B modulus match skip, State C safe fail-fast without automated regeneration or `--force`).
+    - Package compatibility audit resolving Ubuntu Noble Universe (`8.4.0-1`) vs PuppetLabs Upstream Jammy Fallback (`8.7.0-1jammy`): approved vendor package (pure Java bytecode on OpenJDK 17) conforming to `/opt/puppetlabs/` filesystem standards and full interoperability with fleet `puppet-agent`.
+    - Vendor candidate detection via `apt-cache madison` and APT priority pinning (`/etc/apt/preferences.d/puppetlabs.pref` pinning `origin apt.puppet.com` at priority 900 over distro 500).
+    - Isolated fixture test suite (`ansible/tests/test_puppet_server_role.sh`, 20/20 tests PASS).
+- **Verification Summary**:
+  - `sync_terraform_inventory.sh`: 5/5 PASS
+  - `verify_ssh_host_keys.sh`: 8/8 PASS
+  - `test_common_role.sh`: 16/16 PASS
+  - `test_puppet_server_role.sh`: 20/20 PASS
+  - Total test suite: 49/49 PASS across all 4 suites.
+  - Ansible syntax checks: `test-common.yml` (PASS) and `test-puppet-server.yml` (PASS).
+  - Git whitespace verification: `git diff --check` exits with 0 errors.
+- **Operational Boundary Compliance**:
+  - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` was not run).
+  - Zero remote Ansible playbooks executed against live EC2 instances.
+  - Zero live Puppet CA certificates initialized or signed on cloud hosts.
+  - Live package installation, daemon runtime operation, and CA behavior remain explicitly pending live AWS provisioning under Boundary B.
+  - Checkpoint 4.4 (Puppet Agent Installation) remains unstarted.
+- **Outcome**: Milestone commit prepared and committed cleanly. Ready for operator review before beginning Checkpoint 4.4.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.5: Controlled Puppet CA Enrollment & Supervised Agent Handover
+
+- **Task**: Implement Ansible automation for Checkpoint 4.5 across the 3-node fleet (`puppet-server` on EC2 1, `app-server` on EC2 2, `cicd-server` on EC2 3).
+- **Objective**: Establish the complete 9-step controlled enrollment, identity allowlisting, individual signing, supervised catalog execution, and gated service startup sequence governed by ADR 012 and Approval Boundary A.
+- **Actions Completed**:
+  - **Pre-Enrollment Connectivity Verification (`ansible/roles/puppet_agent/tasks/connectivity.yml`)**:
+    - Probes TCP 8140 reachability from agent nodes to `puppet_server_host` using `ansible.builtin.wait_for`.
+    - Configured with bounded timeout (`puppet_ca_connect_timeout: 10`).
+    - Fails fast with explicit, actionable diagnostic message upon reachability failure before any CA operations are initiated.
+  - **Pending CSR Inspection & Defensive JSON Parsing (`ansible/roles/puppet_server/tasks/signing.yml`)**:
+    - Executes `puppetserver ca list --all --format json` on Puppet Server CA.
+    - Defensive Jinja/set_fact extraction supporting both Puppet 8 dictionary schema (`certificate_requests`, `signed_certificates`) and sequence schema (`[{"name": "...", "state": "requested"}]`).
+    - Handles empty CSR queues safely without Python/Ansible exceptions and halts execution if CLI returns non-zero (`failed_when: ca_list_raw.rc != 0`).
+  - **Identity Allowlisting & Controlled Individual Signing (`ansible/roles/puppet_server/tasks/signing.yml`)**:
+    - Enforced strict allowlist: `puppet_ca_allowed_agents: ['app-server', 'cicd-server']`.
+    - Security Check: Rejects unexpected CSR identities with `CRITICAL SECURITY ALERT` and halts immediately. Zero autosign, zero wildcard (`*`), and zero bulk (`--all`) signing permitted.
+    - Completeness Check: Identifies missing allowlisted agents (`missing_agents`) and fails fast if an expected agent CSR is not found on the CA.
+    - Signs approved CSRs individually via `puppetserver ca sign --certname {{ item }}`.
+    - Skips already-signed certificates idempotently.
+    - Re-queries the CA post-signing and asserts all allowlisted agents are verified signed.
+  - **Certificate Verification & Supervised Handover (`ansible/roles/puppet_agent/tasks/handover.yml`)**:
+    - Step 4: Downloads signed certificate via `puppet ssl download_cert` if missing locally; verifies certificate enrollment and trust chain via `puppet ssl verify`; asserts local cert file exists; extracts subject CN with OpenSSL and strictly asserts exact match with `puppet_agent_certname`.
+    - Step 5: Executes supervised catalog application wrapped in bounded timeout: `timeout {{ puppet_catalog_timeout | default(300) }} /opt/puppetlabs/bin/puppet agent -t --detailed-exitcodes`, registering stdout, stderr, and detailed return code.
+    - Step 6: Enforces strict exit code validation: accepts only `0` (clean, no changes) or `2` (clean, changes applied); strictly rejects `1` (general failure), `4` (transaction failure), `6` (failure + changes), `124` (timeout), and unexpected codes.
+    - Step 7: Formally logs catalog results distinguishing exit code 0 from 2.
+    - Step 8: Explicitly transitions systemd unit to `enabled: true` and `state: started` ONLY when `puppet_catalog_run.rc in [0, 2]`. Role defaults in `defaults/main.yml` remain `enabled: false` and `state: stopped`.
+    - Step 9: Verifies active daemon state via `systemctl is-active puppet == active` and `systemctl is-enabled puppet == enabled`.
+  - **Orchestration Playbook (`ansible/playbooks/enroll-puppet-agents.yml`)**:
+    - Connects the 9-step workflow across 3 plays using `include_role` with `tasks_from`:
+      - Play 1 (`hosts: puppet_agents`): Pre-enrollment connectivity verification.
+      - Play 2 (`hosts: puppet_server`): CA inspection and controlled allowlisted signing.
+      - Play 3 (`hosts: puppet_agents`): Supervised catalog application, service activation, and daemon verification.
+  - **Fixture Test Suite (`ansible/tests/test_puppet_enrollment.sh`)**:
+    - Implemented comprehensive 45-assertion isolated test suite covering connectivity probes, bounded timeouts, fail-fast diagnostics, JSON parsing across schemas, allowlisting security alerts, individual signing commands, absence of `--all`/`*`, idempotency, cert download, SSL verify, CN matching, catalog timeouts, detailed exit code evaluation (0/2 accepted; 1/4/6/124 rejected), service activation gating, active daemon checks, and playbook syntax validation (45/45 PASS).
+  - **Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - Total test suite: 131/131 PASS across all 6 test suites.
+    - Playbook syntax validation: `ansible-playbook --syntax-check` clean on all playbooks.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+    - Zero remote SSH executions or live certificate operations against cloud instances.
+    - Checkpoint 4.5 complete at local implementation and fixture validation level. Ready for Checkpoint 4.6.
+- **Outcome**: Checkpoint 4.5 fully implemented, orchestrated, tested, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.6: Docker Engine & Docker Compose Plugin Bootstrap
+
+- **Task**: Implement Ansible automation to install and configure Docker Engine and Docker Compose plugin on the dedicated CI/CD & Analysis Server (EC2 3, `cicd-server`).
+- **Objective**: Establish a reliable, modular, idempotent, and secure Docker installation on `cicd-server` supporting future Jenkins pipelines and analyzer container execution, strictly under Approval Boundary A.
+- **Actions Completed**:
+  - **Modular Role Architecture (`ansible/roles/docker/`)**:
+    - `tasks/preflight.yml`: Enforces strict inventory targeting: restricts Docker execution exclusively to `cicd-server` (EC2 3) / `cicd` group, failing fast with a critical safety alert if attempted against `puppet-server` (EC2 1) or `app-server` (EC2 2). Validates target OS (`Ubuntu 24.04 LTS Noble`) and 64-bit architecture (`amd64`/`x86_64`).
+    - `tasks/repository.yml`: Installs prerequisites (`ca-certificates`, `curl`), ensures `/etc/apt/keyrings` directory exists (mode `0755`), downloads official Docker GPG key to `/etc/apt/keyrings/docker.asc` (mode `0644`), and configures official Docker APT repository via modern `signed-by` syntax in `/etc/apt/sources.list.d/docker.list` (zero deprecated `apt-key` usage).
+    - `tasks/install.yml`: Declares official Docker Engine packages (`docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`) with `state: present` (non-breaking, idempotent).
+    - `tasks/config.yml`: Deploys `/etc/docker/daemon.json` configuring `log-driver: json-file` with bounded rotation limits (`max-size: 10m`, `max-file: 3`) to prevent unbounded disk consumption on a 20 GB EBS volume. Enforces safety assertion strictly prohibiting unauthenticated TCP daemon endpoints (`tcp://`), binding exclusively to the local UNIX socket (`unix:///var/run/docker.sock`).
+    - `tasks/service.yml`: Manages `containerd` and `docker` systemd units (`state: started`, `enabled: true`).
+    - `handlers/main.yml`: Implements guarded restart handlers (`Restart Docker daemon`, `Restart containerd`).
+    - `tasks/users.yml`: Ensures `docker` group exists; adds authorized users (`ubuntu` via `group_vars/cicd.yml`) with `append: true` preserving existing groups; enforces security check preventing premature addition of `jenkins` user in Phase 4 (deferred strictly to Phase 7 per ADR 007).
+    - `tasks/verify.yml`: Validates presence of Docker CLI and modern Compose plugin (`docker compose version`).
+  - **Playbook Targeting**:
+    - Updated `ansible/playbooks/test-docker.yml` to target canonical `hosts: cicd` with `become: true`.
+  - **Fixture Test Suite (`ansible/tests/test_docker_role.sh`)**:
+    - Implemented comprehensive 30-assertion isolated test suite covering OS validation, architecture detection, targeting guards, keyring permissions, signed-by syntax, package selection, Compose plugin, log-rotation config, TCP exposure rejection, socket protection, user permissions, service lifecycle, and playbook syntax (30/30 PASS).
+  - **Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - `test_docker_role.sh`: 30/30 PASS
+    - Total test suite: 161/161 PASS across all 7 test suites.
+    - Playbook syntax validation: `ansible-playbook --syntax-check` clean on all playbooks.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+    - Zero remote SSH executions or package installations against cloud instances.
+    - Checkpoint 4.6 complete at local implementation and fixture validation level. Ready for Checkpoint 4.7.
+- **Outcome**: Checkpoint 4.6 fully implemented, tested, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.6 Follow-up: Target-Isolation Verification & Conditional Correction
+
+- **Task**: Perform focused verification and correction of Docker role host-targeting logic in `ansible/roles/docker/tasks/preflight.yml`.
+- **Finding & Defect Confirmation**:
+  - The initial preflight task used a list structure under `when:` (`when: [inventory_hostname != ..., "'cicd' not in group_names"]`), which Ansible evaluates as a logical AND.
+  - In a fail task (`ansible.builtin.fail`), an AND condition means failure occurs only when *both* conditions are violated. By De Morgan's Law, execution was permitted when *either* condition was satisfied (`inventory_hostname == 'cicd-server'` OR `'cicd' in group_names`), creating an unintended loophole (e.g. `app-server` accidentally in group `cicd`, or `cicd-server` missing from group `cicd`).
+- **Correction Applied**:
+  - Corrected `ansible/roles/docker/tasks/preflight.yml` to disjunctive fail logic:
+    `when: (inventory_hostname != (docker_target_host | default('cicd-server'))) or ((docker_target_group | default('cicd')) not in group_names)`.
+  - Guarantees execution is permitted if and only if both conditions are strictly satisfied (Condition A: `inventory_hostname == 'cicd-server'` AND Condition B: host belongs to group `cicd`).
+- **Test Enhancement & Regression Verification**:
+  - Updated `ansible/tests/test_docker_role.sh` Test 4 and Test 5 to evaluate the actual parsed AST and Jinja2 evaluation logic across all 6 targeting contract scenarios (plus edge cases with misallocated groups). Confirmed tests fail if reverted to the old condition.
+  - Dedicated Docker tests: 30/30 PASS (`test_docker_role.sh`).
+  - Full Phase 4 regression: 161/161 PASS across all 7 test suites (`test_sync_inventory.sh`, `test_verify_ssh_keys.sh`, `test_common_role.sh`, `test_puppet_server_role.sh`, `test_puppet_agent_role.sh`, `test_puppet_enrollment.sh`, `test_docker_role.sh`).
+  - Playbook syntax checks: 13/13 playbooks pass `ansible-playbook --syntax-check`.
+  - Whitespace/diff check: `git diff --check` passes cleanly with 0 errors.
+- **Operational Boundary Compliance**:
+  - Strictly under Approval Boundary A. Zero AWS API calls, zero Terraform executions, zero live SSH or remote executions.
+- **Outcome**: Target-isolation logic corrected and verified. Checkpoint 4.6 ready for commit.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.7: NGINX Bootstrap Baseline (EC2 2)
+
+- **Task**: Implement a modular, idempotent, and secure Ansible role for installing, configuring, securing, and managing NGINX on the dedicated application server (`app-server`, EC2 2).
+- **Objective**: Establish an initial baseline NGINX installation on `app-server` supporting port 80 HTTP web access and baseline health checks, strictly under Approval Boundary A, leaving application virtual host and reverse proxy configuration to Puppet in Phase 5B.
+- **Actions Completed**:
+  - **Modular Role Architecture (`ansible/roles/nginx/`)**:
+    - `defaults/main.yml`: Defined default variables for distribution package `nginx`, state `present`, cache validity `3600`, configuration paths, baseline security (`server_tokens: "off"`, `autoindex: "off"`), port 80, and systemd service defaults (`state: started`, `enabled: true`).
+    - `tasks/preflight.yml`: Enforced strict dual-condition targeting: requires both `inventory_hostname == 'app-server'` AND `'application' in group_names` via disjunctive fail logic (`(inventory_hostname != target_host) or (target_group not in group_names)`), halting immediately if attempted against `puppet-server` or `cicd-server`. Validated target OS (`Ubuntu 24.04 LTS Noble`) and 64-bit architecture.
+    - `tasks/install.yml`: Declared official Ubuntu distribution package `nginx` (`state: present`, `update_cache: true`, `cache_valid_time: 3600`) via `ansible.builtin.apt`. Strictly avoids arbitrary external repositories or version pinning.
+    - `tasks/config.yml`: Ensured `/etc/nginx`, `conf.d`, `sites-available`, and `sites-enabled` directories exist with mode `0755` (`root:root`). Deployed baseline security snippet `/etc/nginx/conf.d/security.conf` (mode `0644`) enforcing `server_tokens off;`. Deployed baseline default virtual host `/etc/nginx/sites-available/default` (mode `0644`) listening on port 80 default_server, disabling directory listings (`autoindex off;`), and serving `/healthz` returning 200 OK. Ensured `sites-enabled/default` symlink exists and cleaned up any premature application sites (`sites-enabled/git-repo-analyzer` absent). Pre-validated configuration syntax via `nginx -t` with `changed_when: false` before notifying handlers.
+    - `tasks/service.yml`: Managed `nginx` systemd unit (`state: started`, `enabled: true`).
+    - `handlers/main.yml`: Implemented guarded `Reload NGINX` (state: `reloaded`) and `Restart NGINX` (state: `restarted`) handlers guarded on `nginx_service_state == 'started'`.
+    - `tasks/verify.yml`: Validated binary `/usr/sbin/nginx`, `nginx -v` version command, and `nginx -t` test with `changed_when: false`.
+    - `templates/security.conf.j2` & `templates/default.conf.j2`: Created baseline configuration templates; removed legacy development template `nginx.conf.j2`.
+  - **Playbook Targeting**:
+    - Updated `ansible/playbooks/test-nginx.yml` targeting canonical `hosts: application` with `become: true` and role `nginx`.
+  - **Fixture Test Suite (`ansible/tests/test_nginx_role.sh`)**:
+    - Implemented comprehensive 30-assertion isolated test suite covering OS validation, architecture checks, strict targeting contract (8 scenarios), reversion sensitivity, package declarations, directory permissions, security config, default virtual host, absence of premature proxy routes, site hygiene, pre-validation check, service lifecycle, guarded handlers, verification commands, and playbook syntax (30/30 PASS).
+  - **Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - `test_docker_role.sh`: 30/30 PASS
+    - `test_nginx_role.sh`: 30/30 PASS
+    - Total test suite: 191/191 PASS across all 8 test suites.
+    - Playbook syntax validation: `ansible-playbook --syntax-check` clean on all 13 playbooks.
+    - Whitespace check: `git diff --check` exits with 0 errors.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS infrastructure provisioned (`terraform apply` not executed).
+    - Zero remote SSH executions or package installations against cloud instances.
+    - Checkpoint 4.7 complete at local implementation and fixture validation level. Ready for Checkpoint 4.8.
+- **Outcome**: Checkpoint 4.7 fully implemented, tested, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Checkpoint 4.8: Phase 4 Local Consolidation & Boundary B Pre-flight Verification
+
+- **Task**: Complete final checkpoint of Phase 4 (Ansible Infrastructure Bootstrap) consolidating Checkpoints 4.1–4.7, establishing the canonical master orchestration sequence, purging obsolete learning exercises, verifying all test and syntax baselines, and preparing the Boundary B deployment runbook and readiness checklist.
+- **Actions Completed**:
+  - **Master Orchestration Playbook (`ansible/playbooks/site.yml`)**:
+    - Refactored `site.yml` from legacy single-instance `webservers` prototype to a canonical master orchestration playbook executing all 5 Phase 4 roles across the approved 3-node fleet:
+      - Play 1: `hosts: all` $\to$ role `common`
+      - Play 2: `hosts: puppet_server` $\to$ role `puppet_server`
+      - Play 3: `hosts: puppet_agents` $\to$ role `puppet_agent`
+      - Play 4: `hosts: cicd` $\to$ role `docker`
+      - Play 5: `hosts: application` $\to$ role `nginx`
+    - Eliminated legacy host-matching warnings (`Could not match supplied host pattern, ignoring: webservers`).
+  - **Repository Hygiene & Cleanup**:
+    - Removed untracked obsolete learning exercises (`conditions.yml`, `handler-demo.yml`, `install-packages.yml`, `system-info.yml`, `template-demo.yml`, `ansible/templates/app.conf.j2`, `ansible/files/demo.txt`) that targeted `hosts: local` and generated warnings.
+    - Resulting playbook suite: exactly 7 playbooks (2 authoritative operational playbooks: `site.yml`, `enroll-puppet-agents.yml`; 5 diagnostic role runners: `test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`).
+  - **Static & Syntax Validation**:
+    - All 7 playbooks verified with `ansible-playbook --syntax-check` with zero warnings and zero errors (exit code 0).
+    - Terraform configuration formatting verified with `terraform fmt -check` (exit code 0).
+    - `bash -n` verified across all test scripts.
+    - `git diff --check` verified clean (0 whitespace or formatting errors).
+  - **Full Regression Verification**:
+    - `test_sync_inventory.sh`: 5/5 PASS
+    - `test_verify_ssh_keys.sh`: 8/8 PASS
+    - `test_common_role.sh`: 16/16 PASS
+    - `test_puppet_server_role.sh`: 20/20 PASS
+    - `test_puppet_agent_role.sh`: 37/37 PASS
+    - `test_puppet_enrollment.sh`: 45/45 PASS
+    - `test_docker_role.sh`: 30/30 PASS
+    - `test_nginx_role.sh`: 30/30 PASS
+    - Total Phase 4 regression baseline: 191/191 PASS across all 8 suites (100% pass rate).
+  - **Boundary B Deployment Runbook & Pre-flight Readiness**:
+    - Formulated comprehensive 15-step Boundary B deployment runbook and prerequisite checklist covering approval gates, Terraform provisioning, dynamic inventory sync, host-key verification, Ansible bootstrap sequence, service verification, error recovery, and cost-controlled teardown procedures.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made.
+    - All Phase 4 local engineering gates passed. Ready for separately authorized Boundary B live deployment.
+- **Outcome**: Phase 4 successfully consolidated, verified, and ready for deployment authorization.
+
+---
+
+## 2026-11-23: Phase 4/5 — Architectural Specification: Dual Roles & Significance of Ansible and Puppet
+
+- **Task**: Author comprehensive architectural specification and documentation explaining the distinct roles, responsibilities, lifecycle interaction, and engineering significance of Ansible and Puppet within the Git Repository Analyzer platform.
+- **Objective**: Formalize the architectural rationale for employing both Ansible (push-based orchestration & bootstrap) and Puppet (pull-based continuous desired-state management) across the three Ubuntu 24.04 EC2 instances, evaluate architectural alternatives (Ansible-only vs. Puppet-only vs. combined), detail the 10-step infrastructure lifecycle, and codify the strict ADR 006 resource ownership and handover matrix before proceeding to Phase 5.
+- **Actions Completed**:
+  - **Authored Dedicated Architectural Specification (`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`)**:
+    - Structured across 7 mandatory sections: Executive Summary & Premise, Role of Ansible (Orchestration & Bootstrap), Role of Puppet (Continuous Desired-State & Drift Correction), Comparative Architectural Analysis (Approach A: Ansible-only, Approach B: Puppet-only, Approach C: Ansible + Puppet), End-to-End Infrastructure Lifecycle, Engineering Significance in Production DevOps, and Governing Resource Ownership Matrix.
+    - Included Detailed Capability Comparison Matrix comparing push/pull transports, chicken-and-egg bootstrap resolution, multi-node ordering, dynamic host-key trust, declarative dependency graphs, and continuous drift correction.
+    - Created two GitHub-flavored Markdown Mermaid diagrams:
+      - System architecture flowchart (`flowchart TD`) illustrating the 3 distinct lifecycle stages (Provisioning $\to$ Bootstrap $\to$ Desired-State Enforcement) across EC2 1, EC2 2, and EC2 3.
+      - Sequence diagram (`sequenceDiagram`) detailing the complete 10-step handover sequence from `terraform apply` through inventory sync, SSH verification, baseline roles, Puppet Server CA setup, gated agent CSR submission, allowlisted CA signing, supervised catalog execution (`puppet agent -t`), daemon activation, Docker/NGINX bootstrap, and recurring 30-minute mTLS catalog convergence loops.
+    - Articulated advanced DevOps engineering principles: separation of operational lifecycles, elimination of configuration drift (IaC as single source of truth), ephemeral fleet reproducibility under ADR 011 (~$0.0773/hr running rate, zero-touch 12-minute reconstruction), and defense-in-depth security (least-privilege SSH operator access, internal mTLS CA signing, private VPC isolation).
+    - Codified the complete ADR 006 resource ownership and handover policy matrix governing base OS packages, swapfiles, `/etc/hosts`, Docker Engine, Puppet Server/CA, Puppet Agent/PKI, NGINX package, NGINX virtual hosts, Node.js runtime, backend systemd units, backend environment files, Nagios Core, and NRPE daemons.
+  - **Cross-Referenced Canonical Project Documentation**:
+    - `project_docs/ARCHITECTURE_DECISIONS.md`: Added reference in ADR 006 pointing to the comprehensive specification.
+    - `project_docs/IMPLEMENTATION_PLAN.md`: Added architectural reference in the Phase 5A introductory section.
+    - `project_docs/PROJECT_STATUS.md`: Added status entry in Section 2 Component Implementation Status table.
+    - `project_docs/WORK_LOG.md`: Logged this comprehensive architectural documentation task.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `ansible-playbook --syntax-check` on all 7 playbooks (2 authoritative operational playbooks, 5 diagnostic role runners): 0 errors, 0 warnings.
+    - Shell syntax (`bash -n`) across all test scripts: Clean.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git pushes executed.
+- **Outcome**: Architectural roles, lifecycle interactions, and resource ownership of Ansible and Puppet fully formalized, validated, and documented.
+
+---
+
+## 2026-11-23: Phase 4 — Documentation Review & Alignment: Boundary B Deployment Runbook
+
+- **Task**: Perform narrowly scoped documentation review of the Boundary B deployment runbook and readiness checklist to resolve teardown approval conflicts, clarify master vs. individual playbook execution paths, improve Terraform provisioning approval gates, and clarify retained AWS costs.
+- **Objective**: Harmonize deployment documentation with architectural invariants (ADR 011 and ADR 012), eliminate conflicting error handling, and define one unambiguous, authoritative operational execution path for live infrastructure deployment, strictly under Approval Boundary A.
+- **Actions Completed**:
+  - **Resolved Teardown Approval Conflict (Step 3 / Step 14 Alignment)**:
+    - Replaced ambiguous partial provisioning failure instruction (which previously suggested executing `terraform destroy`) with an explicit halt-and-preserve protocol.
+    - Mandated that upon any partial failure during `terraform apply`: execution halts immediately, Terraform state is preserved in the S3 remote backend, partially created resources are inspected/reported via `terraform state list`, zero automatic destruction is performed, and separate explicit operator authorization is required before any remediation or teardown.
+  - **Resolved Master vs. Individual Playbook Execution Path (ADR 012 Alignment)**:
+    - Formalized `ansible/playbooks/site.yml` as the canonical master orchestration playbook executing all 5 Phase 4 roles across the fleet (`common`, `puppet_server`, `puppet_agent` [gated stopped/disabled], `docker`, `nginx`).
+    - Clarified that `ansible/playbooks/enroll-puppet-agents.yml` is the dedicated multi-node orchestration playbook for Checkpoint 4.5 executing the 9-step CA enrollment, individual CSR signing, supervised first catalog application, and agent daemon activation.
+    - Clarified that the individual `test-*.yml` playbooks were authored during development for isolated component testing; their `test-` prefix reflects this origin, but they are retained as modular diagnostic runners for targeted troubleshooting, not the primary live deployment path.
+    - Confirmed that executing `site.yml` followed by `enroll-puppet-agents.yml` represents the authoritative 2-playbook live deployment path, guaranteeing that Puppet Agents are never activated before CA enrollment.
+  - **Improved Terraform Provisioning Approval Protocol**:
+    - Expanded provisioning sequence from an informal execution to a structured five-stage approval and provisioning workflow aligned with Stage 1 of the detailed runbook: (1) Identity & Session Verification (`aws sts get-caller-identity`), (2) Initialization & Configuration Validation (`terraform init` / `validate`), (3) Deterministic Planning & Human Inspection (`terraform plan -out=tfplan`; verifying 3 EC2 instances, 3 SGs, 50 GB gp3), (4) Explicit Provisioning Approval Gate (written operator authorization of plan & costs), and (5) Interactive Infrastructure Provisioning (`terraform apply tfplan` strictly without `-auto-approve`, governed by the partial-failure halt protocol).
+  - **Clarified Retained AWS Costs**:
+    - Documented that while `terraform destroy` terminates all 3 EC2 instances, deletes the 50 GB gp3 EBS root volumes, releases public IPv4 addresses, and removes security groups (eliminating the estimated active fleet running cost of approximately $0.0773/hour), actual AWS account charges may remain from persistent resources (such as the S3 state backend) or external account services.
+    - Explicitly identified the persistent Terraform S3 remote state bucket (`git-repo-analyzer-terraform-state-2026`) as a permanent retained resource that survives teardown and must never be deleted, replaced, or modified.
+  - **Updated Canonical Documentation**:
+    - `project_docs/IMPLEMENTATION_PLAN.md`: Updated Section 6 checklist, inserted Section 7 (Authoritative Boundary B Deployment Runbook, 15 steps), updated Section 8 (Ephemeral vs. Persistent Lifecycle & Retained AWS Costs).
+    - `project_docs/PROJECT_STATUS.md`: Synchronized Section 4 Pre-Deployment Readiness Checklist items 6, 8, and 9.
+    - `project_docs/ARCHITECTURE_DECISIONS.md`: Updated ADR 011 lifecycle steps, partial failure halt protocol, authoritative 2-playbook path, and retained cost definitions.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git commits or pushes made without explicit reporting.
+- **Outcome**: Boundary B deployment runbook reviewed, corrected, and codified in canonical documentation.
+
+---
+
+## 2026-11-24: Phase 4/5 — Technical Accuracy Review: Ansible and Puppet Architectural Specification
+
+- **Task**: Perform targeted technical accuracy review of `project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md` to correct implementation status claims, reconcile comparison analyses, resolve application deployment contradictions, correct Puppet service supervision claims, eliminate resource ownership ambiguities, and qualify performance/cost claims.
+- **Objective**: Ensure the architectural specification strictly reflects Approval Boundary A status, cleanly distinguishes implemented automation from live-deployed behavior, accurately contrasts Ansible and Puppet operating paradigms without overstatement, and establishes unambiguous resource handovers.
+- **Actions Completed**:
+  - **Corrected Implementation Status Claims**:
+    - Explicitly clarified that Phase 4 automation represents locally implemented and fixture-tested code under Approval Boundary A, and that live AWS provisioning, EC2 SSH execution, and live Puppet CA enrollment remain pending Boundary B.
+    - Updated Table 3.2 to clearly separate implemented automation (`Checkpoint 4.3–4.5`) from planned steady-state ownership (`Phase 5+`).
+  - **Refined Ansible-Only Comparison**:
+    - Acknowledged that Ansible is capable of desired-state enforcement and drift management through repeated playbook execution, scheduled automation (cron), AWX / Ansible Automation Platform (AAP), or distributed `ansible-pull`.
+    - Articulated the engineering justification for selecting Puppet: its agent-based periodic convergence model provides a self-contained, out-of-the-box 30-minute loop without requiring external cluster infrastructure, establishing a clear separation between initial bootstrap (SSH) and continuous desired-state enforcement (mTLS).
+  - **Refined Puppet-Only Comparison**:
+    - Removed absolute statements regarding bootstrapping on bare EC2. Clarified that Puppet can be bootstrapped via cloud-init, user-data, or custom AMIs.
+    - Articulated why Ansible was selected for this project's initial workflow: SSH-based fleet access, dynamic Terraform inventory resolution, EC2 console host-key verification, ordered multi-node orchestration, automated Java/JVM tuning, controlled CSR signing, and supervised catalog execution.
+  - **Resolved Application Deployment Contradiction**:
+    - Defined clear operational boundaries between Application Build Execution (CI/CD on EC2 3), Deployment Orchestration (Ansible coordinating release staging and smoke checks), and Persistent Configuration Ownership (Puppet exclusively managing systemd units, environment files, and reverse proxies).
+    - Established that deployment workflows must never independently overwrite resources exclusively managed by Puppet.
+  - **Corrected Service Supervision Claims**:
+    - Clarified that Puppet reconciles desired service state during periodic catalog runs (configured every 30 minutes).
+    - Explicitly distinguished three operational tiers: local process crash supervision (`systemd`, standard daemon supervision for Phase 4 services like NGINX; planned 5-second restart delay for Phase 5B backend service), desired-state enforcement (`Puppet`, 30-minute catalog convergence), and availability monitoring (`Nagios Core / NRPE`, 1–5 minute probe intervals and alerting).
+  - **Resolved Resource Ownership Ambiguities**:
+    - Documented explicit steady-state owners and handovers across all 13 infrastructure resources, ensuring every resource has exactly one steady-state owner.
+  - **Qualified Performance and Cost Claims**:
+    - Marked fleet deployment duration as an engineering target estimate (approximately 10–15 minutes, subject to live network/package speeds), noting that human review and approval gates (Steps 4 and 14) are mandatory.
+    - Marked hourly running cost ($0.0773/hour) as a provisional estimate subject to AWS usage, regional rates, and credit rules.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands executed, zero Terraform state/apply operations executed, zero remote SSH connections made, zero Git commits or pushes made without prior reporting.
+- **Outcome**: Architectural specification updated with complete technical accuracy, verified, and reported for user review.
+
+---
+
+## 2026-11-24: Phase 4 — Final Documentation Closure & Phase 5A Readiness Review
+
+- **Task**: Perform final documentation corrections and repository checks to distinguish authoritative operational playbooks from diagnostic role runners, clarify systemd restart configuration as planned Phase 5B behavior, preserve architecture and governance invariants, and formulate the Phase 5A implementation sequence.
+- **Objective**: Ensure complete documentation consistency, verify that zero cloud or remote operations occurred under Approval Boundary A, and prepare a structured, modular local implementation sequence for Phase 5A.
+- **Actions Completed**:
+  - **Corrected Playbook Validation Terminology**:
+    - Consistently distinguished the 2 authoritative operational playbooks (`ansible/playbooks/site.yml` and `ansible/playbooks/enroll-puppet-agents.yml`) from the 5 diagnostic/development role runners (`test-common.yml`, `test-puppet-server.yml`, `test-puppet-agent.yml`, `test-docker.yml`, `test-nginx.yml`) across all documentation files (`PROJECT_STATUS.md`, `IMPLEMENTATION_PLAN.md`, `WORK_LOG.md`).
+    - Clarified that while all 7 playbooks undergo syntax validation, only `site.yml` and `enroll-puppet-agents.yml` serve as authoritative operational playbooks.
+  - **Clarified systemd Restart Behavior**:
+    - Refined `project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md` to explicitly distinguish between running Phase 4 service supervision (such as NGINX) and the planned Phase 5B backend systemd unit configuration (`git-repo-analyzer-backend.service`), ensuring that `Restart=always` and `RestartSec=5s` are described as planned configuration rather than existing verified service behavior.
+  - **Preserved Approved Architecture & Governance**:
+    - Preserved 3-EC2 architecture, Terraform ownership, Ansible bootstrap/orchestration, Puppet steady-state management, Docker execution, Jenkins CI/CD, NGINX reverse proxy, Nagios Core / NRPE monitoring, and explicit approval boundaries (Boundary A vs. Boundary B).
+    - Zero modifications to Terraform, Ansible, Puppet, application code, or infrastructure configurations.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `ansible-playbook --syntax-check` on all 7 playbooks: 0 errors, 0 warnings across both authoritative operational playbooks and diagnostic runners.
+    - `terraform fmt -check` across all modules: Clean (exit code 0).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI calls, zero Terraform remote operations (`init`, `plan`, `apply`, `destroy`), zero EC2 provisioning, zero SSH connections, zero remote Ansible execution, zero live CA signing, and zero Git commits/pushes.
+- **Outcome**: Phase 4 documentation fully closed and aligned; Phase 5A local implementation sequence formulated.
+
+---
+
+## 2026-11-24: Phase 4/5A — Final Technical Verification Before Phase 4 Closure & Phase 5A
+
+- **Task**: Investigate prior failed tool action, verify Ubuntu 24.04 package metadata and dependencies for Phase 5A, verify Puppet Agent ownership transition sequence, strengthen Phase 5A validation design, and perform final documentation and Git inspection.
+- **Objective**: Ensure complete transparency on execution events, eliminate invalid package assumptions before Phase 5A authoring, formalize the 4-step Puppet Agent ownership lifecycle, establish a 6-tier local validation design, and inspect repository status under Approval Boundary A.
+- **Actions Completed**:
+  - **Investigated Failed Tool Execution**:
+    - Identified exact failed action: `edit_file` on `project_docs/WORK_LOG.md` during batch execution at step 2836 (error logged at step 2840).
+    - Failure cause: `Target` omitted the intermediate header line `  - **Static & Syntax Validation**:`. The tool safely rejected the edit without modifying the file.
+    - Resolution: Immediately corrected in step 2843 with full context matching; edit succeeded. Zero impact on validation results (`git diff --check`, `terraform fmt -check`, and `ansible-playbook --syntax-check` all passed cleanly).
+  - **Verified Ubuntu 24.04 Package Dependencies**:
+    - Verified against local Ubuntu 24.04 package repository:
+      - `nagios4` (4.4.6) metapackage pulling `nagios4-core`, `nagios4-cgi`, `nagios4-common` (systemd unit: `nagios4.service`).
+      - `nagios-nrpe-server` (4.1.0) with systemd unit: `nagios-nrpe-server.service` (not `nrpe.service`).
+      - `monitoring-plugins-basic` (2.3.5) providing plugin executables under `/usr/lib/nagios/plugins/` (`check_disk`, `check_load`, `check_procs`, `check_http`, `check_tcp`).
+      - `apache2` (2.4.58) and `apache2-utils` (providing `htpasswd`).
+      - **Authentication module finding**: Verified that `libapache2-mod-auth-basic` does NOT exist in Ubuntu 24.04. Apache 2.4 incorporates basic authentication natively via built-in modules (`mod_auth_basic`, `mod_authn_file`).
+  - **Codified Puppet Agent Ownership Transition Sequence**:
+    - Codified 4-step transition sequence in `project_docs/IMPLEMENTATION_PLAN.md`: (1) Ansible bootstrap with service gated off, (2) Ansible supervised CA enrollment & initial catalog execution, (3) Puppet `common` module assuming steady-state desired-state ownership of `puppet.conf` and `puppet.service`, (4) Ansible permanently relinquishing management.
+  - **Strengthened Phase 5A Validation Design**:
+    - Defined 6-tier local testing design: (1) Manifest syntax validation, (2) Style & linting (`puppet-lint`), (3) Catalog compilation testing (mock facts), (4) Node-specific resource targeting, (5) Dependency ordering (DAG / cycle detection), (6) Idempotency testing.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: 7/7 playbooks clean across 2 authoritative operational playbooks and 5 diagnostic runners.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero SSH connections, zero live Puppet CA operations, and zero Git commits or pushes.
+- **Outcome**: Technical verifications completed, Phase 5A plan strengthened with verified package names and validation tiers, ready for authorization.
+
+---
+
+## 2026-11-24: Phase 4 Correction — Ansible-to-Puppet Ownership Handover & Repeated site.yml Execution Resolution
+
+- **Task**: Investigate operational ownership conflict between Phase 4 bootstrap defaults and post-enrollment Puppet Agent steady-state desired state during repeated `site.yml` executions; evaluate architectural approaches; implement safest minimal lifecycle-aware service guard; strengthen idempotency testing definitions; update canonical documentation; and expand regression test suite.
+- **Objective**: Ensure that re-running canonical master playbook `site.yml` after enrollment/handover does not stop or disable the Puppet Agent daemon, preserve Phase 4 safety gating defaults for pre-enrollment nodes, and maintain strict boundary separation between Ansible bootstrap and Puppet continuous desired-state enforcement under Approval Boundary A.
+- **Actions Completed**:
+  - **Investigated Operational Ownership Conflict**:
+    - Identified root cause: `ansible/roles/puppet_agent/tasks/service.yml` previously applied `state: stopped` and `enabled: false` unconditionally from role defaults. If `site.yml` was executed post-enrollment, Ansible would force the active agent back to stopped/disabled, conflicting with Puppet's steady-state desired state (`ensure => running, enable => true`).
+  - **Evaluated Architectural Alternatives**:
+    - *Alternative A (External CLI Variable)*: Passing `-e puppet_agent_service_state=started` or `-e puppet_skip_service=true`. Rejected: error-prone, violates declarative idempotency, and accidental omission stops active agents.
+    - *Alternative B (Playbook Bifurcation)*: Splitting `site.yml` into bootstrap vs. maintenance variants. Rejected: violates single-master playbook architectural requirement and breaks automation interfaces.
+    - *Alternative C (Lifecycle-Aware Node-State Guard — Chosen)*: In `service.yml`, stat check verifies whether a valid signed certificate exists at `{{ puppet_ssl_dir }}/certs/{{ puppet_agent_certname }}.pem`. Pre-enrollment nodes enforce `stopped`/`disabled` defaults; enrolled nodes skip service enforcement with an explicit skip notice, preserving handover. Includes `puppet_agent_force_bootstrap: true` escape hatch for operator recovery.
+  - **Implemented Lifecycle-Aware Service Guard**:
+    - Updated `ansible/roles/puppet_agent/tasks/service.yml` with certificate existence check (`puppet_agent_is_enrolled`).
+    - Gated systemd service task on `not puppet_agent_is_enrolled or puppet_agent_force_bootstrap`.
+    - Added debug skip notification task when enrolled.
+    - Added `puppet_agent_force_bootstrap: false` default variable to `ansible/roles/puppet_agent/defaults/main.yml`.
+  - **Strengthened Idempotency & Validation Hierarchy**:
+    - Updated Phase 5A documentation in `IMPLEMENTATION_PLAN.md` to distinguish 4 explicit testing levels: (1) Static fixture-based idempotency tests, (2) Puppet catalog compilation tests, (3) Actual local catalog application (exit code 2), and (4) Repeated catalog application demonstrating zero unintended changes (exit code 0).
+    - Enforced policy that true idempotency is claimed strictly upon verified Level 4 execution.
+  - **Expanded & Executed Regression Test Suite**:
+    - Added 9 new dedicated test assertions to `ansible/tests/test_puppet_agent_role.sh` (tests 38–46) covering `force_bootstrap` default, certificate detection, pre-enrollment enforcement, post-enrollment skipping, force override, stopped/disabled default preservation, handover activation compatibility, and handler guard stability.
+    - Total test count for Checkpoint 4.4 expanded from 37 to 46 (46/46 PASS).
+    - Full Phase 4 regression test suite executed across all 8 suites: **200/200 checks passing (100% pass rate)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: All 7 playbooks clean (2 authoritative operational playbooks, 5 diagnostic role runners).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, and zero Git commits or pushes.
+- **Outcome**: Ansible-to-Puppet ownership handover conflict resolved cleanly with lifecycle guard; 200/200 regression tests passing; Phase 4 ready for final closure.
+
+---
+
+## 2026-11-24: Phase 4 Narrow Audit — Puppet Agent Lifecycle Guard Cryptographic Verification & Behavioral Regression Suite
+
+- **Task**: Perform final technical verification of the Puppet Agent lifecycle guard in `ansible/roles/puppet_agent/tasks/service.yml`; strengthen certificate-state verification from simple file existence to cryptographic and identity verification; add controlled fixture and mock behavioral coverage across 8 operational scenarios in `ansible/tests/test_puppet_agent_role.sh`; reconcile documentation scope by reverting unrelated ADR 011 changes in `project_docs/ARCHITECTURE_DECISIONS.md`; explain Git HEAD history; and execute full regression validation under Approval Boundary A.
+- **Objective**: Ensure that the post-enrollment lifecycle guard strictly distinguishes a valid enrolled agent from an invalid, expired, corrupt, or mismatched certificate file; preserve Phase 4 safety defaults (`stopped`/`disabled`); provide behavioral verification for all 8 scenarios; and ensure complete consistency across documentation without staging, committing, or pushing.
+- **Actions Completed**:
+  - **Reconciled Git History**:
+    - Inspected `git rev-parse HEAD` (`f0532b0`), `git log --oneline -10`, and `git diff HEAD^..HEAD --stat`.
+    - Identified that commit `f0532b0` was created in the previous turn in direct response to the user's prompt `"commit the the changes and show the git diff"`.
+    - Clarified that the subsequent summary text mistakenly contained an outdated boilerplate assertion claiming no commits had occurred. Confirmed that no unauthorized commits occurred and no history modifications (reset/rebase/amend) will be made.
+  - **Reconciled Documentation Scope (`ARCHITECTURE_DECISIONS.md`)**:
+    - Reverted unrelated changes in `project_docs/ARCHITECTURE_DECISIONS.md` back to the exact accepted baseline of commit `2212683`.
+    - Clarified that the edits to ADR 011 concerning Terraform five-stage provisioning and retained S3 costs were added during runbook alignment, but exceeded the scope of the Puppet Agent ownership lifecycle guard.
+  - **Implemented Cryptographic Certificate Verification (`service.yml`)**:
+    - Replaced the bare `ansible.builtin.stat.exists` check in `ansible/roles/puppet_agent/tasks/service.yml` with deep cryptographic and identity verification:
+      1. Valid X.509 certificate structure (`openssl x509 -in <cert> -noout`).
+      2. Valid expiration (`openssl x509 -in <cert> -noout -checkend 0`).
+      3. Subject CN match: extracted CN must strictly equal `puppet_agent_certname`.
+      4. CA signature & trust: verified against Puppet CA bundle (`openssl verify -CAfile <ca.pem> <cert>`).
+    - Only when all checks succeed is `puppet_agent_is_enrolled` set to `true`, skipping service management to preserve Phase 4.5 handover.
+    - If no cert exists, or if a cert file exists but is corrupted, expired, wrong-CN, or untrusted, `puppet_agent_is_enrolled` evaluates to `false`, an explicit diagnostic warning is emitted, and Phase 4 safety defaults (`state: stopped`, `enabled: false`) are enforced. Invalid certificates can never silently bypass bootstrap safeguards.
+    - Preserved `puppet_agent_force_bootstrap: true` escape hatch for deliberate operator recovery.
+  - **Added Behavioral Regression Coverage for 8 Scenarios (`test_puppet_agent_role.sh`)**:
+    - Expanded `ansible/tests/test_puppet_agent_role.sh` from 46 to 54 tests (54/54 PASS).
+    - Added dedicated behavioral tests (Tests 47–54) using real OpenSSL fixtures and controlled mock environments:
+      - *Scenario 1 (Test 47)*: No certificate -> bootstrap service remains stopped and disabled.
+      - *Scenario 2 (Test 48)*: Valid enrolled certificate -> ordinary `site.yml` execution skips service task, daemon not stopped/disabled.
+      - *Scenario 3 (Test 49)*: Invalid/corrupt certificate -> guard does not classify agent as enrolled, safe defaults enforced.
+      - *Scenario 4 (Test 50)*: Wrong certificate CN -> enrollment guard fails safely, safe defaults enforced.
+      - *Scenario 5 (Test 51)*: Expired certificate -> enrollment guard fails safely, safe defaults enforced.
+      - *Scenario 6 (Test 52)*: Explicit force-bootstrap override -> works only when deliberately requested.
+      - *Scenario 7 (Test 53)*: Enrollment handover -> agent starts only after catalog exit code 0 or 2 (gated strictly in `handover.yml`).
+      - *Scenario 8 (Test 54)*: Repeated orchestration -> play structure isolates roles, `site.yml` role variables remain unpolluted.
+  - **Synchronized Project Documentation**:
+    - Updated `IMPLEMENTATION_PLAN.md` and `PROJECT_STATUS.md` with revised test metrics (Checkpoint 4.4: 54/54 PASS; Total Suite: 208/208 PASS).
+    - Updated `ANSIBLE_AND_PUPPET_ARCHITECTURE.md` Section 7.1 to document the cryptographic verification requirements.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: All 7 playbooks clean (2 authoritative operational playbooks, 5 diagnostic runners).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes, and zero staging or committing of files.
+- **Outcome**: Cryptographic certificate verification and behavioral fixture regression suite fully implemented and passing (54/54 in role test, 208/208 across all 8 suites); documentation fully reconciled and clean.
+
+---
+
+## 2026-11-24: Phase 5A — Checkpoint 5A.1: Puppet Module Architecture Implementation & Validation
+
+- **Task**: Implement Checkpoint 5A.1 of Phase 5A (Puppet Configuration Management). Establish the complete Puppet directory layout, module architecture, authoritative site manifest (`manifests/site.pp`), Hiera v5 configuration, modular class definitions for `common`, `nrpe`, and `nagios`, and isolated validation test suite under Approval Boundary A.
+- **Objective**: Build a clean, maintainable, dependency-aware Puppet module architecture establishing unambiguous node classification, resource chaining without cycles, Hiera parameter management, and steady-state Puppet Agent service management without interfering with Phase 4 bootstrap safeguards.
+- **Actions Completed**:
+  - **Established Puppet Module Architecture & File Layout**:
+    - Created complete directory tree under `puppet/`: `manifests/`, `hieradata/nodes/`, `modules/common/{manifests,files}`, `modules/nrpe/{manifests,templates}`, `modules/nagios/{manifests,templates}`, `tests/`.
+  - **Configured Hiera v5**:
+    - Deployed `puppet/hiera.yaml` specifying version 5 hierarchy with per-node overrides (`nodes/%{trusted.certname}.yaml`) and common parameters (`common.yaml`).
+    - Configured `puppet/hieradata/common.yaml` with parameters for timezone (`UTC`), package baselines, NRPE port (`5666`), allowed hosts, and Nagios web port (`8080`).
+  - **Authored Authoritative Site Manifest (`puppet/manifests/site.pp`)**:
+    - Declared global `Exec` default path (`/bin`, `/usr/bin`, `/usr/local/bin`, `/sbin`, `/usr/sbin`, `/opt/puppetlabs/bin`).
+    - Implemented explicit node classifications:
+      - `node 'puppet-server'`: chained `class { 'common': } -> class { 'nrpe::client': } -> class { 'nagios': }`.
+      - `node 'app-server'`: chained `class { 'common': } -> class { 'nrpe::server': }`.
+      - `node 'cicd-server'`: chained `class { 'common': } -> class { 'nrpe::server': }`.
+      - `node default`: baseline `class { 'common': }`.
+    - Documented architectural observations regarding Nagios Core placement between prompt specifications and historical AGENTS.md / Terraform security group rules.
+  - **Implemented Modular Class Definitions**:
+    - `common/manifests/init.pp`: manages baseline packages (`curl`, `git`, `htop`, `unzip`, `tar`, `jq`), `/etc/timezone`, and steady-state Puppet Agent service (`ensure => running, enable => true`).
+    - `nrpe/manifests/init.pp`, `server.pp`, `client.pp`: modular wrapper, server class managing `nagios-nrpe-server` and monitoring plugins, and client class managing `nagios-nrpe-plugin`.
+    - `nagios/manifests/init.pp`, `server.pp`, `objects.pp`, `web.pp`: orchestrator, core server daemon (`nagios4`), object definitions, and Apache loopback virtual host (`127.0.0.1:8080`) with basic authentication.
+  - **Authored & Executed Checkpoint 5A.1 Validation Suite**:
+    - Created `puppet/tests/test_puppet_architecture.sh` containing 15 automated validation checks.
+    - Validated all manifests via `puppet parser validate` (100% syntax compliance across all 8 `.pp` files).
+    - Verified directory layout, file presence, node classification, arrow chaining, Hiera v5 structure, and Ansible playbook syntax compatibility.
+    - Test results: **15/15 checks passed (100% pass rate)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `terraform fmt -check`: Clean (0 formatting discrepancies).
+    - `ansible-playbook --syntax-check`: All 7 playbooks clean (2 authoritative operational playbooks, 5 diagnostic runners).
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes, and zero staging or committing of files.
+- **Outcome**: Checkpoint 5A.1 fully implemented and validated (15/15 checks passed); ready for Checkpoint 5A.2.
+
+---
+
+## 2026-11-24: Phase 5A — Pre-Checkpoint 5A.2 Architectural Reconciliation & Verification
+
+- **Task**: Resolve four pre-Checkpoint 5A.2 architectural, ownership, and Git status queries before proceeding to Checkpoint 5A.2.
+- **Objective**: Reconcile Nagios Core placement between Puppet manifests, Terraform security groups, and canonical documentation; verify Puppet Agent identity and CA initialization on `puppet-server`; formally confirm configuration placeholder boundaries; verify Git push non-execution and explain the 14-line ADR 011 diff.
+- **Actions Completed**:
+  - **Reconciled Nagios Core Placement & Topology**:
+    - Inspected `terraform/modules/ec2/main.tf`: confirmed `app_monitoring_sg` (EC2 2) has ingress on ports 80/443/22, while `puppet_server_sg` (EC2 1) and `cicd_analysis_sg` (EC2 3) allow ingress on port 5666 strictly from `app_monitoring_sg.id`.
+    - Confirmed `AGENTS.md` (lines 112, 132, 214) and ADR 005/006 mandate Nagios Core exclusively on EC2 2 (`app-server`), with EC2 1 dedicated to Puppet Server/CA ("No Nagios Core").
+    - Realigned `puppet/manifests/site.pp`:
+      - `node 'puppet-server'`: `class { 'common': } -> class { 'nrpe::server': }`
+      - `node 'app-server'`: `class { 'common': } -> class { 'nrpe::client': } -> class { 'nagios': }`
+      - `node 'cicd-server'`: `class { 'common': } -> class { 'nrpe::server': }`
+    - Updated `puppet/tests/test_puppet_architecture.sh` (Tests 8 and 9) to validate the reconciled topology.
+  - **Verified Puppet Agent Identity on `puppet-server`**:
+    - Inspected `ansible/roles/puppet_server/templates/puppet.conf.j2` and `ca.yml`: confirmed `puppet-server` is configured with `certname = puppet-server` and `server = puppet-server`.
+    - Confirmed CA initialization (`puppetserver ca setup --certname puppet-server`) automatically establishes the host certificate for `puppet-server`.
+    - Confirmed `common` module's steady-state management of `service { 'puppet': ensure => running, enable => true }` applies cleanly to the local agent daemon (`puppet.service`), distinct from `puppetserver.service`.
+    - Confirmed Phase 4 bootstrap safeguards (`puppet_agent_is_enrolled` cryptographic guard) remain intact.
+  - **Documented Configuration Placeholders & Staged Implementation Boundaries**:
+    - Confirmed `nagios::web::admin_password_hash` (`$apr1$demo$hashedpassword`) is explicitly a synthetic development placeholder to be substituted with a secure secret prior to live deployment.
+    - Confirmed full NRPE check definitions/templates and Nagios object/virtual-host definitions will be implemented in Checkpoints 5A.3 and 5A.4.
+  - **Verified Git Operation & ADR 011 Diff**:
+    - Confirmed zero `git push` commands were executed by the agent.
+    - Inspected commit `36c31e6` diff in `project_docs/ARCHITECTURE_DECISIONS.md`: confirmed the 14-line diff (7 additions, 7 deletions) strictly restored the canonical commit `2212683` baseline, removing unrelated additions made in `f0532b0`.
+  - **Validated Syntax & Architecture**:
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean.
+    - `bash puppet/tests/test_puppet_architecture.sh`: 15/15 checks passed (100% PASS).
+    - `git diff --check`: 0 whitespace errors.
+- **Outcome**: Architectural alignment confirmed; all 4 items resolved; ready for Checkpoint 5A.2.
+
+---
+
+## 2026-11-24: Phase 5A — Checkpoint 5A.2: Common Puppet Module Implementation & Validation
+
+- **Task**: Implement Checkpoint 5A.2 of Phase 5A (Puppet Configuration Management). Refine and fully implement the `common` Puppet module to establish an idempotent baseline across all three EC2 instances (`puppet-server`, `app-server`, `cicd-server`).
+- **Objective**: Manage baseline packages, configure system timezone idempotently, manage the steady-state Puppet Agent systemd service without interfering with `puppetserver.service`, enforce explicit linear dependency ordering, ensure safe repeated application, and validate via isolated tests under Approval Boundary A.
+- **Actions Completed**:
+  - **Refined `common` Class Definition (`puppet/modules/common/manifests/init.pp`)**:
+    - Strongly typed class parameters: `Array[String[1]] $packages`, `String[1] $timezone`, `Boolean $manage_puppet_agent`, `String[1] $puppet_agent_service`.
+    - Declared declarative package baseline: `package { $packages: ensure => present }` (`curl`, `wget`, `git`, `htop`, `unzip`, `tar`, `jq`, `ca-certificates`).
+    - Configured timezone idempotently: `/etc/timezone` file resource (`0644`, `root:root`) and `/etc/localtime` symlink targeting `/usr/share/zoneinfo/${timezone}` with `force => true`.
+    - Enforced explicit linear dependency ordering: `Package[$packages] -> File['/etc/timezone'] -> File['/etc/localtime'] -> Service[$puppet_agent_service]`.
+    - Implemented steady-state Puppet Agent service management: `service { $puppet_agent_service: ensure => running, enable => true, hasstatus => true, hasrestart => true }`.
+    - Protected `puppetserver.service` isolation: managed exclusively `puppet.service` without declaring or touching the JVM master service on `puppet-server`.
+    - Provided `manage_puppet_agent` toggle for maintenance or testing.
+  - **Resolved Duplicate Package Declaration**:
+    - Identified potential duplicate declaration on `app-server` where both `nrpe::client` and `nagios::server` declared `package { 'nagios-nrpe-plugin': }`.
+    - Scoped `nagios-nrpe-plugin` exclusively to `nrpe::client`, removing it from `nagios::server`'s plugin list and keeping `monitoring-plugins-basic`.
+  - **Authored Dedicated Checkpoint 5A.2 Validation Suite (`puppet/tests/test_common_module.sh`)**:
+    - Created 14 automated validation checks covering file presence, Puppet parser syntax, AST typing, package declarations, timezone file & symlink attributes, linear dependency chaining, service properties, isolation from `puppetserver`, conditional toggle behavior, `--noop` catalog compilation, Hiera v5 parameter binding, master `site.pp` fleet compilation across all three nodes, and cycle-free repeat application.
+    - Test results: **14/14 checks passed (100% pass rate)**.
+  - **Executed Architectural Regression Suite (`puppet/tests/test_puppet_architecture.sh`)**:
+    - Re-verified all 15 checks in `test_puppet_architecture.sh`: **15/15 checks passed (100% pass rate)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes.
+- **Outcome**: Checkpoint 5A.2 fully implemented and validated (14/14 tests in common module suite, 15/15 tests in architecture suite); ready for Checkpoint 5A.3.
+
+
+---
+
+## 2026-11-24: Phase 5A — Checkpoint 5A.3: NRPE Puppet Module Implementation & Validation
+
+- **Task**: Implement Checkpoint 5A.3 of Phase 5A (Puppet Configuration Management). Author and validate the NRPE Puppet module (`nrpe`) to establish secure, centralized, and read-only remote infrastructure monitoring across the fleet under the canonical architecture.
+- **Objective**: Implement `nrpe::server` on monitored nodes (`puppet-server` and `cicd-server`), implement `nrpe::client` on monitoring host (`app-server`), configure a managed `nrpe.cfg` template, restrict `allowed_hosts` strictly to loopback and `app-server`, enforce `dont_blame_nrpe=0` (zero argument injection), deploy custom read-only monitoring scripts (`check_jenkins.sh`, `check_docker.sh`, `check_puppetserver.sh`), implement pre-restart configuration validation via awk, maintain strict separation of concerns, and validate via automated test suites under Approval Boundary A.
+- **Actions Completed**:
+  - **Authored Custom Read-Only Monitoring Check Scripts (`puppet/modules/nrpe/files/`)**:
+    - `check_jenkins.sh`: Verifies `jenkins.service` via `systemctl is-active`, validates local HTTP API listener (`http://127.0.0.1:8080/login`), and checks TCP port 8080. Returns standard Nagios exit codes (0=OK, 1=WARNING, 2=CRITICAL). Strictly read-only; never executes user code. Mode `0755`.
+    - `check_docker.sh`: Verifies `docker.service` status, confirms `/var/run/docker.sock` UNIX domain socket existence, queries `docker info` for engine version and container metrics if CLI accessible. Returns 0=OK, 2=CRITICAL. Strictly read-only; never starts containers or mounts untrusted repositories. Mode `0755`.
+    - `check_puppetserver.sh`: Verifies `puppetserver.service` status, inspects port 8140 via HTTPS status endpoint (`/status/v1/simple`), and verifies TCP 8140 listener. Returns 0=OK, 1=WARNING, 2=CRITICAL. Strictly read-only. Mode `0755`.
+  - **Authored Authoritative NRPE Configuration Template (`puppet/modules/nrpe/templates/nrpe.cfg.erb`)**:
+    - Binds `server_port` (default: 5666) and optional `server_address`.
+    - Formats `allowed_hosts` as comma-separated list strictly restricted to `127.0.0.1`, `::1`, and `app-server`.
+    - Enforces security posture: `dont_blame_nrpe=0` (completely disables remote command arguments) and `allow_bash_command_substitution=0`.
+    - Configures process attributes (`nrpe_user=nagios`, `nrpe_group=nagios`, `pid_file=/run/nagios/nrpe.pid`).
+    - Configures baseline system checks (`check_users`, `check_load`, `check_disk`, `check_zombie_procs`, `check_total_procs`) and custom checks (`check_puppetserver`, `check_jenkins`, `check_docker`).
+    - Enables extension directory `include_dir=/etc/nagios/nrpe.d/`.
+  - **Refined `nrpe::server` Class Manifest (`puppet/modules/nrpe/manifests/server.pp`)**:
+    - Strongly typed parameters with comprehensive defaults.
+    - Manages packages `nagios-nrpe-server` and `monitoring-plugins-basic`.
+    - Manages directory layout (`/etc/nagios`, `/etc/nagios/nrpe.d`, `/usr/lib/nagios/plugins`) with idempotent `defined()` guards.
+    - Deploys custom check scripts to `/usr/lib/nagios/plugins/` with mode `0755` and `root:root` ownership.
+    - Manages `/etc/nagios/nrpe.cfg` from template with inline `validate_cmd` awk validator: verifies all non-comment/non-blank lines contain `=` and rejects malformed lines before restarting service.
+    - Manages `nagios-nrpe-server` systemd service with `hasstatus => true` and `hasrestart => true`, triggered via `notify` on config change.
+    - Enforces linear dependency DAG: Packages -> Directories -> Custom Scripts -> Config -> Service.
+  - **Verified `nrpe::client` Class Manifest (`puppet/modules/nrpe/manifests/client.pp`)**:
+    - Strictly scoped to client plugin package `nagios-nrpe-plugin` on `app-server`.
+    - Confirmed zero overlap or duplicate resource declarations with server or common classes.
+  - **Reconciled Hiera Parameter Declarations (`puppet/hieradata/common.yaml`)**:
+    - Restricted `nrpe::server::allowed_hosts` strictly to `127.0.0.1`, `::1`, and `app-server` (removed `puppet-server` from allowed hosts).
+  - **Authored Dedicated Checkpoint 5A.3 Validation Suite (`puppet/tests/test_nrpe_module.sh`)**:
+    - Created 18 automated validation checks covering file existence, Puppet parser validation, script permissions (0755), bash syntax (`bash -n`), safety/read-only code inspection, behavioral script execution (active Docker, active Jenkins, inactive Puppet Server), server/client class AST data typing, template rendering, `allowed_hosts` boundaries, security posture (`dont_blame_nrpe=0`), awk `validate_cmd` logic, linear resource dependency chaining, catalog compilation for `nrpe::server` and `nrpe::client` via `--noop`, Hiera v5 automatic parameter binding, full fleet `site.pp` compilation across all three nodes, and cycle-free repeat application.
+    - Test results: **18/18 checks passed (100% pass rate)**.
+  - **Executed Architectural & Common Module Regression Suites**:
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 checks passed (100% PASS)**.
+    - `puppet/tests/test_common_module.sh`: **14/14 checks passed (100% PASS)**.
+  - **Static & Syntax Validation**:
+    - `git diff --check`: Clean (0 whitespace errors, 0 merge conflicts).
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform remote operations, zero EC2 provisioning, zero remote SSH connections, zero Git pushes.
+- **Outcome**: Checkpoint 5A.3 fully implemented and validated (18/18 tests in NRPE suite, 14/14 in common module suite, 15/15 in architecture suite; total 47/47 Puppet checks passed); ready for Checkpoint 5A.4.
+
+---
+
+## 2026-11-24: Phase 5A — Post-Checkpoint 5A.3 Narrowly Scoped Verification & Node-Targeting Refinement
+
+- **Task**: Conduct a narrowly scoped verification of four specific NRPE implementation items (`allowed_hosts`, interface binding, custom check targeting, Docker check permissions).
+- **Objective**: Verify whether hostname resolution in `allowed_hosts` is supported by NRPE 4.1.0 and reliable via `/etc/hosts`; assess `server_address` interface binding against security group boundaries; enforce strict node-specific custom check script and command assignment (`check_puppetserver` on `puppet-server` only, `check_jenkins`/`check_docker` on `cicd-server` only); verify unprivileged Docker check behavior.
+- **Actions Completed**:
+  - **NRPE `allowed_hosts` Verification**:
+    - Confirmed NRPE 4.1.0 calls `getaddrinfo()` during startup when parsing `allowed_hosts`, adding resolved IP addresses to the daemon ACL table.
+    - Confirmed `app-server` resolves deterministically to its private IP via `/etc/hosts` (injected in Checkpoint 4.2). Zero hardcoded or ephemeral IP addresses required.
+  - **NRPE Interface Binding Verification**:
+    - Confirmed `server_port = 5666` is configured and `$server_address = undef` binds to `0.0.0.0`, enabling local loopback diagnostics (`check_nrpe -H 127.0.0.1`) while AWS security groups (`cicd_analysis_sg`, `puppet_server_sg`) strictly restrict port 5666 ingress to `app_monitoring_sg.id`.
+  - **Node-Specific Check Targeting Refinement**:
+    - Refined `puppet/modules/nrpe/manifests/server.pp` to dynamically resolve node checks via `$trusted['certname']`:
+      - `puppet-server`: Deploys only `check_puppetserver.sh` and registers only `command[check_puppetserver]`. Jenkins and Docker checks are strictly omitted.
+      - `cicd-server`: Deploys only `check_jenkins.sh` and `check_docker.sh`, and registers `command[check_jenkins]` / `command[check_docker]`. Puppet Server check is strictly omitted.
+    - Updated `puppet/modules/nrpe/templates/nrpe.cfg.erb` to render `@effective_commands`.
+  - **Docker Check Permission Safety Verification**:
+    - Confirmed `check_docker.sh` checks `systemctl is-active docker` and `/var/run/docker.sock` socket presence via `test -S` (which evaluates successfully without read/write access to the socket). Unprivileged permission denial on `docker info` falls through gracefully to report status `OK` (exit code 0).
+  - **Updated Test Suites**:
+    - Enhanced `puppet/tests/test_nrpe_module.sh` Test 17 to assert strict exclusion and inclusion of node-specific checks across all three nodes.
+    - Test results: `test_nrpe_module.sh` (18/18 PASS), `test_puppet_architecture.sh` (15/15 PASS), `test_common_module.sh` (14/14 PASS). Total: 47/47 PASS.
+  - **Operational Boundary Compliance**:
+    - Preserved commit `d93e505`. Strictly within Approval Boundary A. Zero AWS, SSH, or Git push operations.
+- **Outcome**: All 4 verification items confirmed; node check targeting cleanly enforced and validated.
+
+---
+
+## 2026-11-25: Phase 5A — Checkpoint 5A.3 Hardening: Removal of Fallback for Custom NRPE Checks
+
+- **Task**: Perform a narrowly scoped hardening correction to Checkpoint 5A.3 removing the unauthenticated fallback for custom NRPE checks on unrecognized Puppet certnames.
+- **Objective**: Ensure that any unrecognized certname does not receive all three custom checks by default, adhering to least-privilege security principles while preserving canonical node targeting, explicit parameter overrides, and standalone test validity.
+- **Actions Completed**:
+  - **Removed Unauthenticated Custom Check Fallback (`puppet/modules/nrpe/manifests/server.pp`)**:
+    - Updated `case $trusted['certname']` `default:` block to assign empty collections: `$default_node_commands = {}` and `$default_plugins = []`.
+    - Unrecognized or rogue certnames now receive only baseline system checks (`check_users`, `check_load`, `check_disk`, `check_zombie_procs`, `check_total_procs`), zero custom scripts are installed in `/usr/lib/nagios/plugins/`, and zero custom commands are appended to `nrpe.cfg`.
+    - Preserved canonical targeting:
+      - `puppet-server`: exclusively deploys `check_puppetserver.sh` and registers `command[check_puppetserver]`.
+      - `cicd-server`: exclusively deploys `check_jenkins.sh` and `check_docker.sh` and registers `command[check_jenkins]` / `command[check_docker]`.
+      - `app-server`: classified strictly as NRPE client (`nrpe::client`); zero NRPE server components.
+    - Preserved explicit override functionality: `$commands` and `$custom_plugins` parameters override defaults when supplied.
+  - **Updated Standalone Catalog Compilation Test (`puppet/tests/test_nrpe_module.sh` - Test 14)**:
+    - Updated Test 14 to declare explicit test parameters (`custom_plugins` and `commands`) when invoking `class { 'nrpe::server': ... }`, proving explicit parameter overrides work cleanly without reliance on a production fallback.
+  - **Added Security Regression Test (`puppet/tests/test_nrpe_module.sh` - Test 19)**:
+    - Added Test 19 verifying three security regression scenarios:
+      - Scenario A (`--certname unexpected-node.local`): Verifies baseline packages, `nrpe.cfg`, and service are declared, while `check_puppetserver.sh`, `check_jenkins.sh`, and `check_docker.sh` are strictly absent.
+      - Scenario B (`--certname rogue-server`): Verifies all three custom checks are strictly absent.
+      - Scenario C (`--certname custom-node.local` with explicit `custom_plugins => ['check_docker.sh']`): Verifies that explicit class parameter overrides are honored even for non-canonical certnames.
+  - **Executed Comprehensive Regression Suite**:
+    - `puppet/tests/test_nrpe_module.sh`: **19/19 checks passed (100% PASS)**.
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 checks passed (100% PASS)**.
+    - `puppet/tests/test_common_module.sh`: **14/14 checks passed (100% PASS)**.
+    - Total: **48/48 Puppet tests passed**.
+  - **Code Quality and Formatting**:
+    - `puppet parser validate puppet/modules/nrpe/manifests/*.pp`: Clean Puppet DSL syntax.
+    - `git diff --check`: 0 whitespace errors, 0 merge conflicts.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform operations, zero remote SSH connections, zero live Puppet/CA operations, zero Git pushes.
+- **Outcome**: Fallback cleanly eliminated; security regression verified; test coverage expanded to 19 checks. Ready for commit.
+
+---
+
+## 2026-11-25: Phase 5A — Checkpoint 5A.4: Nagios Core and Monitoring Configuration Implementation
+
+- **Task**: Implement, configure, secure, and validate Checkpoint 5A.4 of the Git Repository Analyzer project, deploying the Nagios module exclusively to `app-server`.
+- **Objective**: Implement `nagios::server`, `nagios::objects`, and `nagios::web` classes; manage Ubuntu 24.04 packages (`nagios4`, `monitoring-plugins-basic` without duplicate `nagios-nrpe-plugin`); deploy authoritative object definitions (`hosts.cfg`, `commands.cfg`, `services.cfg`, `contacts.cfg`, `timeperiods.cfg`); configure Apache loopback virtual host (`127.0.0.1:8080`) with HTTP Basic Authentication (`/etc/nagios4/htpasswd.users` mode `0640`); enforce strict validation ordering and secret safety guardrails; validate via automated test suite.
+- **Actions Completed**:
+  - **Implemented Nagios Server Module (`puppet/modules/nagios/manifests/server.pp`)**:
+    - Installed packages `nagios4` and `monitoring-plugins-basic` (avoided package duplication with `nrpe::client` which manages `nagios-nrpe-plugin`).
+    - Managed directory `/etc/nagios4` (mode `0755`, owner `root:nagios`).
+    - Managed configuration files: `/etc/nagios4/nagios.cfg`, `/etc/nagios4/cgi.cfg`, and `/etc/nagios4/resource.cfg` (`$USER1$=/usr/lib/nagios/plugins`).
+    - Enforced pre-start/reload configuration validation: `exec { 'nagios4_configtest': command => '/usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg', refreshonly => true, onlyif => '/usr/bin/test -x /usr/sbin/nagios4', notify => Service['nagios4'] }`.
+    - Managed systemd service `nagios4.service` with strict dependency chain: `Package['nagios4'] -> File['/etc/nagios4'] -> Class['nagios::objects'] -> Exec['nagios4_configtest'] -> Service['nagios4']`.
+  - **Implemented Nagios Object Definitions (`puppet/modules/nagios/manifests/objects.pp` & Templates)**:
+    - Managed `/etc/nagios4/conf.d` directory (`0755`, `root:nagios`).
+    - Configured `hosts.cfg`: Defined all three fleet nodes: `puppet-server` (`puppet-server`), `app-server` (`127.0.0.1`), and `cicd-server` (`cicd-server`), plus `generic-host` template.
+    - Configured `commands.cfg`: Defined `check-host-alive`, `check_nrpe` (`$USER1$/check_nrpe -H $HOSTADDRESS$ -c $ARG1$ -t 30` with zero arbitrary arguments), local checks (`check_local_disk`, `check_local_load`, `check_local_procs`, `check_local_users`, `check_http_port`), and notification commands (`notify-host-by-email`, `notify-service-by-email`).
+    - Configured `services.cfg`: Accurately mapped node-specific checks:
+      - `puppet-server`: `NRPE Connectivity` and `Puppet Server Service` (`check_nrpe!check_puppetserver`). Zero Jenkins/Docker checks.
+      - `cicd-server`: `NRPE Connectivity`, `Jenkins Service` (`check_nrpe!check_jenkins`), and `Docker Service` (`check_nrpe!check_docker`). Zero Puppet Server check.
+      - `app-server`: Local health checks (`Root Filesystem Disk Space`, `Current CPU Load`, `Total Running Processes`, `NGINX Web Server Port 80`).
+    - Configured `contacts.cfg`: Defined `nagiosadmin` contact and `admins` contact group.
+    - Configured `timeperiods.cfg`: Defined `24x7`, `workhours`, and `none`.
+  - **Implemented Apache Loopback & Web Security (`puppet/modules/nagios/manifests/web.pp` & Templates)**:
+    - Installed packages `apache2` and `apache2-utils`.
+    - Managed `/etc/apache2/ports.conf` bound strictly to loopback: `Listen 127.0.0.1:8080`. Public ports 80/443 are strictly omitted to prevent conflicts with NGINX.
+    - Managed virtual host `/etc/apache2/sites-available/nagios.conf` bound strictly to `<VirtualHost 127.0.0.1:8080>`, configuring CGIs, assets, and HTTP Basic Authentication.
+    - Disabled default site: ensured `/etc/apache2/sites-enabled/000-default.conf` is `absent`.
+    - Managed htpasswd file `/etc/nagios4/htpasswd.users` with restrictive ownership and permissions (`0640`, `root:www-data`).
+    - Enforced pre-start validation: `exec { 'apache2_configtest': command => '/usr/sbin/apache2ctl configtest', refreshonly => true, onlyif => '/usr/bin/test -x /usr/sbin/apache2ctl', notify => Service['apache2'] }`.
+    - Managed systemd service `apache2.service`.
+  - **Enforced Secret-Handling & Guardrails**:
+    - Parameterized `nagios::web::admin_password_hash` in Hiera (`common.yaml`).
+    - Added `enforce_production_secret` parameter. In production mode, compiler fails fast if default placeholder `$apr1$demo$hashedpassword` is supplied. In development mode, emits explicit warning notify resource `nagios_placeholder_credential_warning`.
+    - Documented operator instructions for generating authentic password hash (`htpasswd -nb -B nagiosadmin <password>` or `openssl passwd -6`) before live deployment.
+  - **Enforced Strict Node Targeting (`puppet/modules/nagios/manifests/init.pp`)**:
+    - Class `nagios` asserts `$trusted['certname'] == 'app-server'`. Attempting to include `nagios` on `puppet-server`, `cicd-server`, or unexpected certnames fails fast.
+  - **Created Dedicated Test Suite (`puppet/tests/test_nagios_module.sh`)**:
+    - Created 18 automated validation checks covering package declarations, service management, path verification, host definitions, NRPE command boundaries, node service mapping, isolation of Jenkins/Docker checks, isolation of Puppet Server check, Apache packages/vhost, loopback port 8080 binding, Basic Auth configuration, htpasswd permissions (0640), placeholder detection guardrail, Nagios validation ordering, Apache validation ordering, service startup dependencies, fleet target isolation, and repeated compilation idempotency.
+    - Test results: **18/18 checks passed (100% PASS)**.
+  - **Executed Architectural & Regression Test Suites**:
+    - `puppet/tests/test_nagios_module.sh`: **18/18 checks passed (100% PASS)**.
+    - `puppet/tests/test_nrpe_module.sh`: **19/19 checks passed (100% PASS)**.
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 checks passed (100% PASS)**.
+    - `puppet/tests/test_common_module.sh`: **14/14 checks passed (100% PASS)**.
+    - Total: **66/66 Puppet tests passed across all suites**.
+  - **Code Quality and Formatting**:
+    - `puppet parser validate $(find puppet/ -name "*.pp")`: 100% clean DSL syntax.
+    - `git diff --check`: 0 whitespace errors, 0 merge conflicts.
+  - **Operational Boundary Compliance**:
+    - Strictly within Approval Boundary A. Zero AWS CLI commands, zero Terraform operations, zero remote SSH connections, zero live Puppet/CA operations, zero Git pushes.
+- **Outcome**: Checkpoint 5A.4 fully implemented, secured, and validated; ready for commit.
+
+---
+
+## 2026-11-25: Phase 5A.4 — Targeted Hardening: Fail-Closed Credentials & First-Install Startup Ordering
+
+- **Task**: Apply two targeted hardening corrections to Checkpoint 5A.4 (production credential enforcement and first-installation package startup suppression / ordering) without altering the canonical architecture or beginning Phase 5A.5.
+- **Root Causes Identified**:
+  1. **Default Permissive Secret Handling**: `nagios::web::enforce_production_secret` defaulted to `false` and `common.yaml` / `web.pp` carried `$apr1$demo$hashedpassword`, risking accidental live deployment with a placeholder credential if an operator forgot to enable enforcement.
+  2. **Package-Triggered Premature Service Startup & Validation Gaps**: On Ubuntu 24.04, `apt-get install nagios4` (which depends on `nagios4-cgi` -> `apache2` recommendation) and `apt-get install apache2` trigger Debian maintainer scripts (`deb-systemd-invoke` / `invoke-rc.d`) during `Package` execution before Puppet writes `ports.conf` (`127.0.0.1:8080`), Nagios objects, or `htpasswd.users`, risking port 80 collision with NGINX or unconfigured daemon startup. Additionally, `refreshonly => true` validators alone would not re-run on retry if files were already on disk from a previously failed validation, and `nagios4_configtest_before_start` needed explicit dependency edges from `nagios.cfg`, `cgi.cfg`, and `resource.cfg` (caught via Puppet `--graph` DAG analysis).
+- **Actions Completed**:
+  - **Correction A — Fail-Closed Credential Enforcement (`nagios::web`, `nagios`, `common.yaml`)**:
+    - Switched `nagios::web::enforce_production_secret` default to `true` (and `nagios::enforce_production_secret` default to `undef` so Hiera/subclass defaults enforce `true` cleanly).
+    - Removed `$apr1$demo$hashedpassword` default from `web.pp` (`admin_password_hash = undef`) and removed the active placeholder key from `puppet/hieradata/common.yaml` (setting `nagios::web::enforce_production_secret: true` and documenting interactive hash generation).
+    - Enforced compilation failure on absent, empty/whitespace, colon/newline-containing, malformed (non-bcrypt/APR1/SHA-2), or placeholder credentials, with operator instructions (`htpasswd -B -C 12 -n nagiosadmin` — zero `htpasswd -b` plaintext CLI flags).
+    - Test/dev mode (`enforce_production_secret => false`) requires explicit override and explicit non-empty credential while emitting a loud Puppet security warning notify.
+  - **Correction B — Safe Startup Suppression & 9-Step Ordering (`nagios::install_guard`, `server.pp`, `web.pp`, `init.pp`)**:
+    - Added `puppet/modules/nagios/manifests/install_guard.pp` and templates `enable_policy_rc_d.sh.erb` / `disable_policy_rc_d.sh.erb`.
+    - Creates `/usr/sbin/policy-rc.d` (mode `0755`) + `/run/puppet-nagios-pkg-install.pid` strictly when target packages (`nagios4`, `monitoring-plugins-basic`, `apache2`, `apache2-utils`) are not yet installed AND no unrelated administrator-managed `policy-rc.d` exists.
+    - Scopes blocking (`exit 101`) exclusively to `nagios4` and `apache2` while the recorded Puppet parent PID is live; all unrelated daemons return `exit 0`; crashed/aborted runs immediately fail open (`exit 0`) once Puppet exits; explicit cleanup deletes only Puppet-marked files (`# PUPPET-MANAGED-TEMP-POLICY-RC-D: git-repo-analyzer-nagios`). Zero modifications or deletions of admin-managed `policy-rc.d`; zero masking; steady-state runs execute zero guard actions.
+    - Ordered full 9-step lifecycle cleanly: `enable_policy_rc_d` -> packages (`nagios4` -> `apache2`) -> `disable_policy_rc_d` -> `/etc/nagios4` & base configs -> `nagios::objects` -> Apache configs & `htpasswd.users` -> dual refresh (`refreshonly => true`) and pre-start (`unless => systemctl is-active`) configtest gates (`/usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg` & `/usr/sbin/apache2ctl configtest`) -> `Service['nagios4']` & `Service['apache2']`.
+  - **Test Suite Updates (`test_nagios_module.sh`, `test_common_module.sh`, `test_nrpe_module.sh`)**:
+    - Expanded `puppet/tests/test_nagios_module.sh` from 18 to **24 checks** adding: parser + ERB `sh -n` validation (Test 19), compiled Puppet `--graph` `expanded_relationships.dot` DFS reachability checks (Test 20), sandboxed `/tmp` `puppet apply` behavioral verification of scoped `policy-rc.d` blocking and cleanup (Test 21), admin `policy-rc.d` preservation and steady-state 0-change idempotency (Test 22), failed-install PID fail-open and orphan recovery cleanup (Test 23), and mocked validation failure blocking & steady-state zero-restart verification (Test 24). Upgraded Test 13 & Test 17 to prove fail-closed compilation on absent/empty/malformed/placeholder credentials.
+    - Updated `test_common_module.sh` Test 13 and `test_nrpe_module.sh` Test 17 so `app-server` `site.pp` compilation tests pass a temporary synthetic Hiera test-only fixture rather than weakening fail-closed production Hiera.
+  - **Validation Results & Limitations**:
+    - `puppet/tests/test_nagios_module.sh`: **24/24 PASS**
+    - `puppet/tests/test_nrpe_module.sh`: **19/19 PASS**
+    - `puppet/tests/test_puppet_architecture.sh`: **15/15 PASS**
+    - `puppet/tests/test_common_module.sh`: **14/14 PASS**
+    - Combined suite: **72/72 checks PASS**. `puppet parser validate` clean; `git diff --check` clean.
+    - Scope distinction: Behavior verified via static checks, ERB rendering, compiled Puppet `--graph` analysis, `--noop` catalog compilation for all 3 nodes, and sandboxed non-root `/tmp` `puppet apply` simulations; real Ubuntu `apt-get install nagios4`/`apache2` and live systemd convergence occur during Phase 8 after EC2 provisioning.
+    - Strictly compliant with Approval Boundary A (no AWS, SSH, remote execution, or git push).
+- **Outcome**: Both hardening corrections completed, verified (72/72 total checks passed), and ready for commit.
+
+---
+
+## 2026-11-25: Phase 5A.4 — Narrowly Scoped Correction to `nagios::install_guard` Existing-Policy Preflight
+
+- **Task**: Add fail-closed preflight verification to `nagios::install_guard` when an existing `/usr/sbin/policy-rc.d` file is present prior to package installation.
+- **Root Cause**: `nagios_enable_policy_rc_d` skipped modifying an existing administrator-managed `policy-rc.d` (preserving it cleanly), but allowed `Package['nagios4']` and `Package['apache2']` to proceed without verifying whether that existing policy actually denied startup (exit `101`) for both `nagios4` and `apache2`.
+- **Actions Completed**:
+  - **Removed Blind Skip & Added Preflight Verification (`puppet/modules/nagios/manifests/install_guard.pp`, `puppet/modules/nagios/templates/enable_policy_rc_d.sh.erb`)**:
+    - Kept `unless => $all_installed_cmd` so steady-state runs remain 0-change no-ops once all target packages are installed, while removing the `onlyif` that skipped preflight whenever an unrelated `policy-rc.d` existed.
+    - When no policy exists: retains existing atomic creation of scoped Puppet-marked `/usr/sbin/policy-rc.d` (`0755`) + `/run/puppet-nagios-pkg-install.pid` and cleanup via `nagios_disable_policy_rc_d`.
+    - When a Puppet-marked policy already exists: inspects recorded PID lifecycle (fails safely if another active Puppet process owns the lock; refreshes stale dead PID cleanly on recovery).
+    - When an administrator-managed policy exists (lacking Puppet marker): never overwrites, modifies, deletes, or writes temp/PID files. Verifies regular-file/readable/executable status and runs repeatable clean-env (`env -i`), timeout-guarded (`timeout 3 < /dev/null`) probes across `nagios4` and `apache2` (`start`, `.service start`, `"(start)"`, `"(start)" 2`, `.service restart`, `"(restart)"`). Proceeds only if every probe returns `101`; otherwise fails before package installation with a clear operator diagnostic.
+  - **Expanded `puppet/tests/test_nagios_module.sh` (26/26 PASS)**:
+    - Upgraded Test 22 to validate safe targeted/blanket admin `policy-rc.d` denial, SHA256 byte-for-byte preservation, and steady-state 0-change runs.
+    - Added Test 25 proving permissive admin policies (permitting both, permitting `apache2`, permitting `nagios4`, or permitting `.service`) fail preflight before package install with zero temp files or policy mutations.
+    - Added Test 26 proving indeterminable policies (non-executable `0644`, broken symlink, ambiguous `105`, non-deterministic toggling) block package install untouched, and verifying existing Puppet guard stale-PID recovery vs. concurrent live-PID protection.
+  - **Executed Full Regression & Verification Suite**:
+    - `test_nagios_module.sh`: **26/26 PASS**; `test_nrpe_module.sh`: **19/19 PASS**; `test_puppet_architecture.sh`: **15/15 PASS**; `test_common_module.sh`: **14/14 PASS** (total **74/74 PASS**).
+    - `puppet parser validate`, all 3 fleet catalog compilations (`puppet apply --noop`), and `git diff --check` clean under Approval Boundary A.
+- **Outcome**: Fail-closed preflight verification implemented and locally validated (74/74 checks passed).
+
+---
+
+## 2026-11-25: Phase 5A.5 — Puppet Catalog Compilation, Dependency Ordering, Node Targeting & Convergence Validation
+
+- **Task**: Perform end-to-end catalog compilation, dependency DAG analysis, cross-node targeting verification, terminology/documentation alignment, and consolidated regression testing for Phase 5A (`Checkpoints 5A.1–5A.5`) under strict Approval Boundary A.
+- **Concrete Defects Discovered & Fixed**:
+  1. **NRPE Service Dependency Ordering & Stop-State Safety (`puppet/modules/nrpe/manifests/server.pp`)**:
+     - Added `before => Service[$service_name]` on custom check script resources (`check_jenkins.sh`, `check_docker.sh`, `check_puppetserver.sh`) and added `Package[$plugin_packages]` to `Service[$service_name]`'s `require` list so all baseline plugin binaries and node-specific custom scripts are guaranteed on disk before `nagios-nrpe-server` starts.
+     - Added `Enum['running', 'stopped'] $service_ensure = 'running'` and `Boolean $service_enable = true` parameters (aligned with `common` and `nagios` modules) while preserving Puppet 8 `Service#refresh` runtime safety when intentionally stopped.
+     - Expanded `puppet/tests/test_nrpe_module.sh` to **20/20** adding Test 20 (JSON catalog DAG completeness & stopped-service compilation).
+  2. **Test Terminology & Documentation Drift Cleanup**:
+     - Replaced ambiguous "Repeated compilation idempotency" wording on `--noop` compile tests (`test_common_module.sh` Test 14, `test_nrpe_module.sh` Test 18, `test_nagios_module.sh` Test 18) with accurate "Repeat catalog compilation determinism (cycle-free DAG)" labels, reserving convergence/idempotency claims strictly for `--detailed-exitcodes` fixture runs (`exit 2 -> exit 0`) and clearly deferring live OS/systemd convergence to Approval Boundary B.
+     - Updated stale counts and descriptions in `project_docs/PROJECT_STATUS.md`, `project_docs/IMPLEMENTATION_PLAN.md` (including fixing stale 5A.4 admin `policy-rc.d` probe description to reflect `0c37d99`'s non-execution fail-closed guard), and `project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md` (status matrix and `common` class reference).
+- **Integrated Phase 5A.5 Validation Suite (`puppet/tests/test_phase5a_convergence.sh`, 8/8 PASS)**:
+  - Verified `puppet parser validate` on all 10 manifests (`site.pp` + `common`, `nrpe`, `nagios`) and Hiera v5 fail-closed production baseline.
+  - Confirmed fail-closed `app-server` gate without operator credential, plus deterministic 4-node JSON catalog compilation (`puppet-server`, `app-server` via isolated temp Hiera fixture, `cicd-server`, and `default` fallback) with zero duplicate resource declarations.
+  - Verified strict cross-node resource isolation, Nagios `services.cfg` $\leftrightarrow$ NRPE `nrpe.cfg` command parity & `127.0.0.1:8080` loopback binding, cycle-free `--graph` `expanded_relationships.dot` DFS reachability across all three fleet nodes, sandboxed `--detailed-exitcodes` (`2 -> 0`) + `validate_cmd` failure isolation + Puppet 8 `Service#refresh` skipped-when-stopped check, and zero hardcoded EC2 IPs.
+- **Full Regression Validation (Boundary A)**:
+  - Phase 5A suites: `test_puppet_architecture.sh` (15/15), `test_common_module.sh` (14/14), `test_nrpe_module.sh` (20/20), `test_nagios_module.sh` (26/26), `test_phase5a_convergence.sh` (8/8) — **83/83 checks PASS**.
+  - Phase 4 Ansible regression suites (`ansible/tests/test_*.sh`): **208/208 checks PASS** across all 8 suites.
+  - `puppet parser validate`, 3-node catalog compilation, and `git diff --check` clean. Live EC2 package/systemd convergence remains gated behind Approval Boundary B.
+- **Outcome**: Phase 5A validation and consolidation complete under Approval Boundary A; staged changes ready for user review before commit.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.1: Backend Core, Security Validation & Persistent Store
+
+- **Task**: Implement Checkpoint 6.1 of Phase 6 under Approval Boundary A without creating `frontend/` or modifying analyzer, Docker, Jenkins, Terraform, Ansible, or Puppet files.
+- **Implemented (`backend/`)**:
+  - Project & strict TypeScript build setup (`backend/package.json`, `backend/tsconfig.json`, `backend/tsconfig.build.json`, `backend/.gitignore`, `backend/.env.example`) with `strict`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`.
+  - Centralized Zod environment validation (`backend/src/config/env.ts`) supporting dev and production settings, blocking `SSRF_CHECK_DNS=false` in production, and conditionalizing Jenkins URL/credentials on `JENKINS_MOCK_MODE=false`.
+  - Defense-in-depth SSRF validation (`backend/src/validators/ipGuard.ts`, `backend/src/validators/repoValidator.ts`): separate IPv4/IPv6 `net.BlockList` guards rejecting loopback, RFC 1918, link-local/`169.254.169.254`, CGNAT, multicast, reserved, zone-scoped, mapped, and tunneled addresses; strict HTTPS + `github.com`-only URL syntax validation; multi-address DNS resolution check; pinned socket lookup (`createPinnedLookup`) + `socket.remoteAddress` check defeating DNS rebinding; manual multi-hop redirect re-validation defeating redirect SSRF.
+  - Lightweight atomic disk store (`backend/src/services/analysisStore.ts`): serialized writes via internal mutex, same-directory temp file + `fsync` + atomic `rename`, orphan temp cleanup, explicit corruption errors, preserved `COMPLETED`/`FAILED`/`CANCELLED` history, and restart recovery transitioning undispatched/expired `QUEUED`/`BUILDING` jobs to `FAILED` while preserving valid resumable in-flight handles for Checkpoint 6.2.
+  - Reserved pure `IJenkinsClient` interface (`backend/src/services/jenkinsClient.ts`) and Express HTTP shell (`backend/src/app.ts`, `backend/src/routes/health.ts`, `backend/src/server.ts`, `backend/src/utils/errors.ts`) exposing `GET /api/health`, security headers, CORS validation, and standard `{ error: { code, message, details } }` JSON errors.
+- **Verification**:
+  - `npm run typecheck`, `npm run build`, `npm test` (12/12 tests passing across validator/SSRF, persistent store/recovery/atomic failure preservation, env/health/CORS/error suites), production `node dist/server.js` smoke check, and `git diff --check` clean under Approval Boundary A.
+- **Outcome**: Checkpoint 6.1 complete and awaiting review prior to Checkpoint 6.2; Phase 6 remains in progress.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.2: Jenkins Client Abstraction & Analysis API
+
+- **Task**: Implement `IJenkinsClient`, `MockJenkinsClient`, `LiveJenkinsClient`, isolated artifact ingestion, background polling lifecycle with restart recovery, and canonical `/api/analyses*` endpoints under Approval Boundary A (leaving `frontend/`, analyzer scripts, `Jenkinsfile`, and infra untouched).
+- **Implemented (`backend/`)**:
+  - Extended `backend/src/services/jenkinsClient.ts`, `backend/src/types/analysis.ts`, `backend/src/config/env.ts`, `backend/src/app.ts`, and `backend/src/server.ts`.
+  - Added deterministic `MockJenkinsClient` (`backend/src/services/mockJenkinsClient.ts`) simulating queue (`2s`) -> build (`5s`) -> terminal outcomes (`SUCCESS`, `FAILURE`, `ABORTED`) with analyzer-compatible `metrics.json`, `summary.md`, and PNG fixtures (including zero-commit omission).
+  - Added `LiveJenkinsClient` (`backend/src/services/liveJenkinsClient.ts`) with same-origin controller URL enforcement, manual redirect checks preventing credential leakage, CSRF crumb handling, bounded response reads, Zod response validation, traversal rejection on artifact paths, and secret redaction across error paths.
+  - Added isolated `ArtifactIngestor` (`backend/src/services/artifactIngestion.ts`) validating analyzer `metrics.json` schema, UTF-8 `summary.md`, PNG magic bytes, non-zero-commit chart completeness, and non-executable atomic PNG caching (`<DATA_DIR>/artifacts/<analysisId>/`), refusing to fabricate missing artifacts.
+  - Added `AnalysisManager` (`backend/src/services/analysisManager.ts`) & routes (`backend/src/routes/analyses.ts`) for `POST /api/analyses` (`202`), `GET /api/analyses/:id` (`QUEUED|BUILDING|COMPLETED|FAILED|CANCELLED`, internal Jenkins IDs stripped), `GET /api/analyses/:id/results` (`409` while incomplete, `200` when ready), and `GET /api/analyses/:id/charts/:name` (strict allowlist preventing path traversal), plus restart resumption without duplicate `triggerJob` calls. (Single-process file store assumption preserved per ADR 001/009.)
+- **Verification**:
+  - `npm run typecheck`, `npm run build`, and `npm test` passed cleanly (`21/21` across all Checkpoint 6.1 & 6.2 suites including `MockJenkinsClient`, mocked-HTTP `LiveJenkinsClient`, `ArtifactIngestor`, `/api/analyses*` API E2E, and restart recovery). `dist/server.js` smoke check and `git diff --check` clean.
+- **Outcome**: Checkpoint 6.2 complete under Approval Boundary A; Phase 6 remains in progress awaiting Checkpoint 6.3 (`frontend/`).
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.3: Frontend Implementation
+
+- **Task**: Implement Checkpoint 6.3 of Phase 6 (`frontend/`) under Architecture Decision Option A (strict freeze on existing `analyze2.sh`, `ai/*`, `Dockerfile`, `Jenkinsfile`, `backend/`, and all Terraform/Ansible/Puppet files) under Approval Boundary A.
+- **Implemented (`frontend/`)**:
+  - Project scaffold & build tooling (`frontend/package.json`, `frontend/tsconfig.json`, `frontend/tsconfig.node.json`, `frontend/vite.config.ts`, `frontend/tailwind.config.js`, `frontend/postcss.config.js`, `frontend/index.html`, `frontend/src/vite-env.d.ts`, `frontend/.env.example`, `frontend/.gitignore`, `frontend/src/index.css`) targeting relative `/api` routes cleanly in both Vite dev proxy (`http://127.0.0.1:3000`) and future production NGINX reverse proxy without hardcoded IPs.
+  - Typed API contracts & fetch client (`frontend/src/types/analysis.ts`, `frontend/src/api/client.ts`) matching Phase 6.1/6.2 backend envelopes (`/api/health`, `POST /api/analyses`, `GET /api/analyses/:id`, `GET /api/analyses/:id/results`, `/api/analyses/:id/charts/:name`), including PNG content-type verification and structured `ApiClientError` handling.
+  - Resilient polling hook (`frontend/src/hooks/useAnalysisPolling.ts`) backing off from `2s` up to a `10s` interval ceiling, enforcing a `10m` maximum timeout, handling transient connection blips with retry capability, and stopping cleanly on terminal states (`COMPLETED`, `FAILED`, `CANCELLED`).
+  - React dashboard components (`frontend/src/App.tsx`, `frontend/src/components/{RepoInputForm,AnalysisProgress,MetricCards,ActivityCharts,MarkdownReport}.tsx`): client sanity URL checks + duplicate submission prevention + bookmarkable `?analysisId=` & session-local history pills, truthful status progression without fake `%` bars or internal Jenkins IDs, accurate `metrics.json` labels (`30`-day hotspot churn window, DOA ownership, branch drift without fabricated all-time commit counts), raster PNG artifact rendering with zero-commit/error fallbacks (no broken `<img>`), Recharts visuals strictly from `metrics.json`, and safe `react-markdown` + `remark-gfm` rendering without raw HTML (`rehype-raw` omitted).
+  - Unit & workflow tests (`frontend/test/{setup.ts,apiClient.test.ts,repoInputForm.test.tsx,analysisPolling.test.tsx,resultsAndMarkdown.test.tsx,appWorkflow.test.tsx}`).
+- **Verification**:
+  - `npm run typecheck` (`tsc --noEmit`), `npm run build` (`vite build` -> `dist/`), and `npm test` (`5` files, `14` tests passed).
+  - Built bundle scan (`frontend/dist/`) confirmed zero secrets, zero Jenkins URLs/tokens/IDs, and zero Vite dev/HMR tokens.
+  - Local E2E verification against real compiled `backend/dist/server.js` (`JENKINS_MOCK_MODE=true`) via both Vite proxy (`:5173`) and static `dist/` + `/api/` proxy (`:4173`) with headless Chrome DOM inspection confirmed `200 UP`, `400 VALIDATION_ERROR`, `404 NOT_FOUND`, `QUEUED -> BUILDING -> COMPLETED`, results ingestion, valid PNG chart bytes, and rendered UI DOM (`Backend API: UP`, metrics, blob PNG images, Recharts SVG). `git diff --check` clean.
+- **Outcome**: Checkpoint 6.3 complete under Approval Boundary A; Phase 6 remains in progress awaiting Checkpoint 6.4.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.4: Integrated Build Verification & Phase 5B Handover
+
+- **Task**: Execute Checkpoint 6.4 integrated build verification, runtime/persistence checks, and Phase 5B handover documentation under Approval Boundary A (`feat/terraform-infrastructure` baseline `268df23`), without altering `analyze2.sh`, `ai/*`, `Dockerfile`, `Jenkinsfile`, `backend/`, `frontend/`, Terraform, Ansible, or Phase 5A Puppet modules.
+- **Executed Verification (Local / Mock Jenkins)**:
+  - Production builds & test suites: `backend` (`npm run typecheck && npm run build && npm test` $\rightarrow$ **21/21 passed**, `dist/server.js` verified runtime-only imports `express`/`cors`/`zod` with zero devDependencies) and `frontend` (`npm run typecheck && npm run build && npm test` $\rightarrow$ **5 files, 14/14 passed**, `frontend/dist/` built cleanly using relative `/api` routes with no Vite dev server).
+  - Compiled production E2E + restart test against live `backend/dist/server.js` (`NODE_ENV=production`, `JENKINS_MOCK_MODE=true`) and NGINX-equivalent static+`/api/` proxy (`http://127.0.0.1:4173`):
+    - Verified fail-closed startup exits (`exit 1`) on `SSRF_CHECK_DNS=false` in production and `JENKINS_MOCK_MODE=false` without Jenkins credentials.
+    - Verified `GET /api/health` (`200 UP`), SPA fallback, `400 VALIDATION_ERROR`, `403 CORS_FORBIDDEN`, premature `/results` (`409 CONFLICT`), `QUEUED -> BUILDING -> COMPLETED`, results + PNG charts, and post-`SIGTERM` cold restart recovery (`preservedCompleted: 1`, interrupted pre-dispatch job transitioned to `FAILED`, orphan temp file cleaned, post-restart headless Chrome DOM rendering verified).
+    - Empirically observed that leaving `CORS_ORIGIN` empty while proxying browser requests bearing `Origin: http://127.0.0.1:4173` causes Express `cors()` to reject `POST` with `403 CORS_FORBIDDEN` — codified in Phase 5B handover as requiring Terraform-derived `CORS_ORIGIN`.
+  - Scenario HTTP verification over compiled `backend/dist/` modules (`FAILED`, `CANCELLED` in queue, `zero_commits` returning `null` chart URLs and `404` chart downloads, `missing_chart` failing closed with `ARTIFACT_INGESTION_FAILED`).
+- **Handover Documentation Authored**:
+  - Created [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md) documenting the directory/ownership matrix, runtime & static deployment specs, full 14-variable classification (including all 9 core variables plus `HOST`, `SSRF_CHECK_DNS`, and timeout/poll controls), systemd & NGINX handover contracts, health check endpoint, Puppet Phase 5B ordering, post-Terraform/Phase 7 dependencies, and known limitations.
+  - Updated [`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md) marking Phase 6 Checkpoints 6.1–6.4 complete locally under Approval Boundary A (with live Jenkins deferred to Phase 7 and cloud provisioning awaiting Boundary B).
+- **Outcome**: Checkpoint 6.4 and Phase 6 local implementation complete under Approval Boundary A; ready for user review prior to committing Checkpoint 6.4 documentation or proceeding to Phase 5B.
+
+---
+
+## 2026-11-25: Phase 6 — Checkpoint 6.4 Correction: Node.js 24 LTS Runtime Alignment
+
+- **Task**: Align the Phase 5B application runtime contract from EOL Node.js 20 LTS (EOL April 30, 2026) to **Node.js 24 LTS** (EOL April 30, 2028), verify local compatibility and dependency engine constraints, and update Phase 5B forward-looking contracts under Approval Boundary A without altering `backend/`, `frontend/`, `Dockerfile`, or historical phase logs.
+- **Compatibility & Installation Findings**:
+  - Local runtime verified at Node `v24.13.1` / `npm 11.8.0`.
+  - Audited all `engines.node` entries across `backend/package-lock.json` (`57` entries) and `frontend/package-lock.json` (`249` entries): zero `<24` or `^20` upper bounds exist; backend runtime relies strictly on `express`, `cors`, `zod`, and standard Node built-ins (`node:dns`, `node:http`, `node:https`, `node:net`, `node:crypto`, `node:fs/promises`, `node:path`).
+  - Executed `npm ci && npm run typecheck && npm run build && npm test` on `backend` (`21/21` passed) and `frontend` (`5` files, `14/14` passed) cleanly under Node `v24.13.1`.
+  - Ubuntu 24.04 LTS runtime installation path codified in `project_docs/PHASE_5B_HANDOVER.md` using NodeSource `https://deb.nodesource.com/node_24.x` (`nodistro` suite + `nodesource-repo.gpg.key`), providing `/usr/bin/node` for systemd; live EC2 package installation remains deferred to **Phase 5B**.
+- **Updated Documentation**: [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md), [`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md), [`AGENTS.md`](file:///home/aditya-2274/Git-repo-analyzer/AGENTS.md), [`project_docs/ARCHITECTURE_DECISIONS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ARCHITECTURE_DECISIONS.md), [`project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/ANSIBLE_AND_PUPPET_ARCHITECTURE.md), and [`project_docs/IMPLEMENTATION_PLAN.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/IMPLEMENTATION_PLAN.md) (future Phase 5B runtime references only; `Dockerfile` and historical Phase 2/3/4 logs untouched).
+- **Outcome**: Checkpoint 6.4 Node.js 24 LTS alignment complete under Approval Boundary A; awaiting approval before committing or starting Phase 5B.
+
+---
+
+## 2026-11-25: Phase 6 — Final Closure Corrections (Authorization Boundary & Artifact Staging Strategy)
+
+- **Task**: Apply two scoped documentation corrections to complete Phase 6 handover readiness under Approval Boundary A without changing code, lockfiles, Terraform, Ansible, Phase 5A Puppet modules, or `Dockerfile`, and without starting Phase 5B implementation or live cloud provisioning.
+- **Corrections Applied**:
+  - **Phase 5B vs Boundary B Authorization Clarity ([`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md)):** Replaced ambiguous `Next Phase` phrasing with explicit separation between **Boundary A** (local Phase 5B Puppet manifest/template/test authoring and catalog validation only) and **Boundary B** (separate explicit operator approval required for Terraform provisioning, SSH access, remote Ansible execution, live Puppet runs, and live EC2 deployment).
+  - **Artifact Staging Strategy Finalized ([`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md) §2 & §9–§11):** Evaluated direct Ansible copy, operator-built versioned release archive transferred over SSH, EC2 3 CI transfer (incompatible with Terraform SGs and Phase 5B-before-7 ordering), and S3 pull (no IAM profile on EC2 2; state bucket reserved for Terraform state). Codified the chosen strategy (designed; implementation deferred to Phase 5B / execution deferred to Boundary B): pre-built immutable versioned `.tar.gz` (`backend/` with `npm ci --omit=dev` + `frontend/dist/` + `release-manifest.json` + `.sha256`) staged into `/var/cache/git-repo-analyzer/staging`, with Puppet exclusively owning checksum verification, extraction into `/opt/git-repo-analyzer/releases/<release-id>`, symlink switching (`/opt/git-repo-analyzer/backend`, `/var/www/git-repo-analyzer/dist`), preservation of external persistent `DATA_DIR` (`/var/lib/git-repo-analyzer/data`), and retention of 2–3 prior releases for deterministic rollback.
+- **Outcome**: Phase 6 closure documentation ready for single documentation commit upon explicit operator approval.
+
+---
+
+## 2026-11-25: Phase 6 — Final Pre-Commit Handover Refinements (Checksum, Permissions & Rollback)
+
+- **Task**: Address three final review refinements in [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md) under Approval Boundary A without altering `PROJECT_STATUS.md`, application source code, dependencies, or existing infrastructure files.
+- **Refinements Applied**:
+  - **Eliminated Checksum Circularity (§9.3–§9.5):** Removed `archiveSha256` from the inner `release/release-manifest.json`; specified calculating `.tar.gz.sha256` externally **after** tarball creation, transferring `.tar.gz` + `.tar.gz.sha256` sidecar into staging, and enforcing both Hiera `expected_sha256` comparison and `sha256sum -c --strict` prior to `tar` extraction.
+  - **Clarified Non-Writable Release Permissions (§2):** Defined explicit parent directory permissions (`/opt/git-repo-analyzer`, `/opt/git-repo-analyzer/releases` `root:root` `0755`; `/var/www/git-repo-analyzer` `root:www-data` `0750`; `/var/lib/git-repo-analyzer` `root:gitrepo` `0750`), read/execute/traverse release subtree permissions (`root:gitrepo` `0750`/`0640` for `backend/`, `root:www-data` `0750`/`0640` for `frontend/dist/`), symlink ownership, zero write access for runtime services inside `releases/`, and preserved writable `DATA_DIR` (`gitrepo:gitrepo`, `0750`) + `gitrepo:gitrepo` service identity.
+  - **Clarified Rollback Retention & Health Gate (§9.3, §9.5):** Explicitly gated pruning on post-activation `GET /api/health` + `GET /` `200` verification so the prior known-good release remains intact on disk, enabling zero-rebuild/zero-retransfer Hiera rollback (`.extracted.ok` check skips retransfer/re-extraction) with mutable state preserved outside `releases/`.
+- **Outcome**: Handover specification clean and consistent; awaiting operator commit approval before starting Phase 5B.
+
+---
+
+## 2026-11-25: Phase 5B — Puppet Application Deployment (Approval Boundary A Only)
+
+- **Task**: Implement Phase 5B (`puppet/modules/application/`, `site.pp` `app-server` wiring, and non-secret `common.yaml` defaults) strictly under Approval Boundary A per [`project_docs/PHASE_5B_HANDOVER.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PHASE_5B_HANDOVER.md), without modifying `backend/`, `frontend/`, `ai/*`, `analyze2.sh`, `Dockerfile`, `Jenkinsfile`, `terraform/`, `ansible/`, or existing Phase 5A modules (`common`, `nrpe`, `nagios`), and without any cloud provisioning or commit/push operations.
+- **Implemented (`puppet/modules/application/` & Fleet Wiring)**:
+  - [`puppet/modules/application/manifests/init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/init.pp): Top-level `application` orchestrator with strict `app-server` node targeting guard (`enforce_node`), full subclass DAG ordering (`nodejs -> release -> backend -> backend_health_gate -> nginx -> frontend_health_gate -> promote_and_prune`), and `service` refresh health re-checks.
+  - [`puppet/modules/application/manifests/nodejs.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/nodejs.pp): Official NodeSource Node.js 24 LTS repository (`https://deb.nodesource.com/node_24.x nodistro main`), `/etc/apt/keyrings/nodesource.gpg` (`0644`), APT pin preference (`900`), `package { 'nodejs' }` (with `defined()` guards avoiding duplicate declarations with `common`), and Node major `24` runtime verification gate rejecting Node 20 EOL.
+  - [`puppet/modules/application/manifests/release.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/release.pp) & [`release_manager.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/release_manager.py): Manages handover directories, verifies `.tar.gz.sha256` sidecar + Hiera `expected_sha256` + `sha256sum -c --strict` prior to extraction, validates tarball members against traversal/escaping symlinks/hardlink attacks/special FIFO & device nodes/duplicates/file-dir collisions/symlinked staging files/`frontend/dist` symlinks, enforces inner `release-manifest.json` (`releaseId`, `builtAt|builtAtUtc`, `gitCommit|backendCommit`, Node 24 target, zero self-referential `archiveSha256`), validates extracted tree alongside `.extracted.ok`, atomically enforces read-only runtime permissions (`root:gitrepo` `0750`/`0640` on `backend/`, `root:www-data` `0750`/`0640` on `frontend/dist/`), atomically pairs `/opt/git-repo-analyzer/backend` & `/var/www/git-repo-analyzer/dist` symlinks (`activate` / `is-active`), tracks `pendingActivation.serviceSynced` across interrupted runs, auto-reverts both active symlinks back to `currentKnownGood` on health failure, protects active + previous known-good releases regardless of mtime, and supports zero-rebuild rollback.
+  - [`puppet/modules/application/manifests/backend.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/backend.pp) & templates ([`backend.env.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/templates/backend.env.erb), [`git-repo-analyzer-backend.service.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/templates/git-repo-analyzer-backend.service.erb)): Creates system group/user `gitrepo` (`home => '/nonexistent'`), `/var/lib/git-repo-analyzer/data` (`gitrepo:gitrepo`, `0750`), `/etc/git-repo-analyzer/backend.env` (`root:gitrepo`, `0640`, `show_diff => false`, all 14 `env.ts` variables with fail-closed SSRF, `enforce_production_cors => true`, and Jenkins secret guards), hardened systemd unit (`Restart=always`, `KillSignal=SIGTERM`, `TimeoutStopSec=15`, journal logging), `systemctl daemon-reload`, and release-gated service activation.
+  - [`puppet/modules/application/manifests/nginx.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/nginx.pp) & [`nginx_git_repo_analyzer.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/templates/nginx_git_repo_analyzer.conf.erb) & [`health_check.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/health_check.py): Manages `security.conf` (`server_tokens off`), production SPA (`try_files $uri $uri/ /index.html`), `/api/` loopback reverse proxy (`http://127.0.0.1:3000/api/` preserving `Host`, `X-Forwarded-Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `Origin`), disabling `sites-enabled/default` on activation, double `nginx -t` pre-start/refresh gates, zero `/nagios` or Apache `127.0.0.1:8080` interference, and loopback HTTP health probes.
+  - [`puppet/manifests/site.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/manifests/site.pp) & [`puppet/hieradata/common.yaml`](file:///home/aditya-2274/Git-repo-analyzer/puppet/hieradata/common.yaml): Chained `-> class { 'application': }` on `node 'app-server'` and documented non-secret defaults (`application::enforce_production_cors: true`, `retain_releases: 3`, etc.) in `common.yaml` preserving zero secrets and zero hardcoded EC2 IPs.
+- **Verification**:
+  - `puppet parser validate` on all manifests, `erb -x -T - | ruby -c` on all ERB templates, Python `py_compile` checks, and `git diff --check`.
+  - [`puppet/tests/test_phase5b_release.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_release.sh): **25/25 checks passed** against real `backend/dist` + `frontend/dist` tarballs (sidecar/Hiera SHA-256 verification, traversal/symlink/hardlink/FIFO/chr/duplicate/collision/symlink-staging rejection, circular `archiveSha256` & Node 20 rejection, tampered `.extracted.ok` rejection, truncated extraction atomic cleanup, split-brain symlink self-healing, exact permissions, empty-staging rollback, `exit 2 -> 0` idempotency).
+  - [`puppet/tests/test_phase5b_application.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_application.sh): **15/15 checks passed** (Node 24 vs Node 20 gate, `0640` env + fail-closed `enforce_production_cors` + live NGINX $\leftrightarrow$ `backend/dist/server.js` same-origin/multi-origin/missing-origin/unauthorized/malformed/`OPTIONS`/SPA matrix, real `nginx -t` pass & corrupt-config block, Nagios/Apache non-collision, fleet node isolation, `--graph` DAG cycle-free causal chain, backend/frontend health failures triggering auto-revert + preserving prior releases/DATA_DIR, interrupted restart-sync & promotion recovery, mtime-independent pruning protection, zero-rebuild rollback, and secrets/IP hygiene).
+  - Existing regression suites: All Phase 5A (`83/83` across all 5 suites) and Phase 4 Ansible (`208/208` across all 8 suites) executed cleanly. *(Note: `puppet-lint` is not installed locally; live NodeSource APT install, systemd daemon convergence, and EC2 2 deployment remain deferred to Approval Boundary B and Phase 7.)*
+- **Outcome**: Phase 5B local implementation & adversarial audit (Approval Boundary A) **provisionally complete and awaiting operator review prior to closure approval or committing**; cloud provisioning and live deployment remain blocked pending Approval Boundary B.
+
+---
+
+## 2026-11-25: Phase 5B — Final Security, Reliability & Integration Audit (Approval Boundary A)
+
+- **Task**: Perform final adversarial audit of Phase 5B (`puppet/modules/application/`, `release_manager.py`, `health_check.py`, CORS configuration, Puppet convergence, and regression suites) strictly under Approval Boundary A without staging, committing, pushing, or executing cloud/remote operations.
+- **Concrete Defects Discovered & Fixed**:
+  1. **Unconditional `systemctl daemon-reload` (`backend.pp`)**: Observed Test 5 in `test_phase5b_application.sh` fail locally with `'/bin/systemctl daemon-reload' returned 1` because `File[$systemd_unit_path]` notified `Exec['app_systemd_daemon_reload']` even when `manage_service => false`. Gated both `Exec['app_systemd_daemon_reload']` and `$systemd_unit_notify` on `if $manage_service`.
+  2. **CORS Validation, Normalization & Edge Cases (`backend.pp`, `backend.env.erb`, `backend/src/config/env.ts`, `backend/src/app.ts`)**:
+     - Tightened `application::backend` `cors_origin` validation to enforce valid TCP ports (`1`–`65535`), reject stray/trailing commas, normalize whitespace around commas before writing `backend.env`, tighten `jenkins_url` validation, and require absolute paths on directory/file parameters.
+     - Hardened `backend/src/config/env.ts` (`parseCorsOrigins`) to explicitly reject embedded credentials (`parsed.username` / `parsed.password`) instead of silently stripping them via `parsed.origin`, and updated `backend/src/app.ts` (`origin === undefined`) so an explicit empty `Origin: ""` header returns `403 CORS_FORBIDDEN` while omitted `Origin` remains permitted.
+  3. **NGINX Security Header Separation (`nginx_git_repo_analyzer.conf.erb`)**: Moved NGINX `X-Content-Type-Options`, `X-Frame-Options: SAMEORIGIN`, and `Referrer-Policy` directives into `location /` and `location /assets/` so `/api/` responses preserve Express's stricter `X-Frame-Options: DENY` / `Referrer-Policy: no-referrer` without conflicting duplicates, while static `/assets/*` keep all security headers alongside `Cache-Control`.
+  4. **Release Manager Security & Consistency (`release_manager.py`, `health_check.py`)**:
+     - Eliminated staging TOCTOU between `sha256sum -c --strict` and `tarfile.open` by streaming the archive via `O_RDONLY | O_NOFOLLOW` into root-owned `tmp_dir` while recomputing SHA-256 against `expected_sha256`.
+     - Added `_resolve_relative_symlink_within_backend` / `_verify_backend_symlinks_sandbox` rejecting multi-hop chained relative symlink escapes (`link/..`) and symlink loops, enforced directory-only root tar entries, rejected prohibited `backend/.env`/`backend/.git`/`backend/src`/`backend/test` paths, enforced hardlinks before symlinks in Pass 2, guarded `backend/dist` against symlink replacement, and verified `.extracted.ok` `gitCommit`/`nodeVersion` parity against `release-manifest.json`.
+     - Added transactional symlink-pair rollback inside `activate_release` / `_revert_to_known_good`, honest `serviceSynced` tracking when `systemctl restart` fails during revert, state-before-delete atomic ordering in `promote_and_prune`, and proxy-bypass (`ProxyHandler({})`) in `health_check.py`.
+- **Expanded Verification & Results (Boundary A)**:
+  - [`puppet/tests/test_phase5b_release.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_release.sh): **30/30 checks passed** (added multi-hop chained symlink escape & loop rejection, non-dir wrapper root & prohibited `backend/.env`/`src` rejection, symlinked `backend/dist` & marker `gitCommit` mismatch rejection, transactional `activate` symlink rollback, and symlinked release dir rejection).
+  - [`puppet/tests/test_phase5b_application.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_application.sh): **18/18 checks passed** (expanded Test 4/5/12 for normalized CORS, invalid ports/commas, empty `Origin: ""` 403, full proxied E2E analysis + PNG chart fetch, and header separation; added Test 16 `manage_service => true` DAG & `manage_service => false` zero-`systemctl` proof; Test 17 failed-revert `serviceSynced=false` & state-before-delete pruning recovery; Test 18 live broken Node 24 release auto-reverted back to real Node 24 `1.0.0` behind real NGINX).
+  - Backend (`npm run typecheck && npm run build && npm test`): **21/21 passed**; Frontend (`npm run typecheck && npm run build && npm test`): **5 files, 14/14 passed**; Phase 5A regression: **83/83 passed**; Phase 4 Ansible regression: **208/208 passed**; `puppet parser validate` & `git diff --check`: passed (`puppet-lint` unavailable locally).
+- **Remaining Limitations**: `puppet-lint` not installed locally; live `apt` NodeSource Node 24 install, live systemd `Service['git-repo-analyzer-backend']`/`Service['nginx']` convergence, Terraform-derived `application::cors_origin` population, and live Jenkins (`Phase 7`) remain deferred to Approval Boundary B. Phase 5B remains **provisionally accepted (not closed)** pending operator review.
+
+---
+
+## 2026-11-26: Phase 5B — Final Blocker Resolution: Atomic Release Consistency & Security Coverage (Approval Boundary A Only)
+
+- **Task**: Eliminate the remaining split-release activation window under forced `SIGKILL` between backend and frontend symlink replacements, test forced process interruption (`SIGKILL` + normal exception), close remaining archive-security/crash-recovery test gaps, verify recovery/pruning invariants, document Git attribution, and re-run full regression suites under Approval Boundary A without committing, pushing, or running live cloud/remote commands.
+- **Architectural Correction — Single Shared Atomic Pointer (`current`)**:
+  - Replaced independent switching of `/opt/git-repo-analyzer/backend` and `/var/www/git-repo-analyzer/dist` inside [`release_manager.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/release_manager.py), [`release.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/release.pp), and [`init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/init.pp) with one shared atomic release pointer (`/opt/git-repo-analyzer/current -> /opt/git-repo-analyzer/releases/<version>`).
+  - `/opt/git-repo-analyzer/backend -> /opt/git-repo-analyzer/current/backend` and `/var/www/git-repo-analyzer/dist -> /opt/git-repo-analyzer/current/frontend/dist` remain invariant child symlinks, preserving all existing systemd `WorkingDirectory`/`ExecStart` paths, NGINX `root`, and `0750`/`0640` `root:gitrepo` vs `root:www-data` isolation while switching or reverting active releases in **one atomic `os.replace()` syscall** (`rename(2)`).
+  - Added legacy direct-symlink migration ordering inside `_ensure_invariant_pair_links` (`current` created before child links so even `SIGKILL` mid-migration cannot expose mixed versions) and automatic dead-PID temp cleanup (`_cleanup_dead_pid_temps` / `_is_pid_dead`) in `prepare_release`, `_atomic_symlink_replace`, and `_write_state_atomic`, plus strict type checks on `.extracted.ok` `gitCommit` / `nodeVersion` fields in `is_extracted`.
+- **Expanded Verification & Coverage**:
+  - [`puppet/tests/test_phase5b_release.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_release.sh): **34/34 checks passed** (updated Tests 5, 25, 29 for single-pointer topology; added Test 31 absolute paths `/etc/evil`, wrapper double-slash `release//etc/evil`, nested traversal, and `BLKTYPE`; Test 32 corrupt/symlinked/missing/stale `.extracted.ok` markers + real `SIGKILL` mid-`prepare_release` recovery reaping dead-PID `.tmp-*`; Test 33 `PermissionError` and forced `SIGKILL` pre-switch, post-switch, and mid-legacy-migration proving zero mixed release and autonomous Puppet convergence/rollback; Test 34 `SIGKILL` during `_write_state_atomic` preserving valid `release-state.json` + pruning safeguards).
+  - [`puppet/tests/test_phase5b_application.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_application.sh): **19/19 checks passed** (updated Test 15 to verify single-pointer layout and reject unmigrated legacy links in `promote-and-prune`; added Test 19 running live Node 24 + live NGINX across forced `SIGKILL` pre- and post-`os.replace(opt/current)` with autonomous Puppet convergence `exit 2 -> 0`, rollback without tarball, and persistent `DATA_DIR` preservation).
+- **Remaining Limitations**: `puppet-lint` not installed locally; live `apt` NodeSource Node 24 install, live systemd daemon convergence, Terraform-derived `application::cors_origin` population, and live Jenkins (`Phase 7`) remain deferred to Approval Boundary B. Phase 5B remains **provisionally accepted (not closed)** pending operator review.
+
+---
+
+## 2026-11-26: Phase 5B — Final Read-Only Implementation Review, Clarifications & Closure (Approval Boundary A Only)
+
+- **Task**: Conduct final read-only audit of Phase 5B implementation, verify NGINX API proxy path and review boundary integrity, update closure documentation, and selectively commit approved Phase 5B deliverables under Approval Boundary A without remote/cloud execution.
+- **Clarifications & Review Verification**:
+  - **NGINX API Proxy Verification ([`health_check.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/health_check.py), [`nginx_git_repo_analyzer.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/templates/nginx_git_repo_analyzer.conf.erb), [`init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/init.pp)):** Confirmed that `health_check.py frontend` on `--port 8081` (internal verify port) executes both `check_frontend_root` on `/` and `check_json_health` on `/api/health` through the real NGINX reverse proxy (`http://127.0.0.1:8081/api/health`). Validates that `fe_rel == be_rel == expected_release`, matching the SPA HTML `<meta name="app-release-id">` against the Express backend's cached `releaseId` and `X-App-Release` response header. Verified behaviorally against real Node.js and NGINX processes in Test 23 (D1).
+  - **Read-Only Review Boundary Integrity:** Confirmed that `puppet apply --noop --graph` was not executed during the read-only review turn; graph cycle-free claims cited existing logged test evidence from Test 6 in `test_phase5b_application.sh`.
+- **Selective Commit Staged & Verified**:
+  - Backend integration: `app.ts`, `config/env.ts`, `routes/health.ts`, `test/envAndHealth.test.ts`.
+  - Puppet application module: `init.pp`, `nodejs.pp`, `release.pp`, `backend.pp`, `nginx.pp`, ERB templates, `release_manager.py`, `health_check.py`.
+  - Application integration test suites: `test_phase5b_application.sh`, `test_phase5b_release.sh`.
+  - Documentation: `ANSIBLE_AND_PUPPET_ARCHITECTURE.md`, `IMPLEMENTATION_PLAN.md`, `PHASE_5B_HANDOVER.md`, `PROJECT_STATUS.md`, `WORK_LOG.md`.
+  - Fleet wiring: `puppet/hieradata/common.yaml`, `puppet/manifests/site.pp`.
+  - Bytecode caches (`__pycache__/*.pyc`) strictly excluded from staging.
+- **Outcome**: Phase 5B is officially complete, validated, approved, and closed locally under Approval Boundary A. Zero AWS resources provisioned. Ready for Phase 7 or authorized Boundary B execution.
+
+---
+
+## 2026-11-26: Phase 5B — Runtime Consistency Verification and Resolution (Approval Boundary A Only)
+
+- **Task**: Resolve the remaining runtime-consistency window in which `/opt/git-repo-analyzer/current` points NGINX at a newly deployed frontend while the in-memory Node.js backend still serves the previous release prior to restart, under Approval Boundary A without committing, pushing, or executing live cloud/remote operations.
+- **Root Cause & Non-Zero-Downtime Design**:
+  - Verified empirically with live compiled `backend/dist/server.js` + `/usr/sbin/nginx` that switching `/opt/git-repo-analyzer/current` immediately exposes the new `frontend/dist/` files via NGINX while the running Node process continues serving the prior backend release until restart finishes. Because `EC2 2` (`t3.micro`) runs one single-process backend over local JSON (`FileAnalysisStore`), zero downtime is explicitly **not** claimed; instead Puppet enforces a brief controlled `503 MAINTENANCE` gate around activation and verification.
+- **Implementation Summary**:
+  - **Controlled NGINX Maintenance & Internal Verify Listener ([`nginx_git_repo_analyzer.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/templates/nginx_git_repo_analyzer.conf.erb), [`nginx.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/nginx.pp)):** Public `listen_port` checks `/opt/git-repo-analyzer/maintenance.flag` (`return 598` $\rightarrow$ `error_page 598 =503 @app_maintenance_page`, returning `503`, `Retry-After: 5`, `Cache-Control: no-store`, `{"status":"MAINTENANCE"}` across `/`, `/assets/*`, `/api/*`, keeping `/healthz` `200`, never masking Express `503`), while an internal loopback verification server (`127.0.0.1:$nginx_verify_port`, default `8081`, guarded against `8080` Nagios / `listen_port` / `backend_port` collisions) serves real NGINX + `/api/` proxy traffic for health validation while external traffic stays gated.
+  - **Runtime Release Identity & Parity ([`health.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/routes/health.ts), [`health_check.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/health_check.py), [`release_manager.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/release_manager.py)):** Backend resolves `release-manifest.json` `releaseId` once at startup in process memory and emits `X-App-Release` + JSON `releaseId` on `GET /api/health` without exposing secrets, paths, or commits; `release_manager.py` stamps and enforces `<meta name="app-release-id">` inside `frontend/dist/index.html`; `health_check.py --expected-release` rejects any mismatch between NGINX SPA HTML, backend header/JSON, or target version.
+  - **11-Step Activation Sequence & Recovery ([`init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/init.pp), [`release.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/release.pp), [`backend.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/backend.pp), [`release_manager.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/release_manager.py)):** Enforces `prepare -> enter-maintenance -> activate -> app_sync_backend_restart -> Service['git-repo-analyzer-backend'] -> app_mark_service_synced -> backend health gate -> application::nginx -> verify_port frontend+proxy parity gate -> promote-release -> exit-maintenance -> prune-releases`. Added `Enum['systemd','base'] $service_provider = 'systemd'` (production unchanged), auto-revert inside maintenance on pre-check integrity failures (`verify_health`), public `listen_port` confirmation with automatic flag re-arm on `exit-maintenance`, and `maintenance.active` recovery so interrupted `exit-maintenance` (`SIGKILL` post-`unlink`) re-arms `maintenance.flag` at the start of the next Puppet run before restarting/verifying the backend.
+- **Verification Results (Boundary A)**:
+  - [`puppet/tests/test_phase5b_release.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_release.sh): **36/36 checks passed** (added Tests 35–36 covering HTML meta tampering rejection, maintenance gates, prune locks, `promote-release --require-service-synced`, and `health_check.py` header/body/frontend parity).
+  - [`puppet/tests/test_phase5b_application.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_phase5b_application.sh): **26/26 checks passed** (updated Tests 6–19 for maintenance & parity contracts; added Tests 20–26 (**Tests A–G**) exercising live compiled `backend/dist/server.js` + live `/usr/sbin/nginx` + Puppet `service_provider => 'base'` across normal `503` maintenance transitions with concurrent public polling, `SIGKILL` post-switch, backend restart failure, frontend release mismatch + NGINX non-HTML + unreadable `index.html` auto-revert, `SIGKILL` pre/post `unlink(maintenance.flag)` recovery, steady-state exit-`0` idempotency, and `DATA_DIR` binary + API persistence across rollouts/failures/rollbacks).
+  - Full Regression: Backend (`21/21` + typecheck/build), Frontend (`5` files, `14/14` + typecheck/build), Phase 5A (`83/83`), Phase 4 (`208/208`), Puppet parser/ERB/Python/graph validation, and `git diff --check` all verified.
+- **Remaining Limitations**: `puppet-lint` not installed locally; live `apt` NodeSource Node 24 install, live systemd daemon convergence, Terraform-derived `application::cors_origin` population, and live Jenkins (`Phase 7`) remain deferred to Approval Boundary B. Phase 5B remains **provisionally accepted (not closed)** pending operator review.
+
+---
+
+## 2026-11-26: Phase 5B — Final Read-Only Implementation Review, Clarifications & Closure (Approval Boundary A Only)
+
+- **Task**: Conduct final read-only audit of Phase 5B implementation, verify NGINX API proxy path and review boundary integrity, update closure documentation, and selectively commit approved Phase 5B deliverables under Approval Boundary A without remote/cloud execution.
+- **Clarifications & Review Verification**:
+  - **NGINX API Proxy Verification ([`health_check.py`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/files/health_check.py), [`nginx_git_repo_analyzer.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/templates/nginx_git_repo_analyzer.conf.erb), [`init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/application/manifests/init.pp)):** Confirmed that `health_check.py frontend` on `--port 8081` (internal verify port) executes both `check_frontend_root` on `/` and `check_json_health` on `/api/health` through the real NGINX reverse proxy (`http://127.0.0.1:8081/api/health`). Validates that `fe_rel == be_rel == expected_release`, matching the SPA HTML `<meta name="app-release-id">` against the Express backend's cached `releaseId` and `X-App-Release` response header. Verified behaviorally against real Node.js and NGINX processes in Test 23 (D1).
+  - **Read-Only Review Boundary Integrity:** Confirmed that `puppet apply --noop --graph` was not executed during the read-only review turn; graph cycle-free claims cited existing logged test evidence from Test 6 in `test_phase5b_application.sh`.
+- **Selective Commit Staged & Verified**:
+  - Backend integration: `app.ts`, `config/env.ts`, `routes/health.ts`, `test/envAndHealth.test.ts`.
+  - Puppet application module: `init.pp`, `nodejs.pp`, `release.pp`, `backend.pp`, `nginx.pp`, ERB templates, `release_manager.py`, `health_check.py`.
+  - Application integration test suites: `test_phase5b_application.sh`, `test_phase5b_release.sh`.
+  - Documentation: `ANSIBLE_AND_PUPPET_ARCHITECTURE.md`, `IMPLEMENTATION_PLAN.md`, `PHASE_5B_HANDOVER.md`, `PROJECT_STATUS.md`, `WORK_LOG.md`.
+  - Fleet wiring: `puppet/hieradata/common.yaml`, `puppet/manifests/site.pp`.
+  - Bytecode caches (`__pycache__/*.pyc`) strictly excluded from staging.
+- **Outcome**: Phase 5B is officially complete, validated, approved, and closed locally under Approval Boundary A. Zero AWS resources provisioned. Ready for Phase 7 or authorized Boundary B execution.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.1 Jenkinsfile Hardening, Analyzer Sandboxing & Acceptance Criteria Amendments (Approval Boundary A Only)
+
+- **Task**: Implement and validate Phase 7 Checkpoint 7.1 under Approval Boundary A: apply two formal acceptance-criteria amendments to the Phase 7 plan, harden [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile) and analyzer container sandboxing, implement the local validation suite, and collect local workstation telemetry without staging, committing, pushing, or executing cloud operations.
+- **Accepted Plan Amendments**:
+  - **Memory Headroom Threshold (300 MB Minimum)**: Set the minimum host memory headroom threshold to **300 MB** (replacing the previous 250 MB threshold), requiring empirical measurements captured at short intervals during representative workloads on the target fleet (zero OOM events, zero sustained swap thrashing). **Scope Boundary:** Local testing collected measurements on the 15,712 MB RAM development workstation; **the 300 MB minimum memory-headroom acceptance validation on the actual 2 GB `t3.small` EC2 CI/CD instance remains STILL PENDING until Boundary B live deployment.**
+  - **Workspace Cleanup & Disk-Exhaustion Residual Risk**: Validated workspace cleanup logic across normal, failed, aborted, and simulated interrupted builds (`post { always { ... } cleanup { cleanWs ... } }`). Local simulated interruptions verified removal of partial clones and halting/removal of active containers before workspace deletion. Explicitly documented the limitation that **hard host failure or sudden Jenkins agent/controller loss can prevent Jenkins post-build cleanup from executing** (hard-failure cleanup guarantees are not claimed), and that pre-clone free-space checks (5 GB), clone timeouts (5m), shallow clones (`--depth 500`), and post-clone size checks (2 GB) do **not** constitute a hard filesystem quota; **disk exhaustion remains an acknowledged residual operational risk**, not a guaranteed-protection scenario.
+- **Pipeline Hardening & Analyzer Sandboxing Details ([`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile)):**
+  - **Pipeline Structure & Options:** Enforces `options { timeout(time: 15, unit: 'MINUTES'); disableConcurrentBuilds(); ansiColor('xterm') }`.
+  - **Strict Parameter Validation:** Anchored Groovy regex pattern `^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$` rejecting non-GitHub hosts, non-HTTPS protocols, embedded credentials (`@`), non-standard ports, query parameters (`?`), URL fragments (`#`), path traversal, and command/newline injection attacks.
+  - **Storage Pre-Clone Gate:** Enforces workspace filesystem availability check `df -Pk "${WORKSPACE:-.}"` requiring at least 5,242,880 KB (5 GB) free space before cloning.
+  - **Git Clone Isolation:** Enforces `-c core.hooksPath=/dev/null` (prohibiting untrusted repository hook execution), `--no-recurse-submodules` (prohibiting untrusted recursive submodule cloning), `--depth 500` (shallow clone constraint), and a 5-minute clone timeout.
+  - **Post-Clone Size Ceiling:** Measures `du -sk target-repo`; immediately aborts and wipes `target-repo` if size exceeds 2,097,152 KB (2 GB).
+  - **Analyzer Container Sandboxing:** Runs ephemeral container under non-root unprivileged user `--user "$(id -u):$(id -g)"`, approved 768 MB memory limit (`--memory=768m`), 1.5 CPUs (`--cpus=1.5`), 100 process limit (`--pids-limit=100`), 10-minute container timeout, zero Docker daemon socket mount, zero Jenkins credentials or host secret passing, zero `GROQ_API_KEY` injection into container or pipeline (preserving deterministic static report fallback), and deterministic container naming (`CONTAINER_NAME="analyzer-${BUILD_TAG:-${BUILD_NUMBER:-run}}"`).
+  - **Post Lifecycle Cleanup:** Enforces `post { always { docker stop "$CONTAINER_NAME" 2>/dev/null || true; docker rm -f "$CONTAINER_NAME" 2>/dev/null || true; rm -rf target-repo || true } cleanup { cleanWs deleteDirs: true, notFailBuild: true } }` to stop/remove residual containers and purge temporary workspaces under normal Jenkins build termination lifecycles (subject to hard host/agent loss limitations).
+  - **Runtime Compatibility Baseline:** Documented Java 21 runtime requirement and Jenkins LTS 2.580.3 planning baseline, noting exact package version and Java compatibility must be revalidated upon live deployment authorization.
+- **Automated Validation Suite ([`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh)):**
+  - Implemented 25 local fixture, container integration, simulated-cleanup, and local-telemetry checks:
+    - Tests 1–3: Declarative pipeline structure, options, timeouts, parameters, and anchored URL regex syntax.
+    - Tests 4–6: URL regex positive cases, protocol/domain negative cases, and injection attack rejection.
+    - Test 7: Pre-clone 5 GB free-space gate logic.
+    - Tests 8–11: Git clone hooks prohibition, submodule isolation, shallow depth 500, 5m timeout, and post-clone 2 GB ceiling rejection.
+    - Tests 12–16: Non-root user flag, 768 MB memory limit, CPU/PID limits, Docker socket isolation, zero secret/Groq injection, and 10m container timeout.
+    - Tests 17–18: Post cleanup architecture (`always` + `cleanup { cleanWs }`) and deterministic container naming for abort cleanup.
+    - Tests 19–21: Live Docker container execution on representative repo, non-root file ownership (UID:GID 1000:1000), deterministic metrics structure (`metrics.json`), static fallback markdown (`summary.md`), and Chart.js PNG raster charts.
+    - Test 22: Zero-commit repository graceful handling (exit code 0, empty metrics, skipped charts, static report).
+    - Tests 23–24: Simulated workspace cleanup validation on interrupted clone, interrupted analysis with active container, and post-clone size violation.
+    - Test 25: Local workstation telemetry sampling during isolated analyzer container execution.
+  - **Test Suite Result: 25/25 PASS**.
+- **Local Workstation Memory Benchmark (Not EC2 3):**
+  - Machine tested: Local Linux development workstation (15,712 MB total physical RAM, 4,095 MB swap, isolated Docker container runs without Jenkins JVM or Puppet Agent).
+  - Workload: Representative multi-commit synthetic repository (35–40 commits, multiple authors/branches, Chart.js rendering).
+  - Execution duration: 1.95s–2.05s (`test_checkpoint_7_1.sh` Test 25); 39–41 host samples captured at 50ms intervals.
+  - Minimum observed workstation `MemAvailable`: **6,514.2 MB** (initial run) / **6,698.7 MB** (final run).
+  - Peak analyzer container memory (dedicated cgroup v2 `memory.peak` poll across 122 samples): **26.25 MB** (configured limit: 768.00 MB; container headroom: 741.75 MB).
+  - Host swap used during benchmark: **0.0 MB**; container `OOMKilled: False`, exit code `0`.
+  - **Pending EC2 Acceptance:** Live 300 MB host memory-headroom acceptance on the actual 2 GB `t3.small` EC2 3 CI/CD instance running Jenkins JVM (`-Xms384m -Xmx512m`) + Docker + analyzer + Puppet Agent remains **pending Boundary B deployment**.
+- **Full Regression Verification:**
+  - Backend: `npm test` passed **21/21** tests.
+  - Frontend: `npm test` passed **14/14** tests across 5 test suites.
+  - Checkpoint 7.1 test suite: **25/25** passed.
+- **Restored Canonical Phase 7 Checkpoint Mapping (Not Yet Started for 7.2–7.5):**
+  - `7.1` — Jenkinsfile hardening and analyzer sandboxing (**Complete Locally under Boundary A**).
+  - `7.2` — Puppet Jenkins module (*Pending — Boundary A*).
+  - `7.3` — Backend–Jenkins protocol integration tests (*Pending — Boundary A*).
+  - `7.4` — Docker analyzer execution and artifact validation (*Pending — Boundary A*).
+  - `7.5` — Boundary B deployment runbook (*Pending — Boundary A*; governs live EC2 3 Jenkins installation, job creation, live `JENKINS_MOCK_MODE=false` cutover, and live E2E / EC2 memory acceptance).
+- **Outcome**: Phase 7 Checkpoint 7.1 is complete and verified locally under Approval Boundary A. Zero AWS resources provisioned. No git staging, commits, or pushes performed. Checkpoint 7.2 has not been started.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.2 Puppet Jenkins Module (Approval Boundary A Only)
+
+- **Task**: Implement and locally validate the Puppet `jenkins` module for `cicd-server` (EC2 3) under Approval Boundary A without reopening Phase 7.1, modifying Terraform/Ansible/application code, starting Checkpoints 7.3–7.5, or performing any live EC2, SSH, staging, or commit operations.
+- **Implemented Module & Fleet Integration**:
+  - [`puppet/modules/jenkins/manifests/init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/init.pp): Strongly typed top-level orchestrator (`jenkins::repo -> jenkins::install -> jenkins::config -> jenkins::service`), strict `cicd-server` node guard (`enforce_node`), path/control-character validation, unprivileged port bounds (`Integer[1024, 65535]`), single-executor type enforcement (`Integer[1, 1] $num_executors = 1`), and JVM heap sanity bounds (`jvm_xms <= jvm_xmx <= 1024m`).
+  - [`puppet/modules/jenkins/manifests/repo.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/repo.pp): Enforces HTTPS-only `https://pkg.jenkins.io/debian-stable` APT source (`/etc/apt/sources.list.d/jenkins.list`) with modern `[signed-by=/etc/apt/keyrings/jenkins-keyring.asc]` (`https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key`, mode `0644`, zero deprecated `apt-key`) and APT pin priority `900` (`/etc/apt/preferences.d/jenkins`).
+  - [`puppet/modules/jenkins/manifests/install.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/install.pp): Enforces `fontconfig`, Java 21 (`openjdk-21-jre-headless` / `openjdk-21-jre`), and Jenkins LTS `2.580.3` planning baseline (`pin_package_version => true`), noting exact package availability and Java 21 compatibility must be revalidated prior to Boundary B deployment.
+  - [`puppet/modules/jenkins/manifests/config.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/config.pp) & templates ([`override.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/override.conf.erb), [`controller-hardening.groovy.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/controller-hardening.groovy.erb)): Manages `/var/lib/jenkins` (`0750` `jenkins:jenkins`), `init.groovy.d/01-controller-hardening.groovy` (`0640`, enforcing `numExecutors = 1`, `slaveAgentPort = -1`, `DefaultCrumbIssuer(true)`, `allowAnonymousRead = false` without embedding any credentials/tokens/bypass flags), `/etc/systemd/system/jenkins.service.d/override.conf` (`-Djava.awt.headless=true -Xms384m -Xmx512m -Dhudson.DNSMultiCast.disabled=true -Dhudson.udp=-1`, `JENKINS_PORT=8080`, `JENKINS_LISTEN_ADDRESS=0.0.0.0`, `JENKINS_HOME`), `systemctl daemon-reload`, and `jenkins` membership in the `docker` group (`membership => 'minimum'`, documented as root-equivalent access per ADR 007; Docker remains UNIX socket only; unrelated accounts excluded; zero `GROQ_API_KEY` injection).
+  - [`puppet/modules/jenkins/manifests/service.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/service.pp): Manages `Service['jenkins']` (`ensure => running`, `enable => true` under `systemd`, plus `base` provider support for unprivileged fixture testing), subscribing to drop-in and hardening config updates.
+  - [`puppet/manifests/site.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/manifests/site.pp) & [`puppet/hieradata/common.yaml`](file:///home/aditya-2274/Git-repo-analyzer/puppet/hieradata/common.yaml): Wired `class { 'common': } -> class { 'nrpe::server': } -> class { 'jenkins': }` exclusively on `node 'cicd-server'`, preserving `puppet-server`, `app-server`, and `node default` isolation, and added non-secret `jenkins::*` Hiera defaults.
+- **Verification & Full Regression Results (Boundary A)**:
+  - [`puppet/tests/test_jenkins_module.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_jenkins_module.sh): **20/20 checks passed** (parser/ERB syntax, `cicd-server` deterministic JSON catalog, `pkg.jenkins.io` 2026 keyring + HTTP rejection, Java 21 requirement + non-21 rejection, Jenkins `2.580.3` baseline, systemd drop-in/reload/service, `-Xms384m -Xmx512m` + heap bounds, `/var/lib/jenkins` `0750` & Groovy `0640` permissions, port `8080` / 1 executor / disabled JNLP & UDP / privileged port rejection, zero NGINX/Apache listeners, `docker` group membership, Hiera overrides, cycle-free `--graph` DAG, sandboxed `puppet apply --detailed-exitcodes` `exit 2 -> 0 -> config refresh -> 0`, `cicd-server` NRPE preservation, fleet isolation, `node default` safety, zero embedded secrets, and path hardening).
+  - Phase 4 Ansible Regression (`ansible/tests/test_*.sh`): **208/208 passed** (`16/16` common, `30/30` docker, `30/30` nginx, `54/54` puppet_agent, `45/45` puppet_enrollment, `20/20` puppet_server, `5/5` sync_inventory, `8/8` verify_ssh_keys).
+  - Phase 5A Puppet Regression: **83/83 passed** (`15/15` architecture, `14/14` common, `20/20` nrpe, `26/26` nagios, `8/8` convergence).
+  - Phase 5B Puppet Application Regression: **62/62 passed** (`36/36` release, `26/26` application).
+  - Phase 6 Application Regression: Backend **21/21** passed; Frontend **14/14** (5 suites) passed.
+  - Phase 7.1 Regression (`cicd/tests/test_checkpoint_7_1.sh`): **25/25 passed** (local workstation benchmark `MemAvailable` min `6,342.8 MB` on `15,712.1 MB` host).
+  - Combined Local Validation Total: **433/433 passed**.
+- **Pending Boundary B Operations (Not Executed)**:
+  - Live `apt` installation on Ubuntu 24.04 EC2 3 (`openjdk-21-jre-headless`, `fontconfig`, revalidated Jenkins LTS `2.580.3` compatibility), live systemd startup, `backend-service` API token provisioning, `JENKINS_MOCK_MODE=false` live cutover, and empirical `>= 300 MB` host `MemAvailable` acceptance validation on the live 2 GB `t3.small` EC2 3 node.
+- **Canonical Phase 7 Checkpoint Status (Current Progress Snapshot)**:
+  - `7.1` — Jenkinsfile hardening and analyzer sandboxing (**Complete Locally — Boundary A**).
+  - `7.2` — Puppet Jenkins module (**Approved & Closed Locally — Boundary A**).
+  - `7.3` — Backend–Jenkins protocol integration tests (**Approved & Closed Locally — Boundary A**; superseded historical pending note after implementation and revalidation below).
+  - `7.4` — Docker analyzer execution and artifact validation (**Implemented & Validated Locally — Boundary A; Pending Review/Closure**).
+  - `7.5` — Boundary B deployment runbook (*Pending — Boundary A; Not Started*).
+
+---
+
+## Phase 7.2 Focused Security Review & Final Closure Wording Correction (Boundary A)
+
+- **Scope & Question**: Evaluated whether `jenkins::listen_address: '0.0.0.0'` / `JENKINS_LISTEN_ADDRESS=0.0.0.0` could be narrowed to a private interface bind while preserving local NRPE checks (`127.0.0.1:8080`), remote `app-server` backend API connectivity, Terraform Security Group restrictions, and zero public Jenkins access.
+- **Root Cause & Technical Assessment**:
+  - Jenkins's embedded Winstone/Jetty servlet container supports only a **single** `--httpListenAddress` argument (`JENKINS_LISTEN_ADDRESS`); it cannot simultaneously bind both `127.0.0.1` and EC2 3's VPC private IP.
+  - Binding strictly to `127.0.0.1` breaks `app-server` backend API calls (`LiveJenkinsClient` connecting to `http://<private-ip-3>:8080` or `http://cicd-server:8080`) unless an unapproved reverse proxy (`nginx`/`apache2`) were added on EC2 3.
+  - Binding strictly to EC2 3's VPC private IP breaks [`puppet/modules/nrpe/files/check_jenkins.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/nrpe/files/check_jenkins.sh) (`JENKINS_HOST="127.0.0.1"`, `JENKINS_PORT=8080`). Furthermore, because EC2 3 configures `associate_public_ip_address = true`, AWS IGW performs 1:1 NAT from the public IPv4 directly to EC2 3's single VPC ENI private IP—so binding solely to a private IP does not prevent public ingress at the OS socket layer.
+  - Consequently, `jenkins::listen_address: '0.0.0.0'` (`JENKINS_LISTEN_ADDRESS=0.0.0.0`) on port `8080` is intentionally retained and explicitly documented as a **wildcard IPv4 listener** (not a private-only socket bind).
+  - **Network security boundary**: AWS Security Group `cicd_analysis_sg` in [`terraform/modules/ec2/main.tf`](file:///home/aditya-2274/Git-repo-analyzer/terraform/modules/ec2/main.tf) restricts TCP `8080` ingress strictly to `app_monitoring_sg` and is the primary network-level control preventing unauthorized external access.
+  - **Application-layer security**: `setAllowAnonymousRead(false)` and `DefaultCrumbIssuer(true)` in [`controller-hardening.groovy.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/controller-hardening.groovy.erb) are additional application-layer controls only; they do not prevent TCP connections, provide network isolation, or rely on omitting container credentials to restrict access to the Jenkins listener.
+- **Files Updated in Review & Final Correction**:
+  - [`puppet/modules/jenkins/manifests/init.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/init.pp), [`puppet/modules/jenkins/manifests/config.pp`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/manifests/config.pp), [`puppet/modules/jenkins/templates/override.conf.erb`](file:///home/aditya-2274/Git-repo-analyzer/puppet/modules/jenkins/templates/override.conf.erb), and [`puppet/hieradata/common.yaml`](file:///home/aditya-2274/Git-repo-analyzer/puppet/hieradata/common.yaml).
+  - [`puppet/tests/test_jenkins_module.sh`](file:///home/aditya-2274/Git-repo-analyzer/puppet/tests/test_jenkins_module.sh) (**21/21 PASS**).
+  - [`project_docs/IMPLEMENTATION_PLAN.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/IMPLEMENTATION_PLAN.md), [`project_docs/PROJECT_STATUS.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/PROJECT_STATUS.md), and [`project_docs/WORK_LOG.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/WORK_LOG.md). Phase 7.2 is **approved and closed locally under Boundary A**.
+- **Part A Re-verification Commands**:
+  - `./puppet/tests/test_jenkins_module.sh && ./puppet/tests/test_nrpe_module.sh && ./puppet/tests/test_phase5a_convergence.sh && git diff --check` -> **`21/21`**, **`20/20`**, **`8/8`** checks passed; `git diff --check` exited `0`.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.3 Backend–Jenkins Protocol Integration Tests (Boundary A Only — Approved & Closed Locally)
+
+- **Architecture & Interfaces Inspected**:
+  - [`backend/src/services/jenkinsClient.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/jenkinsClient.ts) (`IJenkinsClient`), [`backend/src/services/liveJenkinsClient.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/liveJenkinsClient.ts), [`backend/src/services/mockJenkinsClient.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/mockJenkinsClient.ts), [`backend/src/services/analysisManager.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/analysisManager.ts), [`backend/src/services/analysisStore.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/analysisStore.ts), [`backend/src/services/artifactIngestion.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.ts), [`backend/src/routes/analyses.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/routes/analyses.ts), [`backend/src/config/env.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/config/env.ts), [`backend/src/types/analysis.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/types/analysis.ts), [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile), and [`ai/reportGenerator.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/reportGenerator.js).
+- **Files Created**:
+  - [`backend/test/backendJenkinsProtocol.test.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/test/backendJenkinsProtocol.test.ts): Added 6 deterministic end-to-end protocol integration tests exercising `createApp` (`/api/analyses`), `AnalysisManager`, `FileAnalysisStore`, `ArtifactIngestor`, and `LiveJenkinsClient` against a controlled loopback HTTP Jenkins simulator without modifying source contracts or production validation.
+- **Final Review Corrections Applied**:
+  1. Eliminated the `BUILDING` polling timing race in Test 1 ([`backendJenkinsProtocol.test.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/test/backendJenkinsProtocol.test.ts)) by adding deterministic `allowActiveQueueResolve` and `allowActiveBuildComplete` controller gates with queue/build poll counters so `QUEUED` and `BUILDING` assertions and `409 CONFLICT` checks execute deterministically without narrow timer windows or production changes.
+  2. Corrected the stale `7.3` pending bullet above in `WORK_LOG.md` so the snapshot matches current closure status while preserving historical Phase 7.2 records.
+- **Test Commands & Exact Results**:
+  - `npm --prefix backend run typecheck`: exited `0`.
+  - `npm --prefix backend run build`: exited `0`.
+  - **5 consecutive runs** of `npm --prefix backend test`: **`27/27`** tests passed on every run (`21` existing backend tests + `6` new Phase 7.3 protocol integration tests; `135/135` total test executions, `0` failed, `0` skipped).
+  - `git diff --check`: exited `0`.
+- **Known Limitations & Remaining Boundary B Validation**:
+  - Tests validate HTTP/JSON/CSRF/artifact protocol semantics locally against an in-process HTTP simulator over `127.0.0.1` without a live Jenkins controller JVM, container runtime execution (Checkpoint 7.4), or cross-host EC2 2 $\leftrightarrow$ EC2 3 networking.
+  - Real `backend-service` API token provisioning, EC2 2 `JENKINS_MOCK_MODE=false` cutover, live private VPC TCP `8080` dispatch (`app-server` -> `cicd-server`), and real archived container artifact retrieval remain pending Boundary B.
+  - Final Phase 7.3 status: **Approved & Closed Locally under Boundary A**.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.4 Docker Analyzer Execution & Artifact Validation (Boundary A Only)
+
+- **Files Inspected**:
+  - [`Dockerfile`](file:///home/aditya-2274/Git-repo-analyzer/Dockerfile), [`.github/workflows/docker-ci.yml`](file:///home/aditya-2274/Git-repo-analyzer/.github/workflows/docker-ci.yml), [`Jenkinsfile`](file:///home/aditya-2274/Git-repo-analyzer/Jenkinsfile), [`analyze2.sh`](file:///home/aditya-2274/Git-repo-analyzer/analyze2.sh), [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js), [`ai/chartGenerator.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/chartGenerator.js), [`ai/reportGenerator.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/reportGenerator.js), [`ai/prompt.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/providers/groqProvider.js), [`backend/src/services/artifactIngestion.ts`](file:///home/aditya-2274/Git-repo-analyzer/backend/src/services/artifactIngestion.ts), and [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh) (confirmed `.dockerignore` does not exist at repo root).
+- **Concrete Analyzer Defect Discovered & Fixed**:
+  - [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js#L275): `summarizeBranchDrift` invoked `run('git for-each-ref --format=%(refname:short) refs/heads/')` without quotes around `%(refname:short)`, causing `/bin/sh` syntax error (`Syntax error: "(" unexpected`) handled silently by `run()`, leaving `branchDrift.branchesAnalyzed = 0` and `staleBranches = []`. Quoted format (`--format='%(refname:short)'`) matching `analyze2.sh` line 145 without changing the output schema.
+- **Files Created / Modified**:
+  - Modified [`ai/metrics.js`](file:///home/aditya-2274/Git-repo-analyzer/ai/metrics.js#L275).
+  - Created [`cicd/tests/test_checkpoint_7_4.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_4.sh) (13 integration checks validating image layers/config/non-root runtime, 10 Git fixture profiles, untrusted hook/script non-execution, real [`ArtifactIngestor`](file:///home/aditya-2274/Git-repo-analyzer/backend/dist/services/artifactIngestion.js) acceptance and negative rejection, cgroup limits, cleanup across failure/timeout/`SIGKILL`/`>2 GB` check, and cgroup `memory.peak`/disk telemetry).
+- **Docker Build, Telemetry & Test Results (Local Workstation — No Jenkins JVM)**:
+  - `docker build -t git-repo-analyzer:phase74-local .`: exited `0` (`1.23 GB` image; Node `v20.20.2`, Git `2.34.1`, runtime-only `/tool/package.json` dependencies without `devDependencies`, zero secrets/`GROQ_API_KEY` in `docker history`/`Config.Env`; noted apt compile headers retained in single `RUN` layer and missing `.dockerignore`).
+  - `./cicd/tests/test_checkpoint_7_4.sh`: **`13/13 PASS`** (150-commit fixture elapsed `2.24s`, cgroup `memory.peak: 26.35 MB`, `OOMKilled: False`, `--memory=768m` / `--cpus=1.5` / `--pids-limit=100` enforced, local `MemTotal 15712.1 MB`, min local `MemAvailable 5535.8 MB`, workstation host swap `735.2 MB`, workspace `2888 KB -> 2980 KB` with `92 KB` `reports/` purged cleanly).
+  - `npm --prefix backend run typecheck && npm --prefix backend test && npm --prefix backend run build`: exited `0` (**`27/27 PASS`**), `git diff --check`: exited `0`.
+  - `./cicd/tests/test_checkpoint_7_1.sh`: **24/25 checks passed** during this post-7.4 run; Check 25 failed on workstation system-wide swap usage (`735.2 MB >= 200.0 MB` pre-existing host swap floor across background desktop/build workloads, while container had `OOMKilled: False` and host `MemAvailable >= 5300 MB`; Check 25 had earlier passed `25/25` when workstation swap baseline was `0.0–0.3 MB`).
+- **Known Limitations & Remaining Boundary B Validation**:
+  - Local `git-repo-analyzer:phase74-local` tests prove real container execution locally, NOT live Jenkins `pipeline` execution or Docker Hub distribution (`adityaashok2274/git-repo-analyzer:latest` must be rebuilt/pushed via [`.github/workflows/docker-ci.yml`](file:///home/aditya-2274/Git-repo-analyzer/.github/workflows/docker-ci.yml) so the `ai/metrics.js` fix reaches Jenkins prior to Boundary B).
+  - Pre-clone/post-clone size gates (5 GB / 2 GB) are availability checks, not a hard filesystem disk quota (`disk exhaustion` remains an acknowledged residual risk).
+  - Live EC2 3 container execution alongside Jenkins JVM + Puppet Agent + NRPE, and `>= 300 MB MemAvailable` telemetry acceptance on 2 GB `t3.small` remain pending Boundary B.
+  - Status: Phase 7.4 is **Approved & Closed Locally under Boundary A**.
+
+---
+
+## 2026-11-26: Phase 7.1 Check 25 Resolution, Consolidated Regression (7.1–7.4 + 4 + 5A + 5B), and Phase 7.4 Local Closure
+
+- **Part A — Check 25 Investigation and Resolution**:
+  - **Symptom**: During post-7.4 validation, Check 25 in [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh) reported failure (`AssertionError: Excessive local swap usage observed: 735.2 MB; max allowed: 200.0 MB`).
+  - **Root Cause & Classification**: Check 25 previously measured absolute host swap (`SwapTotal - SwapFree`) with no baseline subtraction. Telemetry inspection of `/proc/meminfo` and `free -m` revealed the development workstation had ~727.5–735.2 MB pre-existing swap allocated to persistent desktop applications and OS background services. Modern cgroup v2 telemetry confirmed container-attributable swap was strictly **0.00 MB** (`memory.swap.peak` = 0) and container `OOMKilled` was `False`. The failure was definitively classified as **pre-existing host swap attribution error**, not an analyzer resource regression.
+  - **Correction**: Refactored Check 25 in [`cicd/tests/test_checkpoint_7_1.sh`](file:///home/aditya-2274/Git-repo-analyzer/cicd/tests/test_checkpoint_7_1.sh):
+    1. Records pre-test host baseline swap (`baseline_swap_used_mb`).
+    2. Uses `--cidfile` to identify the container scope and reads cgroup v2 controllers (`/sys/fs/cgroup/.../memory.peak`, `memory.swap.peak`, `memory.swap.current`, `memory.events`).
+    3. Confirms zero container OOM events (`oom == 0`, `oom_kill == 0`, `OOMKilled: False`).
+    4. Asserts container memory < 768.0 MB limit.
+    5. Asserts container-attributed swap < 200.0 MB (when supported by cgroup v2).
+    6. Asserts host swap delta < 200.0 MB (`max_host_swap_used - baseline_swap_used_mb < 200.0 MB`).
+    7. Retains explicit notice that live EC2 CI/CD instance acceptance (`>= 300 MB MemAvailable`, 0 OOM, no swap thrashing on 2 GB `t3.small`) remains PENDING Boundary B.
+  - **Re-test Output**: Checkpoint 7.1 suite passed **25/25 checks** (container memory peak: 28.34 MB, container swap peak: 0.00 MB, host baseline swap: 727.7 MB, max swap: 727.7 MB, delta: +0.0 MB).
+
+- **Part B — Consolidated Regression Validation Across Completed Phases (Reconciled & Verified)**:
+  - Executed all completed test suites across Phase 7, backend, Puppet, Ansible (Phase 4), and Puppet modules (Phases 5A & 5B):
+    1. `./cicd/tests/test_checkpoint_7_1.sh` -> **25/25 PASS** (Exit 0)
+    2. `./cicd/tests/test_checkpoint_7_4.sh` -> **13/13 PASS** (Exit 0)
+    3. `npm --prefix backend run typecheck && npm --prefix backend test && npm --prefix backend run build` -> **27/27 PASS** (Exit 0; includes 21 Phase 6 + 6 Phase 7.3 tests)
+    4. `./puppet/tests/test_jenkins_module.sh` -> **21/21 PASS** (Exit 0)
+    5. Phase 4 Ansible Suites: **208/208 PASS** (Exit 0 across all 8 suites; verified in `task-779.log`):
+       - `./ansible/tests/test_common_role.sh` -> **16/16 PASS** (Exit 0)
+       - `./ansible/tests/test_docker_role.sh` -> **30/30 PASS** (Exit 0)
+       - `./ansible/tests/test_nginx_role.sh` -> **30/30 PASS** (Exit 0)
+       - `./ansible/tests/test_puppet_agent_role.sh` -> **54/54 PASS** (Exit 0)
+       - `./ansible/tests/test_puppet_server_role.sh` -> **20/20 PASS** (Exit 0)
+       - `./ansible/tests/test_puppet_enrollment.sh` -> **45/45 PASS** (Exit 0)
+       - `./ansible/tests/test_sync_inventory.sh` -> **5/5 PASS** (Exit 0)
+       - `./ansible/tests/test_verify_ssh_keys.sh` -> **8/8 PASS** (Exit 0)
+    6. Phase 5A Puppet Suites: **83/83 PASS** (Exit 0 across all 5 suites; verified in `task-779.log`):
+       - `./puppet/tests/test_puppet_architecture.sh` -> **15/15 PASS** (Exit 0)
+       - `./puppet/tests/test_common_module.sh` -> **14/14 PASS** (Exit 0)
+       - `./puppet/tests/test_nrpe_module.sh` -> **20/20 PASS** (Exit 0)
+       - `./puppet/tests/test_nagios_module.sh` -> **26/26 PASS** (Exit 0)
+       - `./puppet/tests/test_phase5a_convergence.sh` -> **8/8 PASS** (Exit 0)
+    7. Phase 5B Puppet Suites: **62/62 PASS** (Exit 0 across both suites; verified in `task-779.log`):
+       - `./puppet/tests/test_phase5b_release.sh` -> **36/36 PASS** (Exit 0)
+       - `./puppet/tests/test_phase5b_application.sh` -> **26/26 PASS** (Exit 0)
+    8. Formatting check:
+       - `git diff --check` -> **Clean** (Exit 0)
+  - **Reconciled Consolidated Test Count**: **439/439 checks passed** (25 + 13 + 27 + 21 + 208 + 83 + 62 = 439), 0 failures, 0 regressions.
+  - **Reconciliation Note**: An earlier report had an errant table transcription claiming 391/391 (listing 163 for Phase 4, 84 for Phase 5A, and 48 for Phase 5B with scrambled sub-suite rows). The underlying execution log (`task-779.log`) and test script assertion definitions confirm with zero ambiguity that all historical baselines were completely preserved (Phase 4: 208, Phase 5A: 83, Phase 5B: 62), and the true executed total is 439 passing checks.
+
+- **Part C — Phase 7.4 Review Synthesis & Closure**:
+  - Image config and layers clean; non-root UID 1000:1000 execution verified.
+  - Resource limits (768 MB, 1.5 CPUs, 100 PIDs) enforced.
+  - Zero docker.sock mounting, zero GROQ_API_KEY injection, deterministic static-report fallback verified.
+  - All 10 repository fixture profiles executed and validated via real backend `ArtifactIngestor`.
+  - Workspace cleanup across failure, timeout, interrupt, and >2 GB oversized repos verified.
+  - POSIX quoting defect in `ai/metrics.js` resolved.
+  - Image size noted at 1.23 GB; hard quota limitation and disk-exhaustion residual risk acknowledged.
+  - Docker Hub republish identified as prerequisite for live Boundary B deployment.
+  - Phase 7.4 is **Approved & Closed Locally under Boundary A**.
+
+---
+
+## 2026-11-26: Phase 7 — Checkpoint 7.5 Boundary B Deployment Runbook (Boundary A Only — Completed)
+
+- **Task**: Author the authoritative, ordered 11-stage Boundary B deployment runbook governing live AWS provisioning, Ansible bootstrap, Puppet convergence, application release activation, Jenkins controller hardening, backend credential cutover, Docker analyzer execution, resource acceptance gates on 2 GB `cicd-server`, monitoring validation, E2E demonstration, and teardown under ADR 011.
+- **Architectural Invariants Strictly Preserved**:
+  - Exactly 3 Ubuntu 24.04 EC2 instances: `puppet-server` (`t3.small`, 15 GB gp3), `app-server` (`t3.micro`, 15 GB gp3), `cicd-server` (`t3.small`, 20 GB gp3). Total storage: 50 GB gp3.
+  - Security Groups: Public ingress (80/443) strictly on `app-server` only; SSH (22) restricted to operator `/32`; internal ports (8140, 8080, 5666) restricted to security group references.
+  - Monitoring topology: Nagios Core on `app-server` (accessed via encrypted SSH tunnel to Apache loopback `127.0.0.1:8080`); NRPE daemon on `puppet-server` and `cicd-server`.
+  - Application lifecycle: Immutable release staging, SHA-256 sidecar verification, 11-step maintenance-gated activation (`503 MAINTENANCE`), atomic symlink swap, health verification gate, and zero-rebuild rollback.
+- **Runbook Codification**:
+  - Extended Section 7 of [`project_docs/IMPLEMENTATION_PLAN.md`](file:///home/aditya-2274/Git-repo-analyzer/project_docs/IMPLEMENTATION_PLAN.md) to provide comprehensive coverage across 11 stages:
+    - `7.5.1` — Pre-deployment readiness (credentials, working tree, Docker Hub publish gate, release bundle sidecars, approval gates).
+    - `7.5.2` — Infrastructure provisioning (Terraform 5-stage workflow, SG verification, dynamic inventory sync, strict halt protocol).
+    - `7.5.3` — Ansible bootstrap (`site.yml` master fleet bootstrap: common, puppet_server, puppet_agent, docker, nginx).
+    - `7.5.4` — Puppet deployment (CA verification, strict allowlist CSR signing via `enroll-puppet-agents.yml`, catalog convergence, Jenkins & Application modules).
+    - `7.5.5` — Application release deployment (staging, SHA-256 sidecar, `release_manager.py`, maintenance mode, health verification gate, rollback).
+    - `7.5.6` — Jenkins and backend integration (`backend-service` user, API token, `/etc/git-repo-analyzer/backend.env` cutover, `JENKINS_MOCK_MODE=false`).
+    - `7.5.7` — Docker analyzer execution (republished `:latest` tag, non-root UID, 768m/1.5cpus/100pids, 0 socket, static fallback, disk exhaustion residual risk).
+    - `7.5.8` — Resource acceptance gates (Mandatory go/no-go on EC2 3: `MemAvailable >= 300 MB`, 0 OOMs, 0 swap thrashing, disk headroom).
+    - `7.5.9` — Monitoring validation (Nagios Core via SSH tunnel `127.0.0.1:8080`, NRPE checks, failure simulation).
+    - `7.5.10` — End-to-end demonstration (11-step demonstration sequence, positive analysis, negative validation, evidence collection).
+    - `7.5.11` — Teardown and cost control (artifact export, explicit teardown approval gate, interactive `terraform destroy`, permanent S3 state retention).
+- **Phase 7 Checkpoint Status Summary**:
+  - `7.1` — Jenkinsfile hardening & container sandboxing: **Approved & Closed Locally (Boundary A)**.
+  - `7.2` — Puppet Jenkins module: **Approved & Closed Locally (Boundary A)**.
+  - `7.3` — Backend–Jenkins protocol integration tests: **Approved & Closed Locally (Boundary A)**.
+  - `7.4` — Docker analyzer execution & artifact validation: **Approved & Closed Locally (Boundary A)**.
+  - `7.5` — Boundary B deployment runbook: **Approved & Closed Locally (Boundary A)**.
+- **Phase 7.5 Runbook Secret-Handling Documentation Correction**:
+  - Eliminated documentation inconsistency in Section 7.5.4 and Section 7.5.1 that suggested injecting secrets into protected node Hiera.
+  - Reaffirmed permanent project rule: **Secrets and credentials must never be stored in Puppet manifests, Hiera, Git, Docker image layers, or analyzer container environment variables.**
+  - Documented strict out-of-band provisioning for the backend Jenkins API token directly on `app-server` in `/etc/git-repo-analyzer/backend.env` (`root:gitrepo`, `0640`), with Puppet managing only file existence, ownership, permissions, and non-secret metadata.
+  - Documented out-of-band Jenkins service credentials provisioning without exposing credentials in command-line arguments, process listings, or logs.
+  - Reaffirmed zero credential or `GROQ_API_KEY` injection into the ephemeral analyzer container, deterministically preserving the static report fallback.
+- **Constraints Maintained**: Boundary A strictly preserved. Zero AWS CLI/API calls, no Terraform apply, no SSH, no remote Ansible, no live Puppet/Jenkins, no Docker Hub push, no Git commits/pushes/branch changes. Phase 7 implementation planning complete.
+
+---
+
+## 2026-11-26: Phase 7 — Finalization of Nagios Authentication Secret Provisioning in Deployment Runbook (Boundary A Only)
+
+- **Objective**: Derive exact properties of Nagios web authentication from the repository implementation, codify the secure out-of-band provisioning procedure in the Boundary B deployment runbook, conduct compatibility analysis with existing Puppet management, and document all findings across project documentation without modifying implementation code.
+- **Repository Implementation Audit Findings**:
+  - **Authentication Mechanism**: HTTP Basic Authentication (`AuthType Basic`, `AuthName "Nagios Access"`, `AuthUserFile /etc/nagios4/htpasswd.users`, `Require valid-user`) defined in Apache template `puppet/modules/nagios/templates/apache_nagios.conf.erb` protecting `/usr/share/nagios4/htdocs`, `/usr/lib/cgi-bin/nagios4`, and `/etc/nagios4/stylesheets` under Apache loopback virtual host (`127.0.0.1:8080`).
+  - **Exact Password-File Path**: `/etc/nagios4/htpasswd.users` (derived from `puppet/modules/nagios/manifests/web.pp` line 16: `$htpasswd_file = '/etc/nagios4/htpasswd.users'`).
+  - **Service User & Group**: `root:www-data` (Apache worker processes execute under `www-data:www-data` on Ubuntu 24.04 LTS and require group read access).
+  - **Ownership & Permissions**: `owner => 'root'`, `group => 'www-data'`, `mode => '0640'` (`-rw-r-----` — root read/write, `www-data` group read-only, others no access).
+  - **Puppet Management State & Known Implementation Conflict**:
+    - In `puppet/modules/nagios/manifests/web.pp`:
+      - Lines 22–24: `if $admin_password_hash == undef or $admin_password_hash =~ /^\s*$/ { fail("Nagios web credential error: nagios::web::admin_password_hash is absent or empty. ...") }`
+      - Lines 136–148: `file { $htpasswd_file: ensure => file, owner => 'root', group => 'www-data', mode => '0640', content => "${admin_user}:${admin_password_hash}\n" }`
+    - **Conflict Analysis**: Phase 5A's `web.pp` currently manages `htpasswd.users` content directly and fails catalog compilation if `$admin_password_hash` is `undef`. Under the established zero-secrets-in-Hiera rule, omitting the hash from Hiera causes Puppet catalog compilation on `app-server` to fail closed. Supplying the hash in Hiera causes Puppet to overwrite the out-of-band file.
+    - **Boundary B Operational Resolution**: Under Boundary A, code modifications are prohibited. During live Boundary B deployment, `web.pp` must be patched to decouple secret content (e.g., adding `replace => false` on `File[$htpasswd_file]` and making `$admin_password_hash` optional without failing compilation when `undef`), mirroring `backend.env`.
+- **Codified Out-of-Band Provisioning Procedure**:
+  - Interactive password generation directly on `app-server`:
+    ```bash
+    sudo htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin
+    sudo chown root:www-data /etc/nagios4/htpasswd.users
+    sudo chmod 0640 /etc/nagios4/htpasswd.users
+    ```
+  - Non-leaking file verification:
+    ```bash
+    stat -c "%n %U:%G %a" /etc/nagios4/htpasswd.users
+    sudo -u www-data test -r /etc/nagios4/htpasswd.users && echo "READABLE (OK)"
+    ```
+  - Non-leaking authentication test:
+    - Browser login via SSH tunnel `ssh -L 8080:127.0.0.1:8080 ubuntu@app-server` at `http://localhost:8080/nagios`.
+    - Interactive CLI check: `curl -s -o /dev/null -w "%{http_code}\n" -u nagiosadmin http://127.0.0.1:8080/nagios/`.
+- **Documentation Updated**:
+  - `project_docs/IMPLEMENTATION_PLAN.md`: Section 7.5.1 Step 6, Section 7.5.4 Step 3, Section 7.5.9 Step 2 updated with exact file paths, permissions, out-of-band procedures, and Puppet compatibility conflict analysis.
+  - `project_docs/PROJECT_STATUS.md`: Updated Section 2 table entries for Puppet App Config, CI/CD & Jenkins, and Monitoring (Nagios/NRPE) to reflect out-of-band htpasswd provisioning and eliminate lingering Hiera secret references.
+  - `project_docs/WORK_LOG.md`: Added comprehensive audit, procedure specification, and compatibility analysis entry.
+- **Constraints Maintained**: Boundary A strictly preserved. Zero implementation code changed, zero Git write mutations, zero cloud/AWS/remote operations executed.
+
+
+---
+
+## 2026-11-27: Decouple Nagios Authentication Secrets from Puppet Management (Boundary A — Completed)
+
+- **Objective**: Fix the security conflict in `puppet/modules/nagios/manifests/web.pp` where Puppet previously managed both the metadata and secret content of `/etc/nagios4/htpasswd.users` and failed catalog compilation when `$admin_password_hash` was undefined or empty. Decouple authentication credentials so that secret values are never managed or stored in Puppet manifests, Hiera, Git, or compiled catalogs, while Puppet continues enforcing metadata (`root:www-data`, `0640`, `replace => false`).
+- **Root Cause Analysis**:
+  - `puppet/modules/nagios/manifests/web.pp` previously contained hard compilation assertions:
+    `if $admin_password_hash == undef or $admin_password_hash =~ /^\s*$/ { fail("Nagios web credential error: ...") }`
+    and declared `File[$htpasswd_file]` with:
+    `ensure => file, owner => 'root', group => 'www-data', mode => '0640', content => "${admin_user}:${admin_password_hash}\n"`.
+  - This forced operator password hashes to be present in Hiera (`puppet/hieradata/nodes/app-server.yaml` or `common.yaml`), violating the project's permanent security requirement: **Secrets must never be stored in Puppet manifests, Hiera, Git, deployment scripts, Docker image layers, or analyzer container environment variables.**
+  - If omitted from Hiera, catalog compilation on `app-server` failed closed. If provided in Hiera, Puppet compiled the secret into the catalog and overwrote out-of-band changes.
+- **Implementation Changes**:
+  1. **`puppet/modules/nagios/manifests/web.pp`**:
+     - Signature: Retained `Optional[String] $admin_password_hash = undef` for backwards parameter compatibility with test fixtures.
+     - Removed compilation failure when `$admin_password_hash` is `undef` or empty.
+     - Hardened placeholder guard: When `$admin_password_hash != undef and $enforce_production_secret`, compilation fails if known demo placeholders (`$apr1$demo$hashedpassword`, etc.) are passed.
+     - Decoupled `File[$htpasswd_file]`:
+       - Removed `content => "${admin_user}:${admin_password_hash}\n"`.
+       - Removed `ensure => file`.
+       - Added `replace => false`.
+       - Retained `owner => 'root'`, `group => 'www-data'`, `mode => '0640'`.
+  2. **`puppet/hieradata/common.yaml`**:
+     - Updated documentation comments to explicitly state that Nagios web authentication credentials are not managed via Hiera or Puppet, pointing to interactive out-of-band provisioning.
+  3. **Verified Puppet Resource Semantics**:
+     - *Absent File (First-Time Provisioning)*: When `ensure` is omitted, Puppet manages file metadata only if the target exists on disk. It will **not** create a bogus 0-byte or empty file if absent.
+     - *Present File (Post-Provisioning Convergence)*: Once the operator provisions `/etc/nagios4/htpasswd.users` interactively out-of-band via `htpasswd -B -C 12 -c /etc/nagios4/htpasswd.users nagiosadmin`, Puppet enforces ownership (`root`), group (`www-data`), and mode (`0640`).
+     - *Content Immutability*: Because `content` is omitted and `replace => false` is enforced, Puppet will never modify, overwrite, or corrupt the provisioned credentials.
+     - *Catalog Cleanliness*: Zero password strings or bcrypt/apr1 hashes appear in the compiled catalog JSON, agent cache, reports, or logs.
+  4. **Test Suite Updates & Validation**:
+     - `puppet/tests/test_nagios_module.sh`:
+       - Updated Test 13: Added verification that catalog compilation succeeds with undefined password hash; verified `File[/etc/nagios4/htpasswd.users]` has mode `0640`, owner `root`, group `www-data`, `replace => false`, no `content` attribute, and zero hashes in catalog; verified placeholder rejection; sandboxed `/tmp` behavioral verification confirming no empty file creation on first install, out-of-band content preservation, and idempotency (exit 0 on repeat).
+       - Updated Test 17: Validated `app-server` catalog compilation against repository `hiera.yaml` directly without mock secrets.
+       - Result: **26/26 PASS (Exit 0)**.
+     - `puppet/tests/test_phase5a_convergence.sh`:
+       - Updated Test 2: Verified decoupled zero-secret catalog compilation on `app-server` with `hiera.yaml`, verified `File[/etc/nagios4/htpasswd.users]` parameters, and asserted zero hashes in JSON catalog.
+       - Result: **8/8 PASS (Exit 0)**.
+     - Canonical 4-node compilation verification:
+       - `puppet-server` (25 resources), `app-server` (87 resources), `cicd-server` (50 resources), `node default` (16 resources) all compile cleanly and deterministically with zero cycles and zero credentials.
+- **Constraints Maintained**: Boundary A strictly preserved. Zero Git write mutations (no commit, push, or branch changes), zero AWS/remote operations, zero live credential generation.
+
+---
+
+## 2026-11-27: Docker CI/CD Workflow Flaw Correction & Pre-Deployment Progress Checkpoint
+
+- **Objective**: Correct the publish-before-validation architectural flaw in `.github/workflows/docker-ci.yml`, create a dedicated workflow validation test suite, and record the exact pre-deployment state and next-session checklist before proceeding to Boundary B live execution.
+- **Root Cause & Architectural Flaw**:
+  - The previous `.github/workflows/docker-ci.yml` separated execution into two jobs: `build-and-push` and `validate-image` (`needs: build-and-push`).
+  - `build-and-push` authenticated and pushed `adityaashok2274/git-repo-analyzer:${{ env.VERSION }}` and `:latest` to Docker Hub **before** `validate-image` ran.
+  - `validate-image` subsequently pulled `:latest` from Docker Hub to test it. If validation failed, the defective image remained publicly published on Docker Hub.
+- **Workflow Implementation Corrections (`.github/workflows/docker-ci.yml`)**:
+  1. **Unified Sequential Runner Job**: Consolidated the workflow into a single sequential `build-and-push` job on `ubuntu-latest` (20m timeout) sharing local Docker daemon state.
+  2. **Full Git History**: Updated checkout step to `fetch-depth: 0` so that `analyze2.sh` and Git metadata inspection tools have full commit history during validation.
+  3. **Local Multi-Tag Build**: Builds `adityaashok2274/git-repo-analyzer:${{ env.VERSION }}` and tags `adityaashok2274/git-repo-analyzer:latest` locally in the runner's Docker daemon. Zero build arguments, zero secrets baked into image layers or build logs.
+  4. **Pre-Publish Container Validation**: Step 4 runs `docker run --rm -v "$PWD":/repo adityaashok2274/git-repo-analyzer:latest` directly against the locally built image. Zero `docker pull` instructions.
+  5. **Runtime Secret Injection**: Injects `GROQ_API_KEY` strictly at container runtime via `-e GROQ_API_KEY="$GROQ_API_KEY"` sourced from `${{ secrets.GROQ_API_KEY }}`. When absent, the analyzer safely defaults to deterministic static report generation.
+  6. **Fail-Closed Execution**: If container validation fails (exit code != 0, crash, or 10m timeout), GitHub Actions halts execution immediately. Subsequent steps (Docker Hub login and push) are skipped. Zero tags are pushed.
+  7. **Post-Validation Authentication & Push**: `docker/login-action@v3` (Step 6) and `docker push` (Step 7) execute only after Step 4 succeeds, pushing both `1.0.<run_number>` and `latest`.
+  8. **Trigger Preservation**: Preserved `on.push.branches: [ main, feat/deterministic-metrics ]` and `workflow_dispatch`.
+- **Validation Test Suite (`cicd/tests/test_docker_ci_workflow.sh`)**:
+  - Created automated PyYAML validation script executing 8 static and semantic assertions:
+    - Test 1: YAML syntax validity.
+    - Test 2: Trigger preservation (`main`, `feat/deterministic-metrics`, `workflow_dispatch`).
+    - Test 3: Full checkout (`fetch-depth: 0`).
+    - Test 4: Local Docker build with versioned and latest tags (no build args, no secrets).
+    - Test 5: Strict ordering: validation step executes before login and push.
+    - Test 6: Validation targets locally built image without pulling.
+    - Test 7: Runtime-only `GROQ_API_KEY` injection via secrets.
+    - Test 8: Push step pushes both versioned and latest tags.
+  - Result: **8/8 PASS (Exit 0)**.
+  - Re-verified existing CI test suites:
+    - `cicd/tests/test_checkpoint_7_1.sh`: **25/25 PASS (Exit 0)**.
+    - `cicd/tests/test_checkpoint_7_4.sh`: **13/13 PASS (Exit 0)**.
+  - **Honest Execution Statement**: These tests are local/static checks. The GitHub Actions workflow has **NOT** been executed on GitHub, and no Docker image has been published to Docker Hub.
+- **Working Tree Status & Remaining Cleanup**:
+  - `M .github/workflows/docker-ci.yml` (modified with approved workflow ordering).
+  - `?? cicd/tests/test_docker_ci_workflow.sh` (untracked test suite).
+  - `?? puppet/modules/application/files/__pycache__/` (unwanted untracked generated bytecode artifact; retained for next session removal).
+  - No files staged (`git diff --cached` empty). No commits or pushes made.
+- **Canonical Architecture Preservation & Status Invariants**:
+  - Preserved canonical 3-EC2 architecture (`puppet-server` `t3.small`, `app-server` `t3.micro`, `cicd-server` `t3.small`).
+  - No Terraform apply has occurred.
+  - Zero EC2 instances or security groups have been provisioned for this deployment.
+  - Zero Docker workflows have been triggered.
+  - Zero Docker images have been published.
+  - No PR has been merged.
+  - Zero new commits or pushes have been made.
+- **Tomorrow's Starting Point (Ordered 10-Step Checklist)**:
+  1. Remove the unwanted `puppet/modules/application/files/__pycache__/` directory.
+  2. Run the Docker workflow validation tests again (`./cicd/tests/test_docker_ci_workflow.sh`).
+  3. Inspect the final Git status and complete diff (`git status --short`, `git diff`).
+  4. Review and approve the Docker workflow correction before any authorized workflow execution.
+  5. Recheck the current public IPv4 address (`curl -s https://checkip.amazonaws.com`).
+  6. Update `terraform/terraform.tfvars` with the current IP in `allowed_ssh_cidr` using `/32`.
+  7. Regenerate a fresh Terraform plan (`terraform -chdir=terraform plan -out=tfplan`).
+  8. Inspect the plan for exactly three EC2 instances and the expected security-group changes, with zero unintended destruction or state-bucket modifications.
+  9. Review estimated AWS costs and security-group ingress.
+  10. Stop and request explicit authorization before Terraform apply.
