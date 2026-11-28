@@ -2,7 +2,7 @@ name: Docker CI/CD
 
 on:
   push:
-    branches: [ main ,feat/deterministic-metrics ]
+    branches: [ main ,feat/deterministic-metrics,integration/release-v67 ]
   workflow_dispatch:
 
 permissions:

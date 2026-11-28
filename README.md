@@ -12,10 +12,10 @@ An automated **Git Repository Analyzer and Operations Platform** that analyzes p
 - [Architecture](#architecture)
   - [High-Level Topology](#high-level-topology)
   - [Continuous Integration (GitHub Actions)](#continuous-integration-github-actions)
-  - [Continuous Delivery & Operational Automation (Jenkins)](#continuous-delivery--operational-automation-jenkins)
+  - [Continuous Delivery &amp; Operational Automation (Jenkins)](#continuous-delivery--operational-automation-jenkins)
   - [Release Engineering](#release-engineering)
-  - [AWS Infrastructure & Networking](#aws-infrastructure--networking)
-  - [Monitoring (Nagios Core & NRPE)](#monitoring-nagios-core--nrpe)
+  - [AWS Infrastructure &amp; Networking](#aws-infrastructure--networking)
+  - [Monitoring (Nagios Core &amp; NRPE)](#monitoring-nagios-core--nrpe)
 - [Technology Stack](#technology-stack)
 - [Features](#features)
 - [Project Structure](#project-structure)
@@ -123,21 +123,21 @@ Application releases for the React frontend and Express backend follow a transac
 
 Defined in [`terraform/main.tf`](terraform/main.tf) and [`terraform/modules/ec2/main.tf`](terraform/modules/ec2/main.tf) for AWS region `ap-south-1` using Ubuntu 24.04 LTS AMIs resolved dynamically from AWS SSM Parameter Store and 50 GB total encrypted `gp3` EBS storage:
 
-| Server | Instance Type | EBS (`gp3`) | Swap | Responsibilities |
-|---|---|---|---|---|
-| **Puppet Server** (`puppet-server`) | `t3.small` | 15 GB | 0 GB | Puppet Server 8, Puppet CA (`autosign = false`), NRPE (`nagios-nrpe-server`) |
-| **App Server** (`app-server`) | `t3.micro` | 15 GB | 1 GB | NGINX reverse proxy & SPA static hosting, React frontend, Node.js 24 Express backend, Puppet Agent 8, Nagios Core (`nagios4` + Apache loopback), NRPE client (`check_nrpe`) |
-| **CI/CD Server** (`cicd-server`) | `t3.small` | 20 GB | 2 GB | Jenkins Controller (Java 21), Docker Engine & Compose plugin, ephemeral analyzer containers, Puppet Agent 8, NRPE (`nagios-nrpe-server`) |
+| Server                                      | Instance Type | EBS (`gp3`) | Swap | Responsibilities                                                                                                                                                                |
+| ------------------------------------------- | ------------- | ------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Puppet Server** (`puppet-server`) | `t3.small`  | 15 GB         | 0 GB | Puppet Server 8, Puppet CA (`autosign = false`), NRPE (`nagios-nrpe-server`)                                                                                                |
+| **App Server** (`app-server`)       | `t3.micro`  | 15 GB         | 1 GB | NGINX reverse proxy & SPA static hosting, React frontend, Node.js 24 Express backend, Puppet Agent 8, Nagios Core (`nagios4` + Apache loopback), NRPE client (`check_nrpe`) |
+| **CI/CD Server** (`cicd-server`)    | `t3.small`  | 20 GB         | 2 GB | Jenkins Controller (Java 21), Docker Engine & Compose plugin, ephemeral analyzer containers, Puppet Agent 8, NRPE (`nagios-nrpe-server`)                                      |
 
 All three instances launch in Default VPC public subnets (`associate_public_ip_address = true`) for direct outbound Internet access (`apt`, Docker Hub, GitHub) without a NAT Gateway, while directional AWS Security Groups lock down all ingress:
 
-| Port / Protocol | Source | Destination | Purpose |
-|---|---|---|---|
-| `80`, `443` / TCP | `0.0.0.0/0` | EC2 2 (`app_monitoring_sg`) | Public React SPA & `/api/` reverse proxy |
-| `22` / TCP | Operator IP `/32` (`var.allowed_ssh_cidr`) | EC2 1, EC2 2, EC2 3 | SSH management, Ansible, release staging, Nagios SSH tunnel |
-| `8080` / TCP | EC2 2 (`app_monitoring_sg`) | EC2 3 (`cicd_analysis_sg`) | Express `LiveJenkinsClient` $\rightarrow$ Jenkins REST API |
-| `8140` / TCP | EC2 2 & EC2 3 SGs | EC2 1 (`puppet_server_sg`) | Puppet Agent $\rightarrow$ Puppet Server mTLS catalog pulls |
-| `5666` / TCP | EC2 2 (`app_monitoring_sg`) | EC2 1 & EC2 3 | Nagios Core `check_nrpe` $\rightarrow$ remote NRPE checks |
+| Port / Protocol       | Source                                         | Destination                   | Purpose                                                        |
+| --------------------- | ---------------------------------------------- | ----------------------------- | -------------------------------------------------------------- |
+| `80`, `443` / TCP | `0.0.0.0/0`                                  | EC2 2 (`app_monitoring_sg`) | Public React SPA & `/api/` reverse proxy                     |
+| `22` / TCP          | Operator IP `/32` (`var.allowed_ssh_cidr`) | EC2 1, EC2 2, EC2 3           | SSH management, Ansible, release staging, Nagios SSH tunnel    |
+| `8080` / TCP        | EC2 2 (`app_monitoring_sg`)                  | EC2 3 (`cicd_analysis_sg`)  | Express `LiveJenkinsClient` $\rightarrow$ Jenkins REST API |
+| `8140` / TCP        | EC2 2 & EC2 3 SGs                              | EC2 1 (`puppet_server_sg`)  | Puppet Agent $\rightarrow$ Puppet Server mTLS catalog pulls  |
+| `5666` / TCP        | EC2 2 (`app_monitoring_sg`)                  | EC2 1 & EC2 3                 | Nagios Core `check_nrpe` $\rightarrow$ remote NRPE checks  |
 
 ### Monitoring (Nagios Core & NRPE)
 
@@ -156,31 +156,32 @@ Monitoring is implemented exclusively with **Nagios Core** and **NRPE** via [`pu
 
 ## Technology Stack
 
-| Layer | Technology | Role in Repository |
-|---|---|---|
-| **Analyzer CLI & Scripting** | **Bash** (`analyze2.sh`) | Interactive menu, zero-commit guard, Git stat extraction, orchestrates Node.js metric/chart/report modules |
-| **Version Control Inspection** | **Git** | Local/remote history traversal (`git log`, `git shortlog`, `git for-each-ref`, `--numstat`) and shallow sandboxed cloning |
-| **Backend & Tooling Runtime** | **Node.js** | **20 LTS** inside the analyzer Docker container (`Dockerfile`); **24 LTS** for Express API, Vite builds, and `scripts/package_release.sh` |
-| **Frontend UI** | **React** (`18.3`, TypeScript, Vite, Tailwind CSS, Recharts, `react-markdown`) | Production SPA serving submission form, adaptive polling (`2s`–`10s`), metric/hotspot/DOA/branch cards, PNG chart viewer, and Markdown report rendering |
-| **Backend API** | **Express** (`4.21`, TypeScript, Zod) | REST API (`/api/health`, `/api/analyses`, `/api/analyses/:id`, `/api/analyses/:id/results`, `/api/analyses/:id/charts/:name`), SSRF/URL validation, `FileAnalysisStore` JSON persistence, `LiveJenkinsClient`/`MockJenkinsClient`, `ArtifactIngestor` |
-| **Charting** | **Chart.js** (`chart.js`, `chartjs-node-canvas`) | Headless Cairo/Pango PNG chart generation inside the analyzer container (`commits_per_author.png`, `daily_commit_activity.png`) |
-| **AI Insights (Optional)** | **LangChain** (`@langchain/core`, `@langchain/groq`) & **Groq API** | Converts deterministic `metrics.json` into architectural Markdown insights when `GROQ_API_KEY` is injected at runtime |
-| **Containerization** | **Docker** | Packages the analyzer runtime (`Dockerfile`), runs sandboxed ephemeral analysis containers on EC2 3 (`docker-ce` + Compose plugin) |
-| **Continuous Integration** | **GitHub Actions** | Validates analyzer container against source repo before pushing tags to Docker Hub (`.github/workflows/docker-ci.yml`) |
-| **Container Registry** | **Docker Hub** | Distributes validated `adityaashok2274/git-repo-analyzer` images (`latest` & `1.0.<run_number>`) |
-| **CD & Analysis Execution** | **Jenkins** (`Jenkinsfile`, LTS `2.580.3` baseline) | Parameterized (`REPO_URL`) private pipeline controller executing sandboxed Git clones and Docker analyzer runs |
-| **Cloud Infrastructure** | **AWS EC2** & **AWS S3** | 3-EC2 Ubuntu 24.04 fleet in `ap-south-1`; S3 bucket (`git-repo-analyzer-terraform-state-2026`) stores remote Terraform state with native lockfile |
-| **Infrastructure as Code** | **Terraform** (`hashicorp/aws ~> 6.0`) | Provisions VPC EC2 instances, directional Security Groups, SSM AMI lookup, and `ansible_inventory_template` |
-| **Bootstrap & Orchestration** | **Ansible** | Agentless SSH bootstrap: dynamic inventory sync, console SSH host-key trust, swap, `/etc/hosts`, Puppet Server/CA setup, controlled CSR enrollment, Docker CE, baseline NGINX |
-| **Desired-State & Release Activation** | **Puppet** (`8.x`) | Pull-based mTLS (`8140`) convergence: manages `common`, `nrpe`, `nagios`, `jenkins`, and `application` (Node 24, systemd backend, NGINX vhost, transactional release activation & rollback) |
-| **Web & Reverse Proxy** | **NGINX** | Public `80`/`443` static SPA server, `503 MAINTENANCE` gate, and `/api/` reverse proxy to Express (`127.0.0.1:3000`) |
-| **Monitoring** | **Nagios Core** & **NRPE** | Central active monitoring on EC2 2 (`127.0.0.1:8080` Apache loopback) + remote service/system checks over TCP `5666` on EC2 1 and EC2 3 |
+| Layer                                        | Technology                                                                               | Role in Repository                                                                                                                                                                                                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Analyzer CLI & Scripting**           | **Bash** (`analyze2.sh`)                                                         | Interactive menu, zero-commit guard, Git stat extraction, orchestrates Node.js metric/chart/report modules                                                                                                                                                              |
+| **Version Control Inspection**         | **Git**                                                                            | Local/remote history traversal (`git log`, `git shortlog`, `git for-each-ref`, `--numstat`) and shallow sandboxed cloning                                                                                                                                       |
+| **Backend & Tooling Runtime**          | **Node.js**                                                                        | **20 LTS** inside the analyzer Docker container (`Dockerfile`); **24 LTS** for Express API, Vite builds, and `scripts/package_release.sh`                                                                                                               |
+| **Frontend UI**                        | **React** (`18.3`, TypeScript, Vite, Tailwind CSS, Recharts, `react-markdown`) | Production SPA serving submission form, adaptive polling (`2s`–`10s`), metric/hotspot/DOA/branch cards, PNG chart viewer, and Markdown report rendering                                                                                                            |
+| **Backend API**                        | **Express** (`4.21`, TypeScript, Zod)                                            | REST API (`/api/health`, `/api/analyses`, `/api/analyses/:id`, `/api/analyses/:id/results`, `/api/analyses/:id/charts/:name`), SSRF/URL validation, `FileAnalysisStore` JSON persistence, `LiveJenkinsClient`/`MockJenkinsClient`, `ArtifactIngestor` |
+| **Charting**                           | **Chart.js** (`chart.js`, `chartjs-node-canvas`)                               | Headless Cairo/Pango PNG chart generation inside the analyzer container (`commits_per_author.png`, `daily_commit_activity.png`)                                                                                                                                     |
+| **AI Insights (Optional)**             | **LangChain** (`@langchain/core`, `@langchain/groq`) & **Groq API**      | Converts deterministic `metrics.json` into architectural Markdown insights when `GROQ_API_KEY` is injected at runtime                                                                                                                                               |
+| **Containerization**                   | **Docker**                                                                         | Packages the analyzer runtime (`Dockerfile`), runs sandboxed ephemeral analysis containers on EC2 3 (`docker-ce` + Compose plugin)                                                                                                                                  |
+| **Continuous Integration**             | **GitHub Actions**                                                                 | Validates analyzer container against source repo before pushing tags to Docker Hub (`.github/workflows/docker-ci.yml`)                                                                                                                                                |
+| **Container Registry**                 | **Docker Hub**                                                                     | Distributes validated `adityaashok2274/git-repo-analyzer` images (`latest` & `1.0.<run_number>`)                                                                                                                                                                  |
+| **CD & Analysis Execution**            | **Jenkins** (`Jenkinsfile`, LTS `2.580.3` baseline)                            | Parameterized (`REPO_URL`) private pipeline controller executing sandboxed Git clones and Docker analyzer runs                                                                                                                                                        |
+| **Cloud Infrastructure**               | **AWS EC2** & **AWS S3**                                                     | 3-EC2 Ubuntu 24.04 fleet in `ap-south-1`; S3 bucket (`git-repo-analyzer-terraform-state-2026`) stores remote Terraform state with native lockfile                                                                                                                   |
+| **Infrastructure as Code**             | **Terraform** (`hashicorp/aws ~> 6.0`)                                           | Provisions VPC EC2 instances, directional Security Groups, SSM AMI lookup, and `ansible_inventory_template`                                                                                                                                                           |
+| **Bootstrap & Orchestration**          | **Ansible**                                                                        | Agentless SSH bootstrap: dynamic inventory sync, console SSH host-key trust, swap, `/etc/hosts`, Puppet Server/CA setup, controlled CSR enrollment, Docker CE, baseline NGINX                                                                                         |
+| **Desired-State & Release Activation** | **Puppet** (`8.x`)                                                               | Pull-based mTLS (`8140`) convergence: manages `common`, `nrpe`, `nagios`, `jenkins`, and `application` (Node 24, systemd backend, NGINX vhost, transactional release activation & rollback)                                                                 |
+| **Web & Reverse Proxy**                | **NGINX**                                                                          | Public `80`/`443` static SPA server, `503 MAINTENANCE` gate, and `/api/` reverse proxy to Express (`127.0.0.1:3000`)                                                                                                                                          |
+| **Monitoring**                         | **Nagios Core** & **NRPE**                                                   | Central active monitoring on EC2 2 (`127.0.0.1:8080` Apache loopback) + remote service/system checks over TCP `5666` on EC2 1 and EC2 3                                                                                                                             |
 
 ---
 
 ## Features
 
 ### Repository Analyzer & Web Platform Features
+
 - **Commit History Metrics**: Total commits, commits in the last 7 and 30 days, and contributor breakdown (`git shortlog`).
 - **Code Churn & Most Modified Files**: Total insertions/deletions, top modified files, and 30-day exponentially weighted hotspot volatility scores (`ai/metrics.js`).
 - **Bus Factor (DOA) & Stale Branch Detection**: Computes file-level author concentration (`DOA`) and branch divergence drift against the main branch.
@@ -191,6 +192,7 @@ Monitoring is implemented exclusively with **Nagios Core** and **NRPE** via [`pu
 - **Web Application Isolation & Persistence**: Exposes strictly application UUID v4 `analysisId` values (never leaking Jenkins `queueId` or `buildNumber`), validates URLs against SSRF/DNS rebinding/redirects, and recovers persisted job state across backend restarts via atomic JSON writes.
 
 ### Release Engineering Features
+
 - **Reproducible, Secret-Free Release Bundles**: Packages compiled `backend/dist`, `frontend/dist`, production `node_modules`, and `release-manifest.json` while failing closed on `.env*`, `.git`, `src/`, `test/`, or devDependencies.
 - **Dual Hardlinked Archives & SHA-256 Sidecars**: Produces both `git-repo-analyzer-release-<VERSION>.tar.gz` and hardlinked `<VERSION>.tar.gz` with strict GNU `.sha256` sidecars.
 - **Transactional SSH `stdin` Staging**: Streams archives over SSH `stdin` without `scp`, verifies exact byte counts and SHA-256 digests, acquires per-version `flock` locks, maintains `manifest.env` + journals, supports `--overwrite` backup/rollback, and provides `--recover --tx-token` recovery.
@@ -322,13 +324,13 @@ Git-repo-analyzer/
 
 ### Prerequisites
 
-| Use Case | Required Tools & Versions |
-|---|---|
-| **Docker Analyzer Execution** | Docker Engine (`docker run`) |
-| **Native Analyzer CLI (`analyze2.sh`)** | Git, Bash, **Node.js 20+** and `npm` (Node.js 20 LTS is used inside [`Dockerfile`](Dockerfile)) |
-| **Web App Build & Release Packaging** | **Node.js 24 LTS** (`^v?24(\.\|$)`, strictly enforced by `scripts/package_release.sh`), `npm`, `tar`, `sha256sum`, `git` |
-| **Release Staging (`stage_release.sh`)** | `bash`, OpenSSH client (`ssh`), `python3`, `base64`, `sha256sum` |
-| **Infrastructure & Automation** | Terraform (`hashicorp/aws ~> 6.0`), Ansible (`2.16+`), Puppet (`8.x`), AWS CLI |
+| Use Case                                         | Required Tools & Versions                                                                                                                 |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Docker Analyzer Execution**              | Docker Engine (`docker run`)                                                                                                            |
+| **Native Analyzer CLI (`analyze2.sh`)**  | Git, Bash, **Node.js 20+** and `npm` (Node.js 20 LTS is used inside [`Dockerfile`](Dockerfile))                                  |
+| **Web App Build & Release Packaging**      | **Node.js 24 LTS** (`^v?24(\.\|$)`, strictly enforced by `scripts/package_release.sh`), `npm`, `tar`, `sha256sum`, `git` |
+| **Release Staging (`stage_release.sh`)** | `bash`, OpenSSH client (`ssh`), `python3`, `base64`, `sha256sum`                                                                |
+| **Infrastructure & Automation**            | Terraform (`hashicorp/aws ~> 6.0`), Ansible (`2.16+`), Puppet (`8.x`), AWS CLI                                                      |
 
 ### 1. Docker Analyzer Execution (Recommended)
 
@@ -395,35 +397,35 @@ npm --prefix frontend run dev
 
 **Analyzer Runtime (`ai/reportGenerator.js`, `ai/providers/groqProvider.js`)**
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `GROQ_API_KEY` | *(unset)* | Runtime-only Groq API key; if unset, writes deterministic static `reports/summary.md` |
-| `GROQ_MODEL` | `groq/compound-mini` | Groq model identifier passed to `ChatGroq` |
-| `REPORT_PATH` | `reports/summary.md` | Destination Markdown report path |
+| Variable         | Default                | Purpose                                                                                 |
+| ---------------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| `GROQ_API_KEY` | *(unset)*            | Runtime-only Groq API key; if unset, writes deterministic static `reports/summary.md` |
+| `GROQ_MODEL`   | `groq/compound-mini` | Groq model identifier passed to `ChatGroq`                                            |
+| `REPORT_PATH`  | `reports/summary.md` | Destination Markdown report path                                                        |
 
 **Backend API (`backend/src/config/env.ts` & `/etc/git-repo-analyzer/backend.env`)**
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `NODE_ENV` | `development` | `development`, `test`, or `production` |
-| `PORT` | `3000` | Express loopback listening port |
-| `HOST` | `127.0.0.1` | Express bind host |
-| `DATA_DIR` | `<cwd>/data` | Persistent storage for `analyses.json` and cached PNG artifacts (`/var/lib/git-repo-analyzer/data` in prod) |
-| `CORS_ORIGIN` | `http://localhost:5173` (dev) / `""` (prod) | Comma-separated allowed `http`/`https` origins (must be populated in production) |
-| `SSRF_CHECK_DNS` | `true` | Enforces DNS + public IP SSRF check (cannot be `false` when `NODE_ENV=production`) |
-| `ANALYSIS_TIMEOUT_MS` | `600000` | Maximum job duration before failure timeout (ms) |
-| `POLL_INTERVAL_MS` | `1500` | Backend Jenkins polling interval (ms) |
-| `JENKINS_MOCK_MODE` | `true` | `true` uses `MockJenkinsClient`; `false` uses `LiveJenkinsClient` |
-| `JENKINS_URL` | *(unset)* | Private Jenkins URL (`http://<cicd-server-private-ip>:8080`, required when `JENKINS_MOCK_MODE=false`) |
-| `JENKINS_USER` | *(unset)* | Jenkins service account username (e.g., `backend-service`) |
-| `JENKINS_API_TOKEN` | *(unset)* | Jenkins API token provisioned out-of-band in `/etc/git-repo-analyzer/backend.env` (`0640`) |
-| `JENKINS_JOB_NAME` | `git-repo-analyzer` | Parameterized Jenkins job name |
-| `JENKINS_REQUEST_TIMEOUT_MS` | `5000` | Timeout per Jenkins REST HTTP request (ms) |
+| Variable                       | Default                                         | Purpose                                                                                                         |
+| ------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                   | `development`                                 | `development`, `test`, or `production`                                                                    |
+| `PORT`                       | `3000`                                        | Express loopback listening port                                                                                 |
+| `HOST`                       | `127.0.0.1`                                   | Express bind host                                                                                               |
+| `DATA_DIR`                   | `<cwd>/data`                                  | Persistent storage for `analyses.json` and cached PNG artifacts (`/var/lib/git-repo-analyzer/data` in prod) |
+| `CORS_ORIGIN`                | `http://localhost:5173` (dev) / `""` (prod) | Comma-separated allowed `http`/`https` origins (must be populated in production)                            |
+| `SSRF_CHECK_DNS`             | `true`                                        | Enforces DNS + public IP SSRF check (cannot be `false` when `NODE_ENV=production`)                          |
+| `ANALYSIS_TIMEOUT_MS`        | `600000`                                      | Maximum job duration before failure timeout (ms)                                                                |
+| `POLL_INTERVAL_MS`           | `1500`                                        | Backend Jenkins polling interval (ms)                                                                           |
+| `JENKINS_MOCK_MODE`          | `true`                                        | `true` uses `MockJenkinsClient`; `false` uses `LiveJenkinsClient`                                       |
+| `JENKINS_URL`                | *(unset)*                                     | Private Jenkins URL (`http://<cicd-server-private-ip>:8080`, required when `JENKINS_MOCK_MODE=false`)       |
+| `JENKINS_USER`               | *(unset)*                                     | Jenkins service account username (e.g., `backend-service`)                                                    |
+| `JENKINS_API_TOKEN`          | *(unset)*                                     | Jenkins API token provisioned out-of-band in `/etc/git-repo-analyzer/backend.env` (`0640`)                  |
+| `JENKINS_JOB_NAME`           | `git-repo-analyzer`                           | Parameterized Jenkins job name                                                                                  |
+| `JENKINS_REQUEST_TIMEOUT_MS` | `5000`                                        | Timeout per Jenkins REST HTTP request (ms)                                                                      |
 
 **Frontend (`frontend/.env.example`)**
 
-| Variable | Default | Purpose |
-|---|---|---|
+| Variable              | Default     | Purpose                                                                                      |
+| --------------------- | ----------- | -------------------------------------------------------------------------------------------- |
 | `VITE_API_BASE_URL` | *(empty)* | Keep empty so requests use relative `/api/...` routes via Vite proxy (dev) or NGINX (prod) |
 
 ### 6. Jenkins Parameterized Execution
@@ -456,12 +458,14 @@ scripts/package_release.sh -v 1.0.0 --skip-build
 ```
 
 **CLI Options:**
+
 - `-v, --version <VERSION>`: Required release ID matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` without `..`
 - `-o, --output-dir <DIR>`: Destination directory (default: `<PROJECT_ROOT>/dist-release`, chmod `0700`)
 - `-s, --skip-build`: Skip `npm run build` for backend and frontend
 - `-h, --help`: Show usage
 
 **Outputs (dual hardlinked archives + GNU coreutils SHA-256 sidecars):**
+
 - `git-repo-analyzer-release-<VERSION>.tar.gz` & `.sha256`
 - `<VERSION>.tar.gz` & `.sha256` (hardlinked regular file sharing the exact inode so Puppet `release_manager.py` rejects symlinks cleanly)
 
@@ -486,6 +490,7 @@ scripts/stage_release.sh --recover --version 1.0.0 --tx-token <SESSION_TOKEN>
 ```
 
 **CLI Options & Environment Overrides (`STAGE_*`):**
+
 - `-v, --version <VERSION>` (`STAGE_ARCHIVE_DIR` for `-d, --archive-dir`)
 - `-H, --host` (`STAGE_SSH_HOST`, default `app-server`)
 - `-u, --user` (`STAGE_SSH_USER`, default `ubuntu`)
@@ -497,6 +502,7 @@ scripts/stage_release.sh --recover --version 1.0.0 --tx-token <SESSION_TOKEN>
 - `--recover` & `--tx-token <TOKEN>`: Explicit recovery mode authorized against `TX_ID` and `AUTH_TAG` (`SHA-256(version:tx_id:token)[:32]`)
 
 **Engine Guarantees (`scripts/release-v67/`):**
+
 - **No `scp` / No Remote Shell Interpolation**: Streams binary tarballs over SSH `stdin` while sending a Base64-encoded script and JSON argument list verified via SHA-256 digests (`exit 71` on mismatch) to `/usr/bin/python3`, which invokes `/bin/bash -c` via `os.execv`.
 - **Kernel Locking & Link Protections**: Opens `.gra-tx-<VERSION>.flock` with `O_CREAT | O_RDWR | O_NOFOLLOW`, asserts `st_nlink == 1`, `st_uid == euid`, post-`flock` `lstat`/`fstat` inode parity, and non-blocking `LOCK_EX | LOCK_NB` (`exit 75` `MUTEX_BUSY` on contention).
 - **Journals, Rollback & Recovery**: Tracks `manifest.env` (`SCHEMA_VERSION=1`), `tx_phase`, and `journal.ARCHIVE`/`journal.SIDECAR`; restores baseline backups non-destructively on post-upload or promotion errors, or enters `TX_RECOVERY_REQUIRED` preserving backup evidence until explicit `--recover --tx-token`.
@@ -524,19 +530,20 @@ scripts/stage_release.sh --recover --version 1.0.0 --tx-token <SESSION_TOKEN>
 
 ### Recently Verified Test Suites (Local & Simulated)
 
-| Suite / Command | Result | Scope & Validation Boundary |
-|---|---|---|
-| `cicd/tests/test_package_release.sh` | **10/10 PASS** | **Local real build**: CLI validation, Node.js 24 guard, real frontend/backend production build, hardlink + SHA-256 sidecar checks, archive isolation, direct Python validation via `release_manager.py` |
-| `cicd/tests/test_stage_release.sh` | **22/22 PASS** | **Simulated / mocked SSH**: runs against a local `mktemp` sandbox with a mocked `ssh` stub (`eval`) and failing `scp` stub; validates CLI, stream truncation/corruption, lock anchors, `--overwrite` rollback, and `--recover` |
-| `scripts/release-v67/run_design_tests.sh` | **106/106 PASS** | **Simulated / mocked SSH & fault injection**: tests Base64/JSON argument serialization, `O_NOFOLLOW`/hardlink rejection, `write_state_atomic` exit codes `1`/`2`, failure hooks, `TX_RECOVERY_REQUIRED`, and `AUTH_TAG` recovery |
-| `cicd/tests/test_docker_ci_workflow.sh` | **8/8 PASS** | **Local static/semantic check**: PyYAML inspection of `.github/workflows/docker-ci.yml` verifying triggers, `fetch-depth: 0`, validation-before-push ordering, and runtime-only `GROQ_API_KEY` |
-| `npm --prefix backend test` | **27/27 PASS** | **Local unit + loopback simulator**: Express endpoints, URL/SSRF guards, `FileAnalysisStore` recovery, `ArtifactIngestor`, and `LiveJenkinsClient` against a stateful loopback HTTP simulator |
-| `npm --prefix frontend test` | **14/14 PASS** | **Local unit/DOM (Vitest + jsdom)**: submission validation, adaptive polling, markdown rendering, and workflow states |
-| `ansible/tests/test_sync_inventory.sh` & `test_verify_ssh_keys.sh` | **5/5 PASS**, **8/8 PASS** | **Local fixture/mocked CLI**: inventory parsing and EC2 serial console fingerprint comparison logic |
-| `puppet/tests/test_puppet_architecture.sh` | **15/15 PASS** | **Local Puppet parser/syntax**: node layout, Hiera bindings, and Ansible playbook syntax checks |
-| `terraform -chdir=terraform fmt -check && validate` | **PASS** | **Local HCL syntax & module validation** (does not contact AWS or provision resources) |
+| Suite / Command                                                        | Result                                 | Scope & Validation Boundary                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cicd/tests/test_package_release.sh`                                 | **10/10 PASS**                   | **Local real build**: CLI validation, Node.js 24 guard, real frontend/backend production build, hardlink + SHA-256 sidecar checks, archive isolation, direct Python validation via `release_manager.py`                                    |
+| `cicd/tests/test_stage_release.sh`                                   | **22/22 PASS**                   | **Simulated / mocked SSH**: runs against a local `mktemp` sandbox with a mocked `ssh` stub (`eval`) and failing `scp` stub; validates CLI, stream truncation/corruption, lock anchors, `--overwrite` rollback, and `--recover`   |
+| `scripts/release-v67/run_design_tests.sh`                            | **106/106 PASS**                 | **Simulated / mocked SSH & fault injection**: tests Base64/JSON argument serialization, `O_NOFOLLOW`/hardlink rejection, `write_state_atomic` exit codes `1`/`2`, failure hooks, `TX_RECOVERY_REQUIRED`, and `AUTH_TAG` recovery |
+| `cicd/tests/test_docker_ci_workflow.sh`                              | **8/8 PASS**                     | **Local static/semantic check**: PyYAML inspection of `.github/workflows/docker-ci.yml` verifying triggers, `fetch-depth: 0`, validation-before-push ordering, and runtime-only `GROQ_API_KEY`                                         |
+| `npm --prefix backend test`                                          | **27/27 PASS**                   | **Local unit + loopback simulator**: Express endpoints, URL/SSRF guards, `FileAnalysisStore` recovery, `ArtifactIngestor`, and `LiveJenkinsClient` against a stateful loopback HTTP simulator                                          |
+| `npm --prefix frontend test`                                         | **14/14 PASS**                   | **Local unit/DOM (Vitest + jsdom)**: submission validation, adaptive polling, markdown rendering, and workflow states                                                                                                                        |
+| `ansible/tests/test_sync_inventory.sh` & `test_verify_ssh_keys.sh` | **5/5 PASS**, **8/8 PASS** | **Local fixture/mocked CLI**: inventory parsing and EC2 serial console fingerprint comparison logic                                                                                                                                          |
+| `puppet/tests/test_puppet_architecture.sh`                           | **15/15 PASS**                   | **Local Puppet parser/syntax**: node layout, Hiera bindings, and Ansible playbook syntax checks                                                                                                                                              |
+| `terraform -chdir=terraform fmt -check && validate`                  | **PASS**                         | **Local HCL syntax & module validation** (does not contact AWS or provision resources)                                                                                                                                                       |
 
 ### Additional Local Regression Suites Recorded in `project_docs/`
+
 - [`project_docs/PROJECT_STATUS.md`](project_docs/PROJECT_STATUS.md) and [`project_docs/WORK_LOG.md`](project_docs/WORK_LOG.md) additionally record passing local fixture/container runs for `cicd/tests/test_checkpoint_7_1.sh` (25/25), `cicd/tests/test_checkpoint_7_4.sh` (13/13), `puppet/tests/test_jenkins_module.sh` (21/21), Phase 4 Ansible role/enrollment suites (208/208), Phase 5A Puppet suites (83/83), and Phase 5B Puppet application/release suites (62/62).
 
 ### Validation Boundary Summary
@@ -555,14 +562,15 @@ scripts/stage_release.sh --recover --version 1.0.0 --tx-token <SESSION_TOKEN>
 - **AWS Infrastructure (`ap-south-1`)**: Verified via read-only AWS CLI checks (`aws ec2 describe-instances --region ap-south-1` returned `[]`, 0 EC2 instances; `aws s3 ls s3://git-repo-analyzer-terraform-state-2026/ --recursive` confirmed the S3 state bucket exists and currently holds 0 objects because `terraform apply` has not been executed).
 - **Docker Hub Image (`adityaashok2274/git-repo-analyzer`)**: Docker Hub tags `1.0.47` and `latest` (`sha256:252ec8b627e5e2059d72cf15cc32f6c2a039f9d4ebcb54ea3b57aa93de1b1a43`) were pushed on `2026-11-27T08:59:56Z–08:59:58Z` following commit `f6b25dd` (which followed the `ai/metrics.js` fix in `639f822`), with no analyzer source changes on `integration/release-v67` since. Live Jenkins pulls and runs on EC2 3 remain pending AWS deployment.
 
-| Tier | Status |
-|---|---|
-| **Implemented** | Analyzer CLI/Docker image, GitHub Actions CI, Express backend, React frontend, Terraform 3-EC2 configuration, Ansible bootstrap/enrollment roles, Puppet modules (`common`, `nrpe`, `nagios`, `jenkins`, `application`), release packager & transactional SSH stager |
-| **Tested Locally** | Backend (27/27), Frontend (14/14), Release Packaging (10/10), Mocked SSH Staging (22/22), Release Engine Fault Injection (106/106), CI Workflow Check (8/8), Terraform syntax validation, plus local Puppet/Ansible/Docker suites recorded in `project_docs/` |
-| **Configured, Not Deployed** | 3-EC2 AWS fleet (`t3.small`/`t3.micro`/`t3.small`), Puppet Server 8 & Agent mTLS enrollment, Jenkins controller on EC2 3, Nagios Core + NRPE fleet checks |
+| Tier                               | Status                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Implemented**              | Analyzer CLI/Docker image, GitHub Actions CI, Express backend, React frontend, Terraform 3-EC2 configuration, Ansible bootstrap/enrollment roles, Puppet modules (`common`, `nrpe`, `nagios`, `jenkins`, `application`), release packager & transactional SSH stager                                                                                                                                        |
+| **Tested Locally**           | Backend (27/27), Frontend (14/14), Release Packaging (10/10), Mocked SSH Staging (22/22), Release Engine Fault Injection (106/106), CI Workflow Check (8/8), Terraform syntax validation, plus local Puppet/Ansible/Docker suites recorded in `project_docs/`                                                                                                                                                       |
+| **Configured, Not Deployed** | 3-EC2 AWS fleet (`t3.small`/`t3.micro`/`t3.small`), Puppet Server 8 & Agent mTLS enrollment, Jenkins controller on EC2 3, Nagios Core + NRPE fleet checks                                                                                                                                                                                                                                                       |
 | **Deployment Still Pending** | `terraform apply`, live EC2 SSH host-key verification, Ansible `site.yml` & `enroll-puppet-agents.yml`, real SSH release staging to EC2 2, out-of-band `/etc/nagios4/htpasswd.users` and `/etc/git-repo-analyzer/backend.env` provisioning, live `JENKINS_MOCK_MODE=false` cutover, empirical `>= 300 MB MemAvailable` telemetry validation on 2 GB `cicd-server`, and Nagios SSH-tunnel verification |
 
 ### Known Limitations
+
 - **Controlled Release Maintenance Window**: Puppet release activation on EC2 2 uses a brief `503 MAINTENANCE` window (`maintenance.flag`) while swapping `/opt/git-repo-analyzer/current`, restarting the backend service, and verifying release ID parity on `127.0.0.1:8081` (zero-downtime blue/green is not claimed).
 - **Disk Exhaustion Residual Risk on EC2 3**: `Jenkinsfile` checks for 5 GB free space before cloning and deletes cloned repositories exceeding 2 GB, but does not impose a hard OS-level filesystem quota.
 - **Single-Node Monitoring Scope**: Nagios Core runs on EC2 2 (`app-server`); if EC2 2 goes down, the Nagios dashboard becomes unavailable alongside the web app.
