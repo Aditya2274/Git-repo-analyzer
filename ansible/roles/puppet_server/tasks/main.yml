@@ -4,7 +4,7 @@
 - name: Execute preflight checks for Puppet Server
   ansible.builtin.include_tasks: preflight.yml
 
-- name: Configure Puppet 8 repository and install Puppet Server package
+- name: Validate repository, Java 21, and install Puppet Server package
   ansible.builtin.include_tasks: repository.yml
 
 - name: Configure JVM heap and JRuby concurrency limits
@@ -15,6 +15,9 @@
 
 - name: Evaluate CA state and manage cryptographic initialization
   ansible.builtin.include_tasks: ca.yml
+
+- name: Flush pending Puppet Server handlers before service validation
+  ansible.builtin.meta: flush_handlers
 
 - name: Manage Puppet Server service and validate health
   ansible.builtin.include_tasks: service.yml

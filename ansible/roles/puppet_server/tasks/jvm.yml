@@ -5,18 +5,57 @@
   ansible.builtin.stat:
     path: "{{ puppet_server_default_file | default('/etc/default/puppetserver') }}"
   register: puppet_default_stat
+  check_mode: false
+
+- name: Fail if /etc/default/puppetserver is missing
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Expected Puppet Server defaults file
+      {{ puppet_server_default_file | default('/etc/default/puppetserver') }} does not exist.
+      Cannot tune JVM heap memory safely.
+  when: not puppet_default_stat.stat.exists
 
 - name: Tune JVM heap memory in /etc/default/puppetserver (-Xms1g -Xmx1g)
   ansible.builtin.replace:
     path: "{{ puppet_server_default_file | default('/etc/default/puppetserver') }}"
-    regexp: '-Xms[0-9]+[gGmMkK]\s+-Xmx[0-9]+[gGmMkK]'
-    replace: "-Xms{{ puppet_jvm_xms | default('1g') }} -Xmx{{ puppet_jvm_xmx | default('1g') }}"
-  when: puppet_default_stat.stat.exists
+    regexp: '^([ \t]*JAVA_ARGS="[^"]*?)-Xms[0-9]+[gGmMkK]\s+-Xmx[0-9]+[gGmMkK]'
+    replace: "\\1-Xms{{ puppet_jvm_xms | default('1g') }} -Xmx{{ puppet_jvm_xmx | default('1g') }}"
+  register: puppet_jvm_heap_replace
   notify: restart puppetserver
+
+- name: Read /etc/default/puppetserver for post-change JVM validation
+  ansible.builtin.slurp:
+    src: "{{ puppet_server_default_file | default('/etc/default/puppetserver') }}"
+  register: puppet_default_slurp
+  check_mode: false
+
+- name: Validate configured JVM Xms and Xmx values and uniqueness in /etc/default/puppetserver
+  vars:
+    default_content: "{{ puppet_default_slurp.content | b64decode }}"
+    java_args_lines: >-
+      {{
+        default_content.splitlines()
+        | map('trim')
+        | select('match', '^JAVA_ARGS=')
+        | list
+      }}
+    expected_xms: "-Xms{{ puppet_jvm_xms | default('1g') }}"
+    expected_xmx: "-Xmx{{ puppet_jvm_xmx | default('1g') }}"
+  ansible.builtin.assert:
+    that:
+      - java_args_lines | length == 1
+      - (java_args_lines | first | regex_findall('(?<=[\\s"\\x27=])-Xms[^\\s"\\x27]*')) == [expected_xms]
+      - (java_args_lines | first | regex_findall('(?<=[\\s"\\x27=])-Xmx[^\\s"\\x27]*')) == [expected_xmx]
+    fail_msg: >
+      CRITICAL ERROR: JVM heap settings ({{ expected_xms }} {{ expected_xmx }})
+      must appear cleanly without duplicate or conflicting JAVA_ARGS/-Xms/-Xmx flags in
+      {{ puppet_server_default_file | default('/etc/default/puppetserver') }}.
+    success_msg: "Verified unique JVM heap tuning ({{ expected_xms }} {{ expected_xmx }}) in /etc/default/puppetserver."
+  when: not (ansible_check_mode and (puppet_jvm_heap_replace is changed))
 
 - name: Ensure conf.d directory exists for Puppet Server
   ansible.builtin.file:
-    path: "{{ puppet_server_conf_dir | default('/etc/puppetlabs/puppetserver/conf.d') }}"
+    path: "{{ puppet_server_conf_dir | default('/etc/puppet/puppetserver/conf.d') }}"
     state: directory
     owner: root
     group: root
@@ -24,13 +63,515 @@
 
 - name: Ensure puppetserver.conf exists
   ansible.builtin.stat:
-    path: "{{ puppet_server_conf_file | default('/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf') }}"
+    path: "{{ puppet_server_conf_file | default('/etc/puppet/puppetserver/conf.d/puppetserver.conf') }}"
   register: puppetserver_conf_stat
+  check_mode: false
 
-- name: Configure max-active-jrubies in puppetserver.conf
-  ansible.builtin.replace:
-    path: "{{ puppet_server_conf_file | default('/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf') }}"
-    regexp: 'max-active-jrubies:\s*[0-9]+'
-    replace: "max-active-jrubies: {{ puppet_max_active_jrubies | default(1) }}"
-  when: puppetserver_conf_stat.stat.exists
+- name: Fail if puppetserver.conf is missing
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Expected Puppet Server configuration file
+      {{ puppet_server_conf_file | default('/etc/puppet/puppetserver/conf.d/puppetserver.conf') }} does not exist.
+      Cannot enforce JRuby concurrency limit safely.
+  when: not puppetserver_conf_stat.stat.exists
+
+- name: Validate configured puppet_max_active_jrubies integer bounds before updating puppetserver.conf
+  vars:
+    jrubies_raw: "{{ puppet_max_active_jrubies | default(1) | string | trim }}"
+  ansible.builtin.assert:
+    that:
+      - jrubies_raw is match('^[1-9][0-9]*$')
+      - (jrubies_raw | int) >= 1
+      - (jrubies_raw | int) <= 64
+    fail_msg: >
+      CRITICAL ERROR: puppet_max_active_jrubies ('{{ puppet_max_active_jrubies | default(1) }}') must be
+      a positive integer between 1 and 64.
+
+- name: Configure and validate max-active-instances inside jruby-puppet block of puppetserver.conf
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os, re, shutil, sys, tempfile
+
+        conf_path = sys.argv[1]
+        expected_raw = sys.argv[2].strip()
+        mode = sys.argv[3] if len(sys.argv) > 3 else "enforce"  # "enforce", "check", or "validate"
+
+        SAFE_MIN, SAFE_MAX = 1, 64
+        if not re.fullmatch(r"[1-9][0-9]*", expected_raw) or not (SAFE_MIN <= int(expected_raw) <= SAFE_MAX):
+            sys.stderr.write(
+                f"CRITICAL ERROR: Expected max-active-instances '{expected_raw}' must be an integer in [{SAFE_MIN}, {SAFE_MAX}]\n"
+            )
+            sys.exit(1)
+        expected_val = expected_raw
+
+        with open(conf_path, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+
+        WORD_STOP = set(' \t\r\n#"{}[],;:=.+')
+
+        def tokenize_hocon(src):
+            tokens = []
+            comment_lines = []  # (line_start, line_end)
+            i = 0
+            n = len(src)
+            while i < n:
+                ch = src[i]
+                if ch in (" ", "\t", "\r"):
+                    i += 1
+                    continue
+                if ch == "\n":
+                    tokens.append(("NL", "\n", i, i + 1))
+                    i += 1
+                    continue
+                if ch == "#" or (ch == "/" and i + 1 < n and src[i + 1] == "/"):
+                    ls = src.rfind("\n", 0, i) + 1
+                    le_nl = src.find("\n", i)
+                    le = (le_nl + 1) if le_nl != -1 else n
+                    if src[ls:i].strip() == "":
+                        comment_lines.append((ls, le))
+                    while i < n and src[i] != "\n":
+                        i += 1
+                    continue
+                if src[i:i + 3] == '"""':
+                    start = i
+                    i += 3
+                    closed = False
+                    while i < n:
+                        if src[i:i + 3] == '"""':
+                            i += 3
+                            while i < n and src[i] == '"':
+                                i += 1
+                            closed = True
+                            break
+                        i += 1
+                    if not closed:
+                        raise ValueError("Unclosed triple-quoted string")
+                    tokens.append(("TSTR", src[start:i], start, i))
+                    continue
+                if ch == '"':
+                    start = i
+                    i += 1
+                    closed = False
+                    while i < n:
+                        if src[i] == "\\" and i + 1 < n:
+                            if src[i + 1] in ("\n", "\r"):
+                                raise ValueError("Unescaped newline in quoted string")
+                            i += 2
+                            continue
+                        if src[i] in ("\n", "\r"):
+                            raise ValueError("Unclosed quoted string before newline")
+                        if src[i] == '"':
+                            i += 1
+                            closed = True
+                            break
+                        i += 1
+                    if not closed:
+                        raise ValueError("Unclosed quoted string")
+                    tokens.append(("STR", src[start:i], start, i))
+                    continue
+                if ch == "$":
+                    if i + 1 >= n or src[i + 1] != "{":
+                        raise ValueError("Stray '$' outside substitution or quotes")
+                    start = i
+                    i += 2
+                    depth_sub = 1
+                    while i < n and depth_sub > 0:
+                        if src[i:i + 3] == '"""':
+                            i += 3
+                            closed = False
+                            while i < n:
+                                if src[i:i + 3] == '"""':
+                                    i += 3
+                                    while i < n and src[i] == '"':
+                                        i += 1
+                                    closed = True
+                                    break
+                                i += 1
+                            if not closed:
+                                raise ValueError("Unclosed triple-quoted string inside interpolation")
+                            continue
+                        if src[i] == '"':
+                            i += 1
+                            closed = False
+                            while i < n:
+                                if src[i] == "\\" and i + 1 < n:
+                                    i += 2
+                                    continue
+                                if src[i] in ("\n", "\r"):
+                                    raise ValueError("Unclosed string inside interpolation")
+                                if src[i] == '"':
+                                    i += 1
+                                    closed = True
+                                    break
+                                i += 1
+                            if not closed:
+                                raise ValueError("Unclosed string inside interpolation")
+                            continue
+                        if src[i] == "{":
+                            depth_sub += 1
+                        elif src[i] == "}":
+                            depth_sub -= 1
+                        i += 1
+                    if depth_sub != 0:
+                        raise ValueError("Unclosed HOCON interpolation")
+                    tokens.append(("SUB", src[start:i], start, i))
+                    continue
+                if src[i:i + 2] == "+=":
+                    tokens.append(("PLUSEQ", "+=", i, i + 2))
+                    i += 2
+                    continue
+                if ch in ("{", "}", "[", "]", ",", ";", ":", "=", "."):
+                    tokens.append((ch, ch, i, i + 1))
+                    i += 1
+                    continue
+                if ch == "+":
+                    tokens.append(("WORD", "+", i, i + 1))
+                    i += 1
+                    continue
+                start = i
+                while i < n:
+                    c = src[i]
+                    if c in WORD_STOP or c == "$" or (c == "/" and i + 1 < n and src[i + 1] == "/") or (c == "+" and i + 1 < n and src[i + 1] == "="):
+                        break
+                    i += 1
+                tokens.append(("WORD", src[start:i], start, i))
+            return tokens, comment_lines
+
+        def unquote_str_tok(tok):
+            raw_t = tok[1]
+            inner = raw_t[1:-1]
+            # Minimal safe unescape for key segment comparison
+            return re.sub(r'\\(.)', r'\1', inner)
+
+        def parse_hocon(src):
+            tokens, comment_lines = tokenize_hocon(src)
+            pos = 0
+            ntok = len(tokens)
+            jruby_blocks = []       # [(open_idx, close_idx)]
+            occurrences = []        # [(scope_tuple, tok_list, start_idx, end_idx, is_dotted)]
+            excluded_spans = []     # [(start_idx, end_idx)] nested child containers inside jruby-puppet
+
+            def peek(offset=0):
+                idx = pos + offset
+                return tokens[idx] if idx < ntok else None
+
+            def advance():
+                nonlocal pos
+                tok = tokens[pos]
+                pos += 1
+                return tok
+
+            def skip_seps():
+                nonlocal pos
+                while pos < ntok and tokens[pos][0] in ("NL", ",", ";"):
+                    pos += 1
+
+            def skip_nls():
+                nonlocal pos
+                while pos < ntok and tokens[pos][0] == "NL":
+                    pos += 1
+
+            def check_end_of_stmt(ctx):
+                nxt = peek()
+                if nxt is not None and nxt[0] not in ("NL", ",", ";", "}"):
+                    raise ValueError(f"Expected statement separator after {ctx}, got '{nxt[1]}'")
+
+            def parse_key_path():
+                segs = []
+                while True:
+                    t = peek()
+                    if t is None:
+                        raise ValueError("Unexpected EOF parsing key path")
+                    if t[0] == "STR":
+                        advance()
+                        seg = unquote_str_tok(t)
+                        if not seg:
+                            raise ValueError("Empty quoted key segment")
+                        segs.append(seg)
+                    elif t[0] == "WORD":
+                        if not re.fullmatch(r"[A-Za-z0-9_-]+", t[1]):
+                            raise ValueError(f"Invalid key token '{t[1]}'")
+                        advance()
+                        segs.append(t[1])
+                    else:
+                        raise ValueError(f"Expected key identifier, got '{t[1]}'")
+                    if peek() is not None and peek()[0] == ".":
+                        advance()
+                        continue
+                    break
+                return tuple(segs)
+
+            def parse_array(scope):
+                open_tok = advance()  # '['
+                expect_elem = True
+                while True:
+                    while peek() is not None and peek()[0] == "NL":
+                        advance()
+                    t = peek()
+                    if t is None:
+                        raise ValueError("Unclosed '[' array")
+                    if t[0] == "]":
+                        close_tok = advance()
+                        return open_tok[2], close_tok[3]
+                    if t[0] == ",":
+                        if expect_elem:
+                            raise ValueError("Unexpected ',' without element in array")
+                        advance()
+                        expect_elem = True
+                        continue
+                    if not expect_elem:
+                        raise ValueError(f"Missing ',' or newline between array elements before '{t[1]}'")
+                    if t[0] == "{":
+                        c_open, c_close = parse_object(True, scope + ("<array>",))
+                        if scope[:1] == ("jruby-puppet",):
+                            excluded_spans.append((c_open, c_close))
+                    elif t[0] == "[":
+                        a_open, a_close = parse_array(scope + ("<array>",))
+                        if scope[:1] == ("jruby-puppet",):
+                            excluded_spans.append((a_open, a_close))
+                    else:
+                        parse_scalar_expr(in_array=True)
+                    expect_elem = False
+
+            def parse_scalar_expr(in_array=False):
+                val_toks = []
+                stop_kinds = ("NL", ",", "]") if in_array else ("NL", ",", ";", "}")
+                while True:
+                    t = peek()
+                    if t is None or t[0] in stop_kinds:
+                        break
+                    if t[0] in (":", "=", "PLUSEQ", "{", "[", "}") or (not in_array and t[0] == "]"):
+                        raise ValueError(f"Unexpected '{t[1]}' inside scalar value (ambiguous or missing separator)")
+                    val_toks.append(advance())
+                if not val_toks:
+                    raise ValueError("Missing scalar value")
+                return val_toks
+
+            def parse_object(end_on_brace, scope):
+                open_idx = tokens[pos - 1][2] if end_on_brace else 0
+                while True:
+                    skip_seps()
+                    t = peek()
+                    if t is None:
+                        if end_on_brace:
+                            raise ValueError("Unclosed '{' block")
+                        break
+                    if t[0] == "}":
+                        if not end_on_brace:
+                            raise ValueError("Unbalanced closing brace '}'")
+                        close_tok = advance()
+                        if scope == ("jruby-puppet",):
+                            jruby_blocks.append((open_idx, close_tok[2]))
+                        return open_idx, close_tok[3]
+
+                    # Reject external include directives cleanly
+                    if t[0] == "WORD" and t[1] == "include":
+                        nxt = peek(1)
+                        if nxt is None or nxt[0] not in (":", "=", "{", ".", "PLUSEQ"):
+                            raise ValueError("Unsupported HOCON 'include' directive")
+
+                    segs = parse_key_path()
+                    entry_scope = scope + segs[:-1]
+                    leaf = segs[-1]
+                    is_dotted = len(segs) > 1
+
+                    nxt = peek()
+                    # Allow newline(s) ONLY if followed cleanly by '{' or if operator then '{'/'['
+                    if nxt is not None and nxt[0] == "NL":
+                        look = pos
+                        while look < ntok and tokens[look][0] == "NL":
+                            look += 1
+                        if look < ntok and tokens[look][0] == "{":
+                            skip_nls()
+                            nxt = peek()
+
+                    if nxt is None:
+                        raise ValueError(f"Unexpected EOF after key '{'.'.join(segs)}'")
+                    if nxt[0] == "PLUSEQ":
+                        raise ValueError(f"Unsupported '+=' operator on key '{'.'.join(segs)}'")
+
+                    if nxt[0] == "{":
+                        advance()  # '{'
+                        if leaf == "max-active-instances":
+                            raise ValueError("Invalid object value assigned to max-active-instances")
+                        child_scope = scope + segs
+                        c_open, c_close = parse_object(True, child_scope)
+                        if scope[:1] == ("jruby-puppet",):
+                            excluded_spans.append((c_open, c_close))
+                        check_end_of_stmt(f"object '{'.'.join(segs)}'")
+                        continue
+
+                    if nxt[0] in (":", "="):
+                        advance()
+                        # Check for multiline block/array value after ':' or '='
+                        look = pos
+                        while look < ntok and tokens[look][0] == "NL":
+                            look += 1
+                        if look < ntok and tokens[look][0] == "{":
+                            skip_nls()
+                            advance()  # '{'
+                            if leaf == "max-active-instances":
+                                raise ValueError("Invalid object value assigned to max-active-instances")
+                            child_scope = scope + segs
+                            c_open, c_close = parse_object(True, child_scope)
+                            if scope[:1] == ("jruby-puppet",):
+                                excluded_spans.append((c_open, c_close))
+                            check_end_of_stmt(f"object '{'.'.join(segs)}'")
+                            continue
+                        if look < ntok and tokens[look][0] == "[":
+                            skip_nls()
+                            a_open, a_close = parse_array(scope + segs)
+                            if scope[:1] == ("jruby-puppet",):
+                                excluded_spans.append((a_open, a_close))
+                            if leaf == "max-active-instances":
+                                raise ValueError("Invalid array value assigned to max-active-instances")
+                            check_end_of_stmt(f"array '{'.'.join(segs)}'")
+                            continue
+
+                        val_toks = parse_scalar_expr(in_array=False)
+                        check_end_of_stmt(f"setting '{'.'.join(segs)}'")
+                        if leaf == "max-active-instances":
+                            occurrences.append((entry_scope, val_toks, val_toks[0][2], val_toks[-1][3], is_dotted))
+                        continue
+
+                    raise ValueError("Expected ':', '=', or open brace '{' after key '" + ".".join(segs) + "', got '" + nxt[1] + "'")
+
+            parse_object(False, ())
+
+            jruby_cmt_spans = []
+            if len(jruby_blocks) == 1:
+                jb_open, jb_close = jruby_blocks[0]
+                for ls, le in comment_lines:
+                    if not (jb_open < ls and le <= jb_close):
+                        continue
+                    if any(not (le <= es or ls >= ee) for es, ee in excluded_spans):
+                        continue
+                    if re.match(r'^([ \t]*)(?:#|//)[ \t]*max-active-instances[ \t]*[:=][ \t]*[^\r\n]*(\r?\n)?$', src[ls:le]):
+                        jruby_cmt_spans.append((ls, le))
+
+            return jruby_blocks, occurrences, jruby_cmt_spans
+
+        def validate_value_tokens(val_toks, source_label):
+            if len(val_toks) != 1 or val_toks[0][0] != "WORD":
+                rendered = "".join(t[1] for t in val_toks)
+                raise ValueError(f"Invalid non-integer or non-literal value '{rendered}' for max-active-instances in {source_label}")
+            txt = val_toks[0][1]
+            if not re.fullmatch(r"[1-9][0-9]*", txt):
+                raise ValueError(f"Invalid max-active-instances value '{txt}' in {source_label}; must be positive integer")
+            num = int(txt)
+            if not (SAFE_MIN <= num <= SAFE_MAX):
+                raise ValueError(f"max-active-instances value {num} outside safe bounds [{SAFE_MIN}, {SAFE_MAX}] in {source_label}")
+            return txt
+
+        def validate_parsed(parsed_tuple, source_label):
+            jruby_blocks, occurrences, _ = parsed_tuple
+            if len(jruby_blocks) != 1:
+                raise ValueError(f"Expected exactly 1 top-level jruby-puppet block in {source_label}, found {len(jruby_blocks)}")
+            dotted = [occ for occ in occurrences if occ[4]]
+            if dotted:
+                raise ValueError(f"Disallowed dotted-path override(s) for max-active-instances in {source_label}: {dotted}")
+            misplaced = [occ for occ in occurrences if occ[0] != ("jruby-puppet",)]
+            if misplaced:
+                raise ValueError(f"Misplaced max-active-instances outside jruby-puppet block in {source_label}: {misplaced}")
+            in_jruby = [occ for occ in occurrences if occ[0] == ("jruby-puppet",)]
+            if len(in_jruby) != 1:
+                raise ValueError(f"Expected exactly 1 max-active-instances inside jruby-puppet block in {source_label}, found {len(in_jruby)}")
+            actual_val = validate_value_tokens(in_jruby[0][1], source_label)
+            if actual_val != expected_val:
+                raise ValueError(f"Expected max-active-instances: {expected_val} inside jruby-puppet block of {source_label}, found '{actual_val}'")
+
+        try:
+            initial_parsed = parse_hocon(raw)
+        except ValueError as exc:
+            sys.stderr.write(f"CRITICAL ERROR: Malformed HOCON in {conf_path}: {exc}\n")
+            sys.exit(1)
+
+        if mode == "validate":
+            try:
+                validate_parsed(initial_parsed, conf_path)
+                print(f"Verified max-active-instances: {expected_val} inside jruby-puppet block of {conf_path}")
+                sys.exit(0)
+            except ValueError as exc:
+                sys.stderr.write(f"CRITICAL ERROR: {exc}\n")
+                sys.exit(1)
+
+        jruby_blocks, occurrences, jruby_cmt_spans = initial_parsed
+        if len(jruby_blocks) != 1 or any(o[4] for o in occurrences) or any(o[0] != ("jruby-puppet",) for o in occurrences):
+            try:
+                validate_parsed(initial_parsed, conf_path)
+            except ValueError as exc:
+                sys.stderr.write(f"CRITICAL ERROR: {exc}\n")
+                sys.exit(1)
+
+        in_jruby = [occ for occ in occurrences if occ[0] == ("jruby-puppet",)]
+        if len(in_jruby) > 1:
+            sys.stderr.write(f"CRITICAL ERROR: Duplicate max-active-instances inside jruby-puppet block in {conf_path}\n")
+            sys.exit(1)
+
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        updated = raw
+        if len(in_jruby) == 1:
+            _, val_toks, v_start, v_end, _ = in_jruby[0]
+            try:
+                actual_val = validate_value_tokens(val_toks, conf_path)
+            except ValueError as exc:
+                sys.stderr.write(f"CRITICAL ERROR: {exc}\n")
+                sys.exit(1)
+            if actual_val != expected_val:
+                updated = raw[:v_start] + expected_val + raw[v_end:]
+        else:
+            open_idx, close_idx = jruby_blocks[0]
+            if jruby_cmt_spans:
+                ls, le = jruby_cmt_spans[0]
+                m_line = re.match(r'^([ \t]*)(?:#|//)[ \t]*max-active-instances[ \t]*[:=][ \t]*[^\r\n]*(\r?\n)?$', raw[ls:le])
+                indent = (m_line.group(1) if m_line else "") or "    "
+                eol = (m_line.group(2) if m_line else "") or ""
+                updated = raw[:ls] + f"{indent}max-active-instances: {expected_val}{eol}" + raw[le:]
+            else:
+                after_brace = raw[open_idx + 1:]
+                nl_pos = after_brace.find("\n")
+                brace_end_rel = close_idx - (open_idx + 1)
+                if nl_pos == -1 or brace_end_rel < nl_pos:
+                    updated = raw[:open_idx + 1] + f"{newline}    max-active-instances: {expected_val}{newline}" + raw[open_idx + 1:]
+                else:
+                    insert_pos = open_idx + 1 + nl_pos + 1
+                    updated = raw[:insert_pos] + f"    max-active-instances: {expected_val}{newline}" + raw[insert_pos:]
+
+        # Atomic write preserving mode and ownership when actual mutation required and not in check mode
+        if updated != raw and mode != "check":
+            conf_abs = os.path.abspath(conf_path)
+            conf_dir = os.path.dirname(conf_abs)
+            st_orig = os.stat(conf_abs)
+            fd, tmp_path = tempfile.mkstemp(prefix=".puppetserver_conf_", suffix=".tmp", dir=conf_dir)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as tf:
+                    tf.write(updated)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                shutil.copymode(conf_abs, tmp_path)
+                if os.geteuid() == 0:
+                    os.chown(tmp_path, st_orig.st_uid, st_orig.st_gid)
+                os.replace(tmp_path, conf_abs)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+
+        verify_text = updated if mode == "check" else open(conf_path, "r", encoding="utf-8").read()
+        try:
+            validate_parsed(parse_hocon(verify_text), conf_path)
+        except ValueError as exc:
+            sys.stderr.write(f"CRITICAL ERROR: Post-change HOCON validation failed: {exc}\n")
+            sys.exit(1)
+
+        print("CHANGED" if updated != raw else "UNCHANGED")
+      - "{{ puppet_server_conf_file | default('/etc/puppet/puppetserver/conf.d/puppetserver.conf') }}"
+      - "{{ puppet_max_active_jrubies | default(1) }}"
+      - "{{ 'check' if ansible_check_mode else 'enforce' }}"
+  register: puppetserver_jruby_config
+  changed_when: "(puppetserver_jruby_config.stdout | trim) == 'CHANGED'"
+  check_mode: false
   notify: restart puppetserver

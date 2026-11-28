@@ -1,83 +1,380 @@
 ---
-# Puppet 8 repository setup and package installation
+# Puppet Server package installation from Ubuntu Noble Universe
+#
+# Strategy: Ubuntu Noble Universe puppetserver 8.4.0-1
+# Rationale:
+#   - apt.puppet.com noble/puppet8 does NOT publish 'puppetserver' (puppetlabs/puppetserver#2906)
+#   - The external Puppet Core 9 repository requires EULA + Forge API key authentication (HTTP 401)
+#   - Ubuntu Noble Universe provides puppetserver 8.4.0-1: a real, functional package
+#     (not a transitional dummy) containing /usr/bin/puppetserver, systemd unit,
+#     puppetserver-8.4.0.jar, ruby-puppetserver-ca-cli 2.6.0-1, jruby 9.4.6.0,
+#     and default-jre-headless (openjdk-21-jre-headless)
+#   - Signed natively by Ubuntu archive OpenPGP keys; SHA-256 verified against APT index before install
+#   - puppet_allow_jammy_fallback is enforced false; Jammy packages never used
+#
+# Ubuntu Noble puppetserver paths (verified in package metadata, defaults.rb, puppetserver-ca):
+#   Config dir:   /etc/puppet/puppetserver/conf.d/
+#   puppet.conf:  /etc/puppet/puppet.conf
+#   CA dir:       /etc/puppet/puppetserver/ca  (symlinked from /var/lib/puppet/ssl/ca)
+#   Code dir:     /etc/puppet/code
+#   Binary:       /usr/bin/puppetserver
+#   Service user: puppet
+#   Defaults:     /etc/default/puppetserver
+#   Service name: puppetserver
 
-- name: Install prerequisite packages for Puppet repository
+- name: Validate target OS is Ubuntu 24.04 Noble before proceeding
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == (puppet_target_distribution | default('Ubuntu'))
+      - ansible_distribution_version is version(puppet_target_release | default('24.04'), '==')
+    fail_msg: >
+      CRITICAL ERROR: Puppet Server role requires Ubuntu 24.04 (Noble).
+      Detected: {{ ansible_distribution | default('Unknown') }} {{ ansible_distribution_version | default('Unknown') }}.
+      Refusing to install on unsupported platform.
+
+- name: Enforce Jammy fallback prohibition (puppet_allow_jammy_fallback must be false)
+  ansible.builtin.assert:
+    that:
+      - not (puppet_allow_jammy_fallback | default(false) | bool)
+    fail_msg: >
+      CRITICAL ERROR: puppet_allow_jammy_fallback is set to true.
+      This role uses Ubuntu Noble Universe (puppetserver 8.4.0-1) exclusively.
+      Jammy packages must never be used on Ubuntu 24.04. Set puppet_allow_jammy_fallback: false.
+    success_msg: "Confirmed: puppet_allow_jammy_fallback is false. Jammy packages prohibited."
+
+- name: Validate mandatory Puppet Server SHA-256 checksum and version pin format
+  vars:
+    expected_sha: "{{ puppet_server_deb_sha256 | default('ea9b68711b454720db42816209ea5f198ef00347def47507224574bceee34db5') | trim }}"
+    expected_ver: "{{ puppet_server_package_version | default('8.4.0-1') | trim }}"
+  ansible.builtin.assert:
+    that:
+      - expected_sha is match('^[0-9a-fA-F]{64}$')
+      - expected_ver is match('^8\.[0-9]+')
+      - "'jammy' not in (expected_ver | lower)"
+    fail_msg: >
+      CRITICAL SECURITY ERROR: puppet_server_deb_sha256 must be a 64-hex SHA-256 digest and
+      puppet_server_package_version must be a Puppet 8.x Noble version (got version='{{ expected_ver }}').
+
+- name: Refresh APT package index from signed Ubuntu Noble repositories
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"
+
+- name: Install Java 21 headless runtime and repository prerequisites
   ansible.builtin.apt:
     name:
       - ca-certificates
       - curl
       - gnupg
-      - openjdk-17-jre-headless
+      - "{{ puppet_server_java_package | default('openjdk-21-jre-headless') }}"
     state: present
     update_cache: false
-    lock_timeout: 300
+    lock_timeout: "{{ apt_lock_timeout | default(300) }}"
 
-- name: Download Puppet 8 Noble release repository package
-  ansible.builtin.get_url:
-    url: "{{ puppet_release_deb_url | default('https://apt.puppet.com/puppet8-release-noble.deb') }}"
-    dest: /tmp/puppet8-release-noble.deb
-    mode: "0644"
-  register: puppet_release_download
+- name: Verify puppetserver and puppet-agent candidates originate from signed Ubuntu Noble Universe with expected SHA-256
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os, re, subprocess, sys
+        from urllib.parse import urlparse
 
-- name: Install Puppet 8 release package
-  ansible.builtin.apt:
-    deb: /tmp/puppet8-release-noble.deb
-  register: puppet_release_install
+        env = os.environ.copy()
+        env["LC_ALL"] = "C"
 
-- name: Clean up temporary release deb package
-  ansible.builtin.file:
-    path: /tmp/puppet8-release-noble.deb
-    state: absent
+        pkg = sys.argv[1]
+        expected_ver = sys.argv[2].strip()
+        expected_sha256 = sys.argv[3].strip().lower()
 
-- name: Update APT package cache for Puppet 8
-  ansible.builtin.apt:
-    update_cache: true
-    cache_valid_time: 3600
-    lock_timeout: 300
+        EXACT_ALLOWED_HOSTS = {"archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com"}
+        ALLOWED_SUITES = {"noble", "noble-updates", "noble-security"}
 
-- name: Configure APT preferences to prioritize official PuppetLabs packages over Ubuntu Universe
-  ansible.builtin.copy:
-    dest: /etc/apt/preferences.d/puppetlabs.pref
-    content: |
-      # Enforce vendor priority (900) over distro universe (500) for Puppet components
-      Package: puppetserver puppet-agent
-      Pin: origin apt.puppet.com
-      Pin-Priority: 900
-    owner: root
-    group: root
-    mode: "0644"
-  register: puppet_apt_preferences
+        def is_allowed_ubuntu_host(hostname):
+            if not hostname:
+                return False
+            h = hostname.lower()
+            if h in EXACT_ALLOWED_HOSTS:
+                return True
+            # AWS EC2 regional Ubuntu mirrors (e.g., ap-south-1.ec2.archive.ubuntu.com) and country mirrors (e.g., us.archive.ubuntu.com)
+            if re.fullmatch(r"[a-z0-9-]+\.ec2\.archive\.ubuntu\.com", h):
+                return True
+            if re.fullmatch(r"[a-z]{2}\.archive\.ubuntu\.com", h):
+                return True
+            return False
 
-- name: Check if official PuppetLabs noble repository provides puppetserver
-  ansible.builtin.shell:
-    cmd: "apt-cache madison puppetserver | grep -E 'apt\\.puppet\\.com.*noble'"
-  register: puppetserver_noble_vendor_check
+        def verify_package(target_pkg, require_version=None, require_sha256=None):
+            res = subprocess.run(["apt-cache", "policy", target_pkg], capture_output=True, text=True, env=env)
+            if res.returncode != 0:
+                sys.stderr.write(f"apt-cache policy failed for {target_pkg}: {res.stderr}\n")
+                sys.exit(1)
+
+            candidate = None
+            in_table = False
+            current_ver = None
+            origins_by_ver = {}
+
+            for raw_line in res.stdout.splitlines():
+                stripped = raw_line.strip()
+                if stripped.startswith("Candidate:"):
+                    candidate = stripped.split(":", 1)[1].strip()
+                    continue
+                if stripped.startswith("Version table:"):
+                    in_table = True
+                    continue
+                if not in_table or not stripped:
+                    continue
+                work = stripped[3:].strip() if stripped.startswith("***") else stripped
+                parts = work.split()
+                if not parts:
+                    continue
+                if len(parts) >= 2 and re.match(r"^[+-]?\d+$", parts[0]) and not re.match(r"^[+-]?\d+$", parts[1]):
+                    if current_ver is not None:
+                        origins_by_ver.setdefault(current_ver, []).append(
+                            (parts[1], parts[2] if len(parts) >= 3 else "", parts[-1])
+                        )
+                else:
+                    current_ver = parts[0]
+
+            if not candidate or candidate == "(none)":
+                sys.stderr.write(
+                    f"CRITICAL ERROR: No installation candidate found for {target_pkg}.\n"
+                    "Ensure the Ubuntu 'universe' component is enabled in APT sources.\n"
+                    f"{res.stdout}\n"
+                )
+                sys.exit(1)
+
+            if "jammy" in candidate.lower():
+                sys.stderr.write(
+                    f"CRITICAL ERROR: {target_pkg} candidate '{candidate}' appears to be a Jammy package.\n"
+                    "puppet_allow_jammy_fallback is false. Jammy packages must never be installed on Noble.\n"
+                )
+                sys.exit(1)
+
+            if not re.match(r"^8\.", candidate):
+                sys.stderr.write(
+                    f"CRITICAL ERROR: {target_pkg} candidate version '{candidate}' is not Puppet 8 series.\n"
+                )
+                sys.exit(1)
+
+            if require_version and candidate != require_version:
+                sys.stderr.write(
+                    f"CRITICAL ERROR: {target_pkg} candidate version '{candidate}' does not match pinned version '{require_version}'.\n"
+                    f"{res.stdout}\n"
+                )
+                sys.exit(1)
+
+            origins = origins_by_ver.get(candidate, [])
+            non_dpkg_origins = [o for o in origins if o[0] != "/var/lib/dpkg/status"]
+            if not non_dpkg_origins:
+                sys.stderr.write(
+                    f"CRITICAL ERROR: Candidate {target_pkg}={candidate} has no active signed Ubuntu repository origin (found {origins}).\n"
+                    f"{res.stdout}\n"
+                )
+                sys.exit(1)
+
+            invalid_origins = []
+            for uri, suite_comp, pkg_type in non_dpkg_origins:
+                parsed = urlparse(uri)
+                suite = suite_comp.split("/", 1)[0]
+                comp = suite_comp.split("/", 1)[1] if "/" in suite_comp else ""
+                if (
+                    parsed.scheme not in ("http", "https")
+                    or not is_allowed_ubuntu_host(parsed.hostname)
+                    or suite not in ALLOWED_SUITES
+                    or comp != "universe"
+                    or pkg_type != "Packages"
+                ):
+                    invalid_origins.append((uri, suite_comp, pkg_type))
+
+            if invalid_origins:
+                sys.stderr.write(
+                    f"CRITICAL ERROR: Candidate {target_pkg}={candidate} has disallowed origin(s): {invalid_origins}.\n"
+                    f"Expected official Ubuntu archive mirror, suite in {sorted(ALLOWED_SUITES)}, component universe.\n"
+                    f"{res.stdout}\n"
+                )
+                sys.exit(1)
+
+            if require_sha256:
+                show_res = subprocess.run(
+                    ["apt-cache", "show", f"{target_pkg}={candidate}"],
+                    capture_output=True, text=True, env=env
+                )
+                if show_res.returncode != 0:
+                    sys.stderr.write(f"apt-cache show failed for {target_pkg}={candidate}: {show_res.stderr}\n")
+                    sys.exit(1)
+                sha_matches = re.findall(r"^SHA256:\s*([0-9a-fA-F]{64})\s*$", show_res.stdout, flags=re.MULTILINE)
+                if not sha_matches:
+                    sys.stderr.write(
+                        f"CRITICAL ERROR: Signed APT metadata for {target_pkg}={candidate} did not include SHA256.\n"
+                    )
+                    sys.exit(1)
+                if any(s.lower() != require_sha256 for s in sha_matches):
+                    sys.stderr.write(
+                        f"CRITICAL SECURITY ERROR: {target_pkg}={candidate} SHA256 mismatch: "
+                        f"got {sha_matches}, expected {require_sha256}.\n"
+                    )
+                    sys.exit(1)
+
+            return candidate
+
+        ps_ver = verify_package(pkg, require_version=expected_ver, require_sha256=expected_sha256)
+        pa_ver = verify_package("puppet-agent")
+        print(f"Verified: {pkg}={ps_ver} (SHA256={expected_sha256}) and puppet-agent={pa_ver} from Ubuntu Noble Universe.")
+      - "{{ puppet_server_package_name | default('puppetserver') }}"
+      - "{{ puppet_server_package_version | default('8.4.0-1') }}"
+      - "{{ puppet_server_deb_sha256 | default('ea9b68711b454720db42816209ea5f198ef00347def47507224574bceee34db5') }}"
+  register: ubuntu_universe_origin_check
+  changed_when: false
+  check_mode: false
+  failed_when: ubuntu_universe_origin_check.rc != 0
+
+- name: Check whether Puppet Server package is already installed
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - -W
+      - "-f=${Status}\t${Version}\n"
+      - "{{ puppet_server_package_name | default('puppetserver') }}"
+  register: puppetserver_preinstall_status
   changed_when: false
   failed_when: false
+  check_mode: false
 
-- name: Configure upstream Puppet 8 server fallback repository if noble package is not yet published
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by={{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}] http://apt.puppet.com jammy puppet8"
-    state: present
-    filename: puppet8-server-fallback
-  when: puppetserver_noble_vendor_check.rc != 0
-  register: puppet_server_fallback_repo
+- name: Set fact indicating whether Puppet Server requires initial installation
+  ansible.builtin.set_fact:
+    puppetserver_needs_install: "{{ 'install ok installed' not in (puppetserver_preinstall_status.stdout | default('')) }}"
 
-- name: Refresh APT cache if fallback repository or preferences changed
-  ansible.builtin.apt:
-    update_cache: true
-    lock_timeout: 300
-  when: (puppet_server_fallback_repo is changed) or (puppet_apt_preferences is changed)
+- name: Install Puppet Server package while suppressing premature postinst service start
+  block:
+    - name: Check for existing policy-rc.d
+      ansible.builtin.stat:
+        path: /usr/sbin/policy-rc.d
+        follow: false
+      register: puppetserver_policy_rc_stat
+      check_mode: false
+      when:
+        - not ansible_check_mode
+        - puppetserver_needs_install | bool
 
-- name: Install Puppet Server package
-  ansible.builtin.apt:
-    name: "{{ puppet_server_package_name | default('puppetserver') }}"
-    state: present
-    lock_timeout: 300
-  register: puppetserver_pkg_install
+    - name: Refuse to overwrite existing policy-rc.d
+      ansible.builtin.assert:
+        that:
+          - not (puppetserver_policy_rc_stat.stat.exists | default(false))
+        fail_msg: >-
+          /usr/sbin/policy-rc.d already exists.
+          Refusing to overwrite or remove administrator policy-rc.d
+      when:
+        - not ansible_check_mode
+        - puppetserver_needs_install | bool
 
-- name: Verify installed Puppet Server version
+    - name: Create temporary policy-rc.d guard
+      ansible.builtin.copy:
+        dest: /usr/sbin/policy-rc.d
+        content: |
+          #!/bin/sh
+          case "$1" in
+            puppetserver|puppetserver.service|puppet|puppet.service)
+              exit 101
+              ;;
+          esac
+          exit 0
+        owner: root
+        group: root
+        mode: "0755"
+        force: false
+      register: puppetserver_temp_policy_installed
+      when:
+        - not ansible_check_mode
+        - puppetserver_needs_install | bool
+
+    - name: Install pinned Puppet Server package
+      ansible.builtin.apt:
+        name: "{{ puppet_server_package_name | default('puppetserver') }}={{ puppet_server_package_version | default('8.4.0-1') }}"
+        state: present
+        update_cache: false
+        lock_timeout: "{{ apt_lock_timeout | default(300) }}"
+      register: puppetserver_pkg_install
+      when: puppetserver_needs_install | bool
+
+  always:
+    - name: Remove policy-rc.d only when created by this execution
+      ansible.builtin.file:
+        path: /usr/sbin/policy-rc.d
+        state: absent
+      when:
+        - not ansible_check_mode
+        - puppetserver_temp_policy_installed is defined
+        - puppetserver_temp_policy_installed is changed
+
+- name: Verify installed Puppet Server binary exists and is executable
+  ansible.builtin.stat:
+    path: "{{ puppet_bin_dir | default('/usr/bin') }}/puppetserver"
+  register: puppetserver_bin_stat
+  when: not ansible_check_mode
+
+- name: Fail if Puppet Server binary is absent or non-executable after installation
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Executable Puppet Server binary not found at
+      {{ puppet_bin_dir | default('/usr/bin') }}/puppetserver after package installation.
+  when:
+    - not ansible_check_mode
+    - (not puppetserver_bin_stat.stat.exists) or (not puppetserver_bin_stat.stat.executable)
+
+- name: Verify installed Puppet Server version is Puppet 8 series
   ansible.builtin.command:
-    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver --version"
+    cmd: "{{ puppet_bin_dir | default('/usr/bin') }}/puppetserver --version"
   register: puppetserver_version_output
   changed_when: false
+  when: not ansible_check_mode
+
+- name: Fail if installed Puppet Server version is not Puppet 8 series
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Installed Puppet Server version '{{ puppetserver_version_output.stdout | trim }}'
+      is not Puppet 8 series. Expected version starting with 'puppetserver version: 8.'.
+  when:
+    - not ansible_check_mode
+    - not (puppetserver_version_output.stdout | trim is match('^puppetserver version: 8\.'))
+
+- name: Verify Java 21 runtime is available for Puppet Server
+  ansible.builtin.command:
+    cmd: java -version
+  register: puppetserver_java_version
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Fail if Java 21 runtime is not active
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Expected Java 21 runtime for Ubuntu Noble puppetserver, got:
+      {{ puppetserver_java_version.stderr | default('') }} {{ puppetserver_java_version.stdout | default('') }}
+  when:
+    - not ansible_check_mode
+    - not (((puppetserver_java_version.stderr | default('')) ~ ' ' ~ (puppetserver_java_version.stdout | default(''))) is search('version "21\.'))
+
+- name: Verify puppet-agent was installed as a dependency (Ubuntu Noble Universe 8.4.0-1)
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - -W
+      - "-f=${Status}\t${Version}\n"
+      - puppet-agent
+  register: puppet_agent_local_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Fail if puppet-agent 8.x is absent after puppetserver installation
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: puppet-agent 8.x package is not installed.
+      Ubuntu Noble Universe puppetserver 8.4.0-1 declares Depends: puppet-agent (>= 8~~, << 9~~).
+      Status: {{ puppet_agent_local_status.stdout | default('unknown') }}
+  when:
+    - not ansible_check_mode
+    - (puppet_agent_local_status.rc | default(1)) != 0
+      or ('install ok installed' not in (puppet_agent_local_status.stdout | default('')))
+      or not ((puppet_agent_local_status.stdout | default('')) is search('\t8\.'))

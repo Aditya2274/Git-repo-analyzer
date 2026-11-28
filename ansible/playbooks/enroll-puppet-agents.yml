@@ -12,20 +12,27 @@
 #   Play 3 (Steps 4 - 9): Verification, supervised catalog run & service handover (agents)
 # ==============================================================================
 
-- name: "Checkpoint 4.5: Step 1 - Pre-Enrollment Connectivity Verification"
+- name: "Checkpoint 4.5: Step 1 - Pre-Enrollment Connectivity Verification and Offline CSR Sync"
   hosts: puppet_agents
   become: true
   gather_facts: false
+  any_errors_fatal: true
   tasks:
     - name: Verify TCP 8140 reachability from agent to Puppet Server
       ansible.builtin.include_role:
         name: puppet_agent
         tasks_from: connectivity.yml
 
+    - name: Ensure any offline-generated agent CSR is verified and submitted to Puppet Server CA
+      ansible.builtin.include_role:
+        name: puppet_agent
+        tasks_from: csr.yml
+
 - name: "Checkpoint 4.5: Steps 2 & 3 - Pending CSR Inspection and Controlled Signing"
   hosts: puppet_server
   become: true
   gather_facts: false
+  any_errors_fatal: true
   tasks:
     - name: Inspect pending CSRs and perform controlled signing on Puppet CA
       ansible.builtin.include_role:
@@ -36,6 +43,7 @@
   hosts: puppet_agents
   become: true
   gather_facts: false
+  any_errors_fatal: true
   tasks:
     - name: Execute supervised catalog application and complete agent handover
       ansible.builtin.include_role:

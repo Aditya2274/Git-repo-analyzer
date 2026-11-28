@@ -3,7 +3,7 @@
 
 - name: Check existence of Puppet CA certificate and key files
   ansible.builtin.stat:
-    path: "{{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/{{ item }}"
+    path: "{{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/{{ item }}"
   loop:
     - ca_crt.pem
     - ca_key.pem
@@ -27,25 +27,40 @@
 - name: "State A: Initialize Puppet Server CA when uninitialized"
   ansible.builtin.command:
     cmd: >
-      {{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca setup
+      {{ puppet_bin_dir | default('/usr/bin') }}/puppetserver ca setup
       --certname {{ puppet_certname | default('puppet-server') }}
       --subject-alt-names {{ puppet_dns_alt_names | default('puppet-server,puppet-server.ec2.internal,puppet') }}
       --ca-name "Puppet CA: {{ puppet_certname | default('puppet-server') }}"
   when:
     - not ca_crt_exists
     - not ca_key_exists
+    - not ca_crl_exists
+    - not ca_serial_exists
+    - not ca_inventory_exists
   register: ca_setup_result
+  notify: restart puppetserver
 
 # ------------------------------------------------------------------------------
 # State C: Corrupted, Incomplete, or Inconsistent CA (Fail Safely)
 # ------------------------------------------------------------------------------
 
+- name: "State C: Fail if orphaned CA metadata exists without certificate and key pair"
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Orphaned Puppet CA metadata detected at {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}.
+      One or more CA support files (ca_crl.pem, serial, inventory.txt) exist while ca_crt.pem and ca_key.pem are absent.
+      Automatic initialization or cleanup is strictly prohibited. Manual operator investigation required.
+  when:
+    - not ca_crt_exists
+    - not ca_key_exists
+    - ca_crl_exists or ca_serial_exists or ca_inventory_exists
+
 - name: "State C: Fail if CA certificate exists but private key is missing"
   ansible.builtin.fail:
     msg: >
       CRITICAL ERROR: Corrupted CA State detected.
-      CA certificate exists at {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem,
-      but private key {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem is missing.
+      CA certificate exists at {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_crt.pem,
+      but private key {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_key.pem is missing.
       Automatic regeneration is strictly prohibited. Manual operator investigation required.
   when:
     - ca_crt_exists
@@ -55,8 +70,8 @@
   ansible.builtin.fail:
     msg: >
       CRITICAL ERROR: Corrupted CA State detected.
-      CA private key exists at {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem,
-      but certificate {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem is missing.
+      CA private key exists at {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_key.pem,
+      but certificate {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_crt.pem is missing.
       Automatic regeneration is strictly prohibited. Manual operator investigation required.
   when:
     - not ca_crt_exists
@@ -79,7 +94,7 @@
 
 - name: Cryptographic validation of existing CA certificate expiration
   ansible.builtin.command:
-    cmd: "openssl x509 -in {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem -noout -checkend 0"
+    cmd: "openssl x509 -in {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_crt.pem -noout -checkend 0"
   register: ca_cert_validity
   changed_when: false
   failed_when: false
@@ -90,7 +105,7 @@
 - name: "State C: Fail if existing CA certificate is expired or corrupted"
   ansible.builtin.fail:
     msg: >
-      CRITICAL ERROR: Existing CA certificate at {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem is expired or corrupted.
+      CRITICAL ERROR: Existing CA certificate at {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_crt.pem is expired or corrupted.
       Automatic regeneration is strictly prohibited. Manual operator investigation required.
   when:
     - ca_crt_exists
@@ -99,7 +114,7 @@
 
 - name: Extract existing CA certificate modulus
   ansible.builtin.command:
-    cmd: "openssl x509 -in {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_crt.pem -noout -modulus"
+    cmd: "openssl x509 -in {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_crt.pem -noout -modulus"
   register: ca_cert_modulus
   changed_when: false
   when:
@@ -109,7 +124,7 @@
 
 - name: Extract existing CA private key modulus
   ansible.builtin.command:
-    cmd: "openssl rsa -in {{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem -noout -modulus"
+    cmd: "openssl rsa -in {{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_key.pem -noout -modulus"
   register: ca_key_modulus
   changed_when: false
   when:
@@ -148,7 +163,7 @@
 
 - name: Ensure secure permissions on CA private key (0640)
   ansible.builtin.file:
-    path: "{{ puppet_ca_dir | default('/etc/puppetlabs/puppetserver/ca') }}/ca_key.pem"
+    path: "{{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_key.pem"
     owner: puppet
     group: puppet
     mode: "0640"

@@ -23,7 +23,7 @@ TEST_TMP="$(mktemp -d /tmp/test_puppet_agent_audit.XXXXXX)"
 trap 'rm -rf "${TEST_TMP}"' EXIT
 
 PASSED_COUNT=0
-TOTAL_COUNT=54
+TOTAL_COUNT=61
 
 echo "=============================================================================="
 echo "Running Isolated Fixture Test Suite: Checkpoint 4.4 (Puppet Agent Role)"
@@ -1266,6 +1266,412 @@ for role in ['common', 'docker', 'nginx']:
         pass
 "
 echo "PASS (repeated orchestration: play structure isolates roles, site.yml variables unpolluted)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 55. Candidate Origin Enforcement Rejects Unintended/Missing APT Sources (Behavioral)
+# ------------------------------------------------------------------------------
+echo -n "[Test 55/59] Puppet Agent install enforces apt.puppet.com origin via mock apt-cache... "
+python3 -c "
+import os, stat, subprocess, tempfile, yaml
+
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/install.yml') as f:
+    tasks = yaml.safe_load(f)
+
+origin_tasks = [t for t in tasks if 'apt.puppet.com origin' in t.get('name', '').lower()]
+assert len(origin_tasks) == 1, 'install.yml must enforce apt.puppet.com origin'
+assert origin_tasks[0].get('failed_when') is not False, 'Origin enforcement must not suppress failures'
+
+script = origin_tasks[0]['ansible.builtin.command']['argv'][2]
+
+with tempfile.TemporaryDirectory() as td:
+    mock_apt = os.path.join(td, 'apt-cache')
+    env = os.environ.copy()
+    env['PATH'] = td + os.pathsep + env.get('PATH', '')
+
+    def run_with_policy(policy_txt, rc=0):
+        out_file = os.path.join(td, 'policy.txt')
+        with open(out_file, 'w') as fh:
+            fh.write(policy_txt)
+        with open(mock_apt, 'w') as fh:
+            fh.write(f'#!/usr/bin/env bash\ncat \"{out_file}\"\nexit {rc}\n')
+        os.chmod(mock_apt, 0o755)
+        return subprocess.run(['python3', '-c', script, 'puppet-agent', 'apt.puppet.com'], env=env, capture_output=True, text=True)
+
+    # 1. Realistic Ubuntu 24.04 + official apt.puppet.com candidate
+    r1 = run_with_policy('''puppet-agent:
+  Installed: (none)
+  Candidate: 8.10.0-1noble
+  Package pin: 8.10.0-1noble
+  Version table:
+     8.10.0-1noble 1001
+       1001 http://apt.puppet.com noble/puppet8 amd64 Packages
+     8.4.0-1 500
+        500 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages
+        500 http://archive.ubuntu.com/ubuntu noble/universe i386 Packages
+''')
+    assert r1.returncode == 0, r1.stderr
+
+    # 2. Already installed from apt.puppet.com (/var/lib/dpkg/status + active repo)
+    r2 = run_with_policy('''puppet-agent:
+  Installed: 8.10.0-1noble
+  Candidate: 8.10.0-1noble
+  Version table:
+ *** 8.10.0-1noble 900
+        900 http://apt.puppet.com noble/puppet8 amd64 Packages
+        100 /var/lib/dpkg/status
+     8.4.0-1 500
+        500 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages
+''')
+    assert r2.returncode == 0, r2.stderr
+
+    # 3. Real Ubuntu 24.04 universe candidate only -> must fail
+    r3 = run_with_policy('''puppet-agent:
+  Installed: 8.4.0-1
+  Candidate: 8.4.0-1
+  Version table:
+ *** 8.4.0-1 500
+        500 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages
+        500 http://archive.ubuntu.com/ubuntu noble/universe i386 Packages
+        100 /var/lib/dpkg/status
+''')
+    assert r3.returncode != 0
+
+    # 4. Candidate (none) / missing -> must fail
+    assert run_with_policy('puppet-agent:\n  Installed: (none)\n  Candidate: (none)\n  Version table:\n').returncode != 0
+    assert run_with_policy('').returncode != 0
+
+    # 5. Installed locally only (/var/lib/dpkg/status without active apt.puppet.com repo) -> must fail
+    assert run_with_policy('''puppet-agent:
+  Installed: 8.10.0-1noble
+  Candidate: 8.10.0-1noble
+  Version table:
+ *** 8.10.0-1noble 100
+        100 /var/lib/dpkg/status
+''').returncode != 0
+
+    # 6. Disallowed scheme (file://apt.puppet.com) or local file:/ mixed with negative pin -> must fail
+    assert run_with_policy('''puppet-agent:
+  Installed: (none)
+  Candidate: 8.10.0-1noble
+  Version table:
+     8.10.0-1noble 900
+        900 file://apt.puppet.com/repo noble/puppet8 amd64 Packages
+''').returncode != 0
+    assert run_with_policy('''puppet-agent:
+  Installed: (none)
+  Candidate: 8.10.0-1noble
+  Version table:
+     8.10.0-1noble 900
+        900 http://apt.puppet.com noble/puppet8 amd64 Packages
+         -1 file:/tmp/local-apt noble/main amd64 Packages
+''').returncode != 0
+"
+echo "PASS (Mock apt-cache behavioral checks pass across realistic Ubuntu 24.04 policy outputs)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 56. Repository Keyring Check and Uncached Refresh When Repo Changes
+# ------------------------------------------------------------------------------
+echo -n "[Test 56/59] Agent repository validates keyring and refreshes cache without cache_valid_time... "
+python3 -c "
+import yaml
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/repository.yml') as f:
+    tasks = yaml.safe_load(f)
+
+keyring_tasks = [t for t in tasks if 'signing keyring' in t.get('name', '').lower()]
+assert len(keyring_tasks) >= 2, 'repository.yml must check puppetlabs-keyring.gpg existence'
+
+cache_tasks = [t for t in tasks if 'ansible.builtin.apt' in t and t['ansible.builtin.apt'].get('update_cache') is True]
+assert len(cache_tasks) == 1
+assert 'cache_valid_time' not in cache_tasks[0]['ansible.builtin.apt'], 'Changed repo cache update must not skip via cache_valid_time'
+"
+echo "PASS (Agent repository verifies keyring and refreshes cache unconditionally when changed)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 57. Offline CSR Recovery Uses Authenticated Puppet Server Path (Zero Unverified TLS)
+# ------------------------------------------------------------------------------
+echo -n "[Test 57/59] csr.yml removes unverified TLS and delegates CA verification to puppet_server... "
+python3 -c "
+import glob, yaml
+
+for path in glob.glob('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/*.yml'):
+    txt = open(path).read()
+    assert '_create_unverified_context' not in txt, f'Unverified TLS found in {path}'
+    assert 'CERT_NONE' not in txt, f'CERT_NONE found in {path}'
+
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
+    tasks = yaml.safe_load(f)
+
+slurp_tasks = [t for t in tasks if 'ansible.builtin.slurp' in t]
+assert len(slurp_tasks) == 1 and 'delegate_to' in slurp_tasks[0], 'csr.yml must retrieve ca_crt.pem from puppet-server via delegate_to'
+
+query_tasks = [t for t in tasks if 'query puppet server ca directly' in t.get('name', '').lower()]
+assert len(query_tasks) == 1 and 'delegate_to' in query_tasks[0], 'csr.yml must query CA state directly on puppet-server via delegate_to'
+
+recovery_tasks = [t for t in tasks if 'submit pre-existing unsubmitted offline csr' in t.get('name', '').lower()]
+assert len(recovery_tasks) == 1
+conds = str(recovery_tasks[0].get('when', []))
+assert 'agent_csr_exists' in conds and 'puppet_server_reachable' in conds
+assert 'ca_cert_present' in conds and 'ca_csr_present' in conds
+assert 'not (agent_cert_valid' in conds
+"
+echo "PASS (Zero unverified TLS; CA cert and CSR state authenticated via puppet_server delegation)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 58. Behavioral: CA Cert Verification & Seeding Script Rejects Spoofed CA
+# ------------------------------------------------------------------------------
+echo -n "[Test 58/59] Behavioral: authenticated CA pinning seeds missing CA and rejects mismatched CA... "
+python3 -c "
+import base64, os, subprocess, tempfile, yaml
+
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
+    tasks = yaml.safe_load(f)
+
+pin_task = [t for t in tasks if 'verify local ca certificate matches puppet server ca' in t.get('name', '').lower()][0]
+pin_script = pin_task['ansible.builtin.command']['argv'][2]
+
+with tempfile.TemporaryDirectory() as td:
+    ca1_key = os.path.join(td, 'ca1.key')
+    ca1_crt = os.path.join(td, 'ca1.crt')
+    ca2_key = os.path.join(td, 'ca2.key')
+    ca2_crt = os.path.join(td, 'ca2.crt')
+    subprocess.run(['openssl', 'req', '-new', '-x509', '-days', '1', '-nodes', '-newkey', 'rsa:2048',
+                    '-keyout', ca1_key, '-out', ca1_crt, '-subj', '/CN=Puppet CA: puppet-server'], check=True, capture_output=True)
+    subprocess.run(['openssl', 'req', '-new', '-x509', '-days', '1', '-nodes', '-newkey', 'rsa:2048',
+                    '-keyout', ca2_key, '-out', ca2_crt, '-subj', '/CN=Rogue CA'], check=True, capture_output=True)
+
+    ca1_b64 = base64.b64encode(open(ca1_crt, 'rb').read()).decode()
+    ca2_b64 = base64.b64encode(open(ca2_crt, 'rb').read()).decode()
+    agent_ca = os.path.join(td, 'agent_ssl', 'certs', 'ca.pem')
+
+    # 1. Missing local ca.pem -> seeded cleanly with mode 0644
+    r1 = subprocess.run(['python3', '-c', pin_script, agent_ca, ca1_b64], capture_output=True, text=True)
+    assert r1.returncode == 0 and 'CA_SEEDED' in r1.stdout, r1.stderr
+    assert os.path.isfile(agent_ca)
+
+    # 2. Matching local ca.pem -> verified without change
+    r2 = subprocess.run(['python3', '-c', pin_script, agent_ca, ca1_b64], capture_output=True, text=True)
+    assert r2.returncode == 0 and 'CA_VERIFIED' in r2.stdout, r2.stderr
+
+    # 3. Mismatched / rogue server CA vs local ca.pem -> must FAIL
+    r3 = subprocess.run(['python3', '-c', pin_script, agent_ca, ca2_b64], capture_output=True, text=True)
+    assert r3.returncode != 0 and 'does not match' in r3.stderr, r3.stderr
+
+    # 4. Invalid/non-PEM server CA -> must FAIL
+    bad_b64 = base64.b64encode(b'NOT_A_CERT').decode()
+    r4 = subprocess.run(['python3', '-c', pin_script, os.path.join(td, 'other', 'ca.pem'), bad_b64], capture_output=True, text=True)
+    assert r4.returncode != 0
+
+    # 5. Extra rogue CA certificate appended to local ca.pem -> full set mismatch must FAIL
+    with open(agent_ca, 'wb') as fh:
+        fh.write(open(ca1_crt, 'rb').read() + open(ca2_crt, 'rb').read())
+    r5 = subprocess.run(['python3', '-c', pin_script, agent_ca, ca1_b64], capture_output=True, text=True)
+    assert r5.returncode != 0 and 'does not match' in r5.stderr, r5.stderr
+
+    # 6. Order-insensitive multi-cert bundle succeeds; corrupted trailing block fails
+    ca_multi_b64 = base64.b64encode(open(ca1_crt, 'rb').read() + open(ca2_crt, 'rb').read()).decode()
+    with open(agent_ca, 'wb') as fh:
+        fh.write(open(ca2_crt, 'rb').read() + b'\n' + open(ca1_crt, 'rb').read())
+    r6_order = subprocess.run(['python3', '-c', pin_script, agent_ca, ca_multi_b64], capture_output=True, text=True)
+    assert r6_order.returncode == 0 and 'CA_VERIFIED' in r6_order.stdout, r6_order.stderr
+
+    with open(agent_ca, 'wb') as fh:
+        fh.write(open(ca1_crt, 'rb').read() + b'\n-----BEGIN CERTIFICATE-----\nCORRUPT\n')
+    r6_corrupt = subprocess.run(['python3', '-c', pin_script, agent_ca, ca1_b64], capture_output=True, text=True)
+    assert r6_corrupt.returncode != 0
+
+    # 7. Check mode on missing local ca.pem must emit CA_WOULD_SEED (never CA_SEEDED) and NOT write file
+    chk_ca = os.path.join(td, 'chk_ssl', 'certs', 'ca.pem')
+    r7 = subprocess.run(['python3', '-c', pin_script, chk_ca, ca1_b64, 'true'], capture_output=True, text=True)
+    assert r7.returncode == 0 and r7.stdout.strip() == 'CA_WOULD_SEED', r7.stdout + r7.stderr
+    assert 'CA_SEEDED' not in r7.stdout
+    assert not os.path.exists(chk_ca), 'Check mode must not write ca.pem'
+"
+echo "PASS (Authenticated CA pinning seeds missing CA, emits CA_WOULD_SEED in check mode, validates full CA set, and rejects extra/corrupt certs)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 59. Behavioral: Direct Puppet Server CA State & Public-Key Match Enforcement
+# ------------------------------------------------------------------------------
+echo -n "[Test 59/59] Behavioral: Puppet Server CA query detects unsubmitted, pending, signed & key mismatch... "
+python3 -c "
+import json, os, subprocess, tempfile, yaml
+
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
+    tasks = yaml.safe_load(f)
+
+query_task = [t for t in tasks if 'query puppet server ca directly' in t.get('name', '').lower()][0]
+query_script = query_task['ansible.builtin.command']['argv'][2]
+
+with tempfile.TemporaryDirectory() as td:
+    bin_dir = os.path.join(td, 'bin')
+    ca_dir = os.path.join(td, 'ca')
+    os.makedirs(bin_dir)
+    os.makedirs(os.path.join(ca_dir, 'requests'))
+    os.makedirs(os.path.join(ca_dir, 'signed'))
+    state_json = os.path.join(td, 'state.json')
+
+    # Generate agent key/CSR + mismatched key/CSR
+    k1 = os.path.join(td, 'k1.pem')
+    csr1 = os.path.join(td, 'csr1.pem')
+    k2 = os.path.join(td, 'k2.pem')
+    csr2 = os.path.join(td, 'csr2.pem')
+    subprocess.run(['openssl', 'req', '-new', '-nodes', '-newkey', 'rsa:2048', '-keyout', k1, '-out', csr1, '-subj', '/CN=app-server'], check=True, capture_output=True)
+    subprocess.run(['openssl', 'req', '-new', '-nodes', '-newkey', 'rsa:2048', '-keyout', k2, '-out', csr2, '-subj', '/CN=app-server'], check=True, capture_output=True)
+    pub1 = subprocess.run(['openssl', 'req', '-in', csr1, '-noout', '-pubkey'], check=True, capture_output=True, text=True).stdout.strip()
+    pub2 = subprocess.run(['openssl', 'req', '-in', csr2, '-noout', '-pubkey'], check=True, capture_output=True, text=True).stdout.strip()
+    assert pub1 != pub2
+
+    mock_ps = os.path.join(bin_dir, 'puppetserver')
+    with open(mock_ps, 'w') as fh:
+        fh.write(f'#!/usr/bin/env bash\ncat \"{state_json}\"\n')
+    os.chmod(mock_ps, 0o755)
+
+    # 1. Offline CSR not on CA -> ca_cert_present=False, ca_csr_present=False
+    json.dump({'requested': [], 'signed': [{'name': 'puppet-server', 'state': 'signed'}]}, open(state_json, 'w'))
+    r1 = subprocess.run(['python3', '-c', query_script, bin_dir, ca_dir, 'app-server'], capture_output=True, text=True)
+    assert r1.returncode == 0
+    d1 = json.loads(r1.stdout)
+    assert d1['ca_cert_present'] is False and d1['ca_csr_present'] is False
+
+    # 2. Pending CSR on CA with matching key -> ca_csr_present=True and pubkey matches local CSR
+    open(os.path.join(ca_dir, 'requests', 'app-server.pem'), 'w').write(open(csr1).read())
+    json.dump({'requested': [{'name': 'app-server', 'state': 'requested'}], 'signed': []}, open(state_json, 'w'))
+    r2 = subprocess.run(['python3', '-c', query_script, bin_dir, ca_dir, 'app-server'], capture_output=True, text=True)
+    assert r2.returncode == 0
+    d2 = json.loads(r2.stdout)
+    assert d2['ca_csr_present'] is True and d2['remote_pubkey'].strip() == pub1
+
+    # 3. Pending CSR on CA with different key -> remote_pubkey != pub1 (triggers Safety Check failure)
+    open(os.path.join(ca_dir, 'requests', 'app-server.pem'), 'w').write(open(csr2).read())
+    r3 = subprocess.run(['python3', '-c', query_script, bin_dir, ca_dir, 'app-server'], capture_output=True, text=True)
+    assert r3.returncode == 0
+    d3 = json.loads(r3.stdout)
+    assert d3['remote_pubkey'].strip() != pub1
+
+    # 4. Signed cert on CA -> extracts cert pubkey and matches local CSR
+    signed_pem = os.path.join(ca_dir, 'signed', 'app-server.pem')
+    subprocess.run(['openssl', 'x509', '-req', '-in', csr1, '-signkey', k1, '-out', signed_pem, '-days', '1'], check=True, capture_output=True)
+    json.dump({'requested': [], 'signed': [{'name': 'app-server', 'state': 'signed'}]}, open(state_json, 'w'))
+    r4 = subprocess.run(['python3', '-c', query_script, bin_dir, ca_dir, 'app-server'], capture_output=True, text=True)
+    assert r4.returncode == 0
+    d4 = json.loads(r4.stdout)
+    assert d4['ca_cert_present'] is True and d4['remote_pubkey'].strip() == pub1
+"
+echo "PASS (Direct CA query handles offline, pending, signed, and key-mismatch states cleanly)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 60. Behavioral: csr.yml Verifies Local CSR Public Key (RSA & ECDSA) and Subject CN
+# ------------------------------------------------------------------------------
+echo -n "[Test 60/60] Behavioral: csr.yml verifies local CSR public key (RSA & ECDSA) and CN... "
+python3 -c "
+import os, subprocess, tempfile, yaml
+
+with open('${PROJECT_ROOT}/ansible/roles/puppet_agent/tasks/csr.yml') as f:
+    tasks = yaml.safe_load(f)
+
+match_task = [t for t in tasks if 'extract and verify existing csr subject cn and public key' in t.get('name', '').lower()][0]
+script = match_task['ansible.builtin.command']['argv'][2]
+
+with tempfile.TemporaryDirectory() as td:
+    k1 = os.path.join(td, 'k1.pem')
+    csr1 = os.path.join(td, 'csr1.pem')
+    k2 = os.path.join(td, 'k2.pem')
+    csr2 = os.path.join(td, 'csr2.pem')
+    ec_k = os.path.join(td, 'ec_k.pem')
+    ec_csr = os.path.join(td, 'ec_csr.pem')
+    subprocess.run(['openssl', 'req', '-new', '-nodes', '-newkey', 'rsa:2048', '-keyout', k1, '-out', csr1, '-subj', '/CN=app-server'], check=True, capture_output=True)
+    subprocess.run(['openssl', 'req', '-new', '-nodes', '-newkey', 'rsa:2048', '-keyout', k2, '-out', csr2, '-subj', '/CN=app-server'], check=True, capture_output=True)
+    subprocess.run(['openssl', 'ecparam', '-genkey', '-name', 'prime256v1', '-noout', '-out', ec_k], check=True, capture_output=True)
+    subprocess.run(['openssl', 'req', '-new', '-key', ec_k, '-out', ec_csr, '-subj', '/CN=app-server'], check=True, capture_output=True)
+
+    # Matching RSA key + CSR + CN -> passes cleanly and emits public key
+    r_ok = subprocess.run(['python3', '-c', script, csr1, k1, 'app-server'], capture_output=True, text=True)
+    assert r_ok.returncode == 0 and 'BEGIN PUBLIC KEY' in r_ok.stdout, r_ok.stderr
+
+    # Matching ECDSA key + CSR + CN -> passes cleanly without RSA modulus assumptions
+    r_ec = subprocess.run(['python3', '-c', script, ec_csr, ec_k, 'app-server'], capture_output=True, text=True)
+    assert r_ec.returncode == 0 and 'BEGIN PUBLIC KEY' in r_ec.stdout, r_ec.stderr
+
+    # Mismatched CSR vs local private key -> MUST FAIL
+    r_bad = subprocess.run(['python3', '-c', script, csr2, k1, 'app-server'], capture_output=True, text=True)
+    assert r_bad.returncode != 0 and 'does not match' in r_bad.stderr, r_bad.stderr
+
+    # Mismatched CSR CN -> MUST FAIL
+    r_cn = subprocess.run(['python3', '-c', script, csr1, k1, 'wrong-host'], capture_output=True, text=True)
+    assert r_cn.returncode != 0 and 'expected' in r_cn.stderr, r_cn.stderr
+"
+echo "PASS (CSR key/CN check supports RSA + ECDSA and rejects mismatched keys or CNs)"
+PASSED_COUNT=$((PASSED_COUNT + 1))
+
+# ------------------------------------------------------------------------------
+# 61. Behavioral: Agent Repo Enforces Checksum/OpenPGP Primary FPR & Noble Suite
+# ------------------------------------------------------------------------------
+echo -n "[Test 61/61] Behavioral: puppet_agent repo enforces checksum, primary OpenPGP FPR (not subkey), and noble suite... "
+bash -n "${BASH_SOURCE[0]}"
+python3 - "${PROJECT_ROOT}/ansible" <<'PY'
+import ast, os, subprocess, sys, tempfile, yaml
+
+ansible_dir = sys.argv[1]
+with open(f"{ansible_dir}/roles/puppet_agent/tasks/repository.yml") as f:
+    repo_raw = f.read()
+    repo_tasks = yaml.safe_load(repo_raw)
+with open(f"{ansible_dir}/roles/puppet_agent/tasks/install.yml") as f:
+    inst_tasks = yaml.safe_load(f)
+
+assert 'puppet_keyring_verify_trusted' not in repo_raw
+assert 'sha256:' in str([t for t in repo_tasks if 'ansible.builtin.get_url' in t][0]['ansible.builtin.get_url']['checksum'])
+for rel in ("roles/puppet_agent/tasks/repository.yml", "roles/puppet_agent/tasks/install.yml", "roles/puppet_agent/tasks/csr.yml"):
+    for t in yaml.safe_load(open(f"{ansible_dir}/{rel}")):
+        argv = t.get("ansible.builtin.command", {}).get("argv", []) if isinstance(t.get("ansible.builtin.command"), dict) else []
+        if len(argv) >= 3 and argv[0] == "python3" and argv[1] == "-c":
+            ast.parse(argv[2])
+
+fpr_task = [t for t in repo_tasks if 'keyring openpgp fingerprint' in t.get('name', '').lower()][0]
+fpr_script = fpr_task['ansible.builtin.command']['argv'][2]
+
+with tempfile.TemporaryDirectory() as td:
+    gpghome = os.path.join(td, 'gnupg')
+    os.makedirs(gpghome, mode=0o700)
+    subprocess.run(['gpg', '--homedir', gpghome, '--batch', '--passphrase', '',
+                    '--quick-generate-key', 'Mock Puppet <release@puppet.com>', 'rsa2048', 'cert', 'never'], check=True, capture_output=True)
+    p_fpr = [l.split(':')[9] for l in subprocess.run(['gpg', '--homedir', gpghome, '--with-colons', '--list-keys'],
+                                                   check=True, capture_output=True, text=True).stdout.splitlines() if l.startswith('fpr:')][0]
+    subprocess.run(['gpg', '--homedir', gpghome, '--batch', '--passphrase', '',
+                    '--quick-add-key', p_fpr, 'rsa2048', 'sign', 'never'], check=True, capture_output=True)
+    sub_fpr = [l.split(':')[9] for l in subprocess.run(['gpg', '--homedir', gpghome, '--with-colons', '--list-keys'],
+                                                     check=True, capture_output=True, text=True).stdout.splitlines() if l.startswith('fpr:')][1]
+    kr = os.path.join(td, 'kr.gpg')
+    subprocess.run(['gpg', '--homedir', gpghome, '--export', '-o', kr], check=True, capture_output=True)
+
+    assert subprocess.run(['python3', '-c', fpr_script, kr, p_fpr], capture_output=True, text=True).returncode == 0
+    assert subprocess.run(['python3', '-c', fpr_script, kr, sub_fpr], capture_output=True, text=True).returncode != 0
+    corrupt_kr = os.path.join(td, 'bad.gpg')
+    open(corrupt_kr, 'wb').write(b'corrupt-not-pgp')
+    assert subprocess.run(['python3', '-c', fpr_script, corrupt_kr, p_fpr], capture_output=True, text=True).returncode != 0
+
+    # install.yml must reject jammy/puppet8 candidate for puppet-agent
+    inst_script = [t for t in inst_tasks if 'apt.puppet.com origin' in t.get('name', '').lower()][0]['ansible.builtin.command']['argv'][2]
+    mock_apt = os.path.join(td, 'apt-cache')
+    open(mock_apt, 'w').write('''#!/usr/bin/env bash
+cat <<'EOF'
+puppet-agent:
+  Installed: (none)
+  Candidate: 8.10.0-1jammy
+  Version table:
+     8.10.0-1jammy 900
+        900 http://apt.puppet.com jammy/puppet8 amd64 Packages
+EOF
+''')
+    os.chmod(mock_apt, 0o755)
+    env = os.environ.copy(); env['PATH'] = td + os.pathsep + env.get('PATH', '')
+    assert subprocess.run(['python3', '-c', inst_script, 'puppet-agent', 'apt.puppet.com'], env=env, capture_output=True, text=True).returncode != 0
+PY
+echo "PASS (Agent repo validates checksum, primary OpenPGP key, corrupt keyring rejection, and noble suite)"
 PASSED_COUNT=$((PASSED_COUNT + 1))
 
 echo "=============================================================================="

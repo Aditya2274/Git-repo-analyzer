@@ -1,6 +1,20 @@
 ---
 # Puppet 8 APT repository and priority pinning for Puppet Agent
 
+- name: Validate mandatory Puppet 8 release package checksum and OpenPGP fingerprint parameters
+  vars:
+    deb_checksum: "{{ puppet_release_deb_checksum | default('sha256:375b9bf635db12c5da395c332a1a18860b2aa3cbbbc68c29412a69dd1be3a493') | trim }}"
+    fpr_list: "{{ puppet_keyring_expected_fingerprints | default(['D6811ED3ADEEB8441AF5AA8F4528B6CD9E61EF26']) | map('trim') | list }}"
+    bad_fprs: "{{ fpr_list | reject('match', '^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$') | list }}"
+  ansible.builtin.assert:
+    that:
+      - deb_checksum is match('^sha256:[0-9a-fA-F]{64}$')
+      - fpr_list | length > 0
+      - bad_fprs | length == 0
+    fail_msg: >
+      CRITICAL SECURITY ERROR: puppet_release_deb_checksum must be 'sha256:<64-hex>' and
+      puppet_keyring_expected_fingerprints must contain valid OpenPGP primary fingerprints (40 or 64 hex chars).
+
 - name: Install prerequisite packages for Puppet repository
   ansible.builtin.apt:
     name:
@@ -11,31 +25,247 @@
     update_cache: false
     lock_timeout: "{{ apt_lock_timeout | default(300) }}"
 
-- name: Download Puppet 8 Noble release repository package
+- name: Check existing Puppet 8 release package state
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - -W
+      - "-f=${Status}\t${Version}\n"
+      - "{{ puppet_release_package | default('puppet8-release') }}"
+  register: puppet_agent_release_pkg_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check existing PuppetLabs repository signing keyring file
+  ansible.builtin.stat:
+    path: "{{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}"
+  register: puppet_agent_existing_keyring_stat
+  check_mode: false
+
+- name: Verify existing PuppetLabs signing keyring trust if already present
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import hashlib, re, sys
+
+        keyring_path = sys.argv[1]
+        expected_fprs = [f.strip().upper() for f in sys.argv[2].split(",") if f.strip()]
+        if not expected_fprs or any(not re.fullmatch(r"[0-9A-F]{40}|[0-9A-F]{64}", f) for f in expected_fprs):
+            sys.exit(1)
+        expected_fpr_set = set(expected_fprs)
+
+        def extract_primary_fprs(blob):
+            fprs = []
+            i = 0
+            n = len(blob)
+            while i < n:
+                hdr = blob[i]
+                if not (hdr & 0x80):
+                    raise ValueError("Invalid OpenPGP binary packet")
+                if hdr & 0x40:
+                    tag = hdr & 0x3F
+                    i += 1
+                    b1 = blob[i]
+                    if b1 < 192:
+                        plen = b1
+                        i += 1
+                    elif b1 < 224:
+                        plen = ((b1 - 192) << 8) + blob[i + 1] + 192
+                        i += 2
+                    elif b1 == 255:
+                        plen = int.from_bytes(blob[i + 1:i + 5], "big")
+                        i += 5
+                    else:
+                        raise ValueError("Unsupported partial OpenPGP length")
+                else:
+                    tag = (hdr >> 2) & 0x0F
+                    ltype = hdr & 0x03
+                    i += 1
+                    if ltype == 0:
+                        plen = blob[i]
+                        i += 1
+                    elif ltype == 1:
+                        plen = int.from_bytes(blob[i:i + 2], "big")
+                        i += 2
+                    elif ltype == 2:
+                        plen = int.from_bytes(blob[i:i + 4], "big")
+                        i += 4
+                    else:
+                        plen = n - i
+                if i + plen > n:
+                    raise ValueError("Truncated OpenPGP packet body")
+                body = blob[i:i + plen]
+                i += plen
+                if tag == 6 and body:
+                    ver = body[0]
+                    if ver == 4:
+                        fprs.append(hashlib.sha1(b"\x99" + len(body).to_bytes(2, "big") + body).hexdigest().upper())
+                    elif ver == 5:
+                        fprs.append(hashlib.sha256(b"\x9a" + len(body).to_bytes(4, "big") + body).hexdigest().upper())
+            return fprs
+
+        try:
+            actual = set(extract_primary_fprs(open(keyring_path, "rb").read()))
+        except Exception:
+            print("MISMATCH")
+            sys.exit(0)
+        print("TRUSTED" if actual and actual == expected_fpr_set else "MISMATCH")
+      - "{{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}"
+      - "{{ puppet_keyring_expected_fingerprints | default(['D6811ED3ADEEB8441AF5AA8F4528B6CD9E61EF26']) | join(',') }}"
+  register: puppet_agent_existing_keyring_trust
+  changed_when: false
+  check_mode: false
+  when:
+    - puppet_agent_existing_keyring_stat.stat.exists
+    - (puppet_agent_existing_keyring_stat.stat.size | default(0)) > 0
+
+- name: Set pre-check agent release readiness fact
+  ansible.builtin.set_fact:
+    puppet8_agent_release_ready: >-
+      {{
+        ('install ok installed' in (puppet_agent_release_pkg_status.stdout | default('')))
+        and puppet_agent_existing_keyring_stat.stat.exists
+        and ((puppet_agent_existing_keyring_stat.stat.size | default(0)) > 0)
+        and (puppet_agent_existing_keyring_trust is defined)
+        and (puppet_agent_existing_keyring_trust is not skipped)
+        and ((puppet_agent_existing_keyring_trust.stdout | default('') | trim) == 'TRUSTED')
+      }}
+
+- name: Download Puppet 8 Noble release repository package with checksum verification
   ansible.builtin.get_url:
     url: "{{ puppet_release_deb_url | default('https://apt.puppet.com/puppet8-release-noble.deb') }}"
     dest: /tmp/puppet8-release-noble.deb
+    checksum: "{{ puppet_release_deb_checksum | default('sha256:375b9bf635db12c5da395c332a1a18860b2aa3cbbbc68c29412a69dd1be3a493') }}"
     mode: "0644"
   register: puppet_agent_release_download
+  when: not (puppet8_agent_release_ready | bool)
 
 - name: Install Puppet 8 release package
   ansible.builtin.apt:
     deb: /tmp/puppet8-release-noble.deb
   register: puppet_agent_release_install
+  when: not (puppet8_agent_release_ready | bool)
 
 - name: Clean up temporary release deb package
   ansible.builtin.file:
     path: /tmp/puppet8-release-noble.deb
     state: absent
+  when: not (puppet8_agent_release_ready | bool)
+
+- name: Verify PuppetLabs repository signing keyring exists
+  ansible.builtin.stat:
+    path: "{{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}"
+  register: puppet_agent_keyring_stat
+  check_mode: false
+
+- name: Fail if PuppetLabs repository signing keyring is missing or empty
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL ERROR: Expected PuppetLabs GPG keyring at
+      {{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}
+      is missing or empty after installing puppet8-release-noble.deb.
+  when:
+    - not ansible_check_mode
+    - (not puppet_agent_keyring_stat.stat.exists) or ((puppet_agent_keyring_stat.stat.size | default(0)) == 0)
+
+- name: Verify PuppetLabs repository signing keyring OpenPGP fingerprint
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import hashlib, re, sys
+
+        keyring_path = sys.argv[1]
+        expected_fprs = [f.strip().upper() for f in sys.argv[2].split(",") if f.strip()]
+        if not expected_fprs or any(not re.fullmatch(r"[0-9A-F]{40}|[0-9A-F]{64}", f) for f in expected_fprs):
+            sys.stderr.write("CRITICAL ERROR: Invalid puppet_keyring_expected_fingerprints\n")
+            sys.exit(1)
+        expected_fpr_set = set(expected_fprs)
+
+        def extract_primary_fprs(blob):
+            fprs = []
+            i = 0
+            n = len(blob)
+            while i < n:
+                hdr = blob[i]
+                if not (hdr & 0x80):
+                    raise ValueError("Invalid OpenPGP binary packet")
+                if hdr & 0x40:
+                    tag = hdr & 0x3F
+                    i += 1
+                    b1 = blob[i]
+                    if b1 < 192:
+                        plen = b1
+                        i += 1
+                    elif b1 < 224:
+                        plen = ((b1 - 192) << 8) + blob[i + 1] + 192
+                        i += 2
+                    elif b1 == 255:
+                        plen = int.from_bytes(blob[i + 1:i + 5], "big")
+                        i += 5
+                    else:
+                        raise ValueError("Unsupported partial OpenPGP length")
+                else:
+                    tag = (hdr >> 2) & 0x0F
+                    ltype = hdr & 0x03
+                    i += 1
+                    if ltype == 0:
+                        plen = blob[i]
+                        i += 1
+                    elif ltype == 1:
+                        plen = int.from_bytes(blob[i:i + 2], "big")
+                        i += 2
+                    elif ltype == 2:
+                        plen = int.from_bytes(blob[i:i + 4], "big")
+                        i += 4
+                    else:
+                        plen = n - i
+                if i + plen > n:
+                    raise ValueError("Truncated OpenPGP packet body")
+                body = blob[i:i + plen]
+                i += plen
+                if tag == 6 and body:
+                    ver = body[0]
+                    if ver == 4:
+                        fprs.append(hashlib.sha1(b"\x99" + len(body).to_bytes(2, "big") + body).hexdigest().upper())
+                    elif ver == 5:
+                        fprs.append(hashlib.sha256(b"\x9a" + len(body).to_bytes(4, "big") + body).hexdigest().upper())
+            return fprs
+
+        try:
+            actual = set(extract_primary_fprs(open(keyring_path, "rb").read()))
+        except Exception as exc:
+            sys.stderr.write(f"CRITICAL ERROR: Signing keyring at {keyring_path} is corrupted: {exc}\n")
+            sys.exit(1)
+        if not actual or actual != expected_fpr_set:
+            sys.stderr.write(
+                f"CRITICAL ERROR: Signing keyring at {keyring_path} has untrusted primary fingerprint(s) {sorted(actual)}; "
+                f"expected {sorted(expected_fpr_set)}.\n"
+            )
+            sys.exit(1)
+      - "{{ puppet_keyring_path | default('/etc/apt/keyrings/puppetlabs-keyring.gpg') }}"
+      - "{{ puppet_keyring_expected_fingerprints | default(['D6811ED3ADEEB8441AF5AA8F4528B6CD9E61EF26']) | join(',') }}"
+  register: puppet_agent_keyring_fpr_verify
+  changed_when: false
+  check_mode: false
+  when: puppet_agent_keyring_stat.stat.exists
 
 - name: Configure APT preferences to prioritize official PuppetLabs packages over Ubuntu Universe
   ansible.builtin.copy:
     dest: /etc/apt/preferences.d/puppetlabs.pref
     content: |
-      # Enforce vendor priority (900) over distro universe (500) for Puppet components
+      # Enforce official PuppetLabs vendor priority (900) for Ubuntu 24.04 (noble) over Universe (500)
       Package: puppet-agent puppet-tools
-      Pin: origin apt.puppet.com
+      Pin: release o=Puppetlabs, n=noble
       Pin-Priority: 900
+
+      Package: *
+      Pin: release o=Puppetlabs, n=jammy
+      Pin-Priority: -1
     owner: root
     group: root
     mode: "0644"
@@ -44,6 +274,5 @@
 - name: Update APT package cache for Puppet 8 Agent
   ansible.builtin.apt:
     update_cache: true
-    cache_valid_time: "{{ apt_cache_valid_time | default(3600) }}"
     lock_timeout: "{{ apt_lock_timeout | default(300) }}"
   when: (puppet_agent_release_install is changed) or (puppet_agent_apt_preferences is changed)

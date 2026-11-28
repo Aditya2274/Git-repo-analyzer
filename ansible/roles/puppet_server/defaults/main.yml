@@ -9,13 +9,21 @@ puppet_server_port: 8140
 puppet_target_distribution: "Ubuntu"
 puppet_target_release: "24.04"
 
-# Puppet 8 repository and package configuration
-puppet_release_package: puppet8-release
-puppet_release_deb_url: "https://apt.puppet.com/puppet8-release-noble.deb"
-puppet_keyring_path: "/etc/apt/keyrings/puppetlabs-keyring.gpg"
+# Package source: ubuntu_universe — puppetserver 8.4.0-1 from Ubuntu Noble Universe.
+# apt.puppet.com noble/puppet8 does NOT publish 'puppetserver' (puppetlabs/puppetserver#2906).
+# Puppet Core 9 at apt-puppetcore.puppet.com requires EULA + Forge API key authentication (HTTP 401).
+# Ubuntu Noble Universe provides a real, functional puppetserver 8.4.0-1 package — not a transitional dummy.
 puppet_server_package_name: puppetserver
+puppet_server_package_version: "8.4.0-1"
+puppet_server_deb_sha256: "ea9b68711b454720db42816209ea5f198ef00347def47507224574bceee34db5"
+puppet_server_package_source: ubuntu_universe
+puppet_server_java_package: "openjdk-21-jre-headless"
+
+# Explicit compatibility safety gate: Jammy packages are never permitted on Noble.
+puppet_allow_jammy_fallback: false
 
 # Memory tuning per ADR 005 and AGENTS.md (t3.small: 2 GB RAM, 15 GB gp3)
+# Ubuntu Universe default is -Xms1g -Xmx1g; enforced and verified by jvm.yml.
 puppet_jvm_xms: "1g"
 puppet_jvm_xmx: "1g"
 puppet_max_active_jrubies: 1
@@ -28,14 +36,22 @@ puppet_environment: "production"
 puppet_runinterval: "30m"
 puppet_ca_cert_ttl: "365d"
 
-# Configuration file paths
-puppet_config_dir: "/etc/puppetlabs/puppet"
-puppet_config_file: "/etc/puppetlabs/puppet/puppet.conf"
-puppet_server_conf_dir: "/etc/puppetlabs/puppetserver/conf.d"
-puppet_server_conf_file: "/etc/puppetlabs/puppetserver/conf.d/puppetserver.conf"
+# Configuration file paths — Ubuntu Noble Universe puppetserver 8.4.0-1 layout.
+# Verified against puppetserver 8.4.0-1, puppet-agent 8.4.0-1 (defaults.rb),
+# and ruby-puppetserver-ca-cli 2.6.0-1 (Puppetserver::Ca::Config::PuppetServer):
+#   Config dir:   /etc/puppet
+#   Server conf:  /etc/puppet/puppetserver/conf.d
+#   CA dir:       /etc/puppet/puppetserver/ca (symlinked from /var/lib/puppet/ssl/ca)
+#   Code dir:     /etc/puppet/code
+#   Binary:       /usr/bin/puppetserver
+puppet_config_dir: "/etc/puppet"
+puppet_config_file: "/etc/puppet/puppet.conf"
+puppet_server_conf_dir: "/etc/puppet/puppetserver/conf.d"
+puppet_server_conf_file: "/etc/puppet/puppetserver/conf.d/puppetserver.conf"
 puppet_server_default_file: "/etc/default/puppetserver"
-puppet_ca_dir: "/etc/puppetlabs/puppetserver/ca"
-puppet_bin_dir: "/opt/puppetlabs/bin"
+puppet_ca_dir: "/etc/puppet/puppetserver/ca"
+puppet_code_dir: "/etc/puppet/code"
+puppet_bin_dir: "/usr/bin"
 
 # Puppet CA enrollment and controlled signing (Checkpoint 4.5)
 puppet_ca_allowed_agents:

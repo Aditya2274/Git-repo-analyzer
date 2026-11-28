@@ -3,7 +3,7 @@
 
 - name: Ensure Puppet configuration directory exists
   ansible.builtin.file:
-    path: "{{ puppet_config_dir | default('/etc/puppetlabs/puppet') }}"
+    path: "{{ puppet_config_dir | default('/etc/puppet') }}"
     state: directory
     owner: root
     group: root
@@ -12,7 +12,7 @@
 - name: Deploy puppet.conf with stable identity and security settings
   ansible.builtin.template:
     src: puppet.conf.j2
-    dest: "{{ puppet_config_file | default('/etc/puppetlabs/puppet/puppet.conf') }}"
+    dest: "{{ puppet_config_file | default('/etc/puppet/puppet.conf') }}"
     owner: root
     group: root
     mode: "0644"

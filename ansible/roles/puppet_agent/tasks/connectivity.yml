@@ -18,6 +18,10 @@
       Pre-enrollment verification failed. Ensure Puppet Server is running and security group rules allow TCP 8140 ingress from this node.
   when: puppet_server_port_probe is failed
 
+- name: "Step 1: Set Puppet Server reachability fact for downstream tasks"
+  ansible.builtin.set_fact:
+    puppet_server_reachable: "{{ puppet_server_port_probe is not failed }}"
+
 - name: "Step 1: Report pre-enrollment connectivity success"
   ansible.builtin.debug:
     msg: "Pre-enrollment connectivity confirmed: Puppet Server port {{ puppet_server_port | default(8140) }} on '{{ puppet_server_host | default('puppet-server') }}' is reachable from {{ inventory_hostname }}."

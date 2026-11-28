@@ -5,6 +5,20 @@ puppet_role: server
 puppet_service_name: puppetserver
 puppet_server_port: 8140
 
+# Package source & Ubuntu Noble Universe layout (also needed in hostvars for delegated CSR checks)
+puppet_server_package_source: "ubuntu_universe"
+puppet_server_package_version: "8.4.0-1"
+puppet_server_deb_sha256: "ea9b68711b454720db42816209ea5f198ef00347def47507224574bceee34db5"
+puppet_allow_jammy_fallback: false
+puppet_config_dir: "/etc/puppet"
+puppet_config_file: "/etc/puppet/puppet.conf"
+puppet_server_conf_dir: "/etc/puppet/puppetserver/conf.d"
+puppet_server_conf_file: "/etc/puppet/puppetserver/conf.d/puppetserver.conf"
+puppet_server_default_file: "/etc/default/puppetserver"
+puppet_ca_dir: "/etc/puppet/puppetserver/ca"
+puppet_code_dir: "/etc/puppet/code"
+puppet_bin_dir: "/usr/bin"
+
 # Memory tuning per ADR 005 and AGENTS.md
 puppet_jvm_xms: "1g"
 puppet_jvm_xmx: "1g"

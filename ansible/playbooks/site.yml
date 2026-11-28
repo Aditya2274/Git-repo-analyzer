@@ -11,6 +11,7 @@
 - name: "Phase 4 - Step 2: Apply common baseline across fleet"
   hosts: all
   become: true
+  any_errors_fatal: true
   roles:
     - common
 
@@ -18,6 +19,7 @@
 - name: "Phase 4 - Step 3: Bootstrap dedicated Puppet Server (EC2 1)"
   hosts: puppet_server
   become: true
+  any_errors_fatal: true
   roles:
     - puppet_server
 
@@ -25,6 +27,7 @@
 - name: "Phase 4 - Step 4: Bootstrap Puppet Agents on managed nodes (EC2 2 & EC2 3)"
   hosts: puppet_agents
   become: true
+  any_errors_fatal: true
   roles:
     - puppet_agent
 
@@ -32,6 +35,7 @@
 - name: "Phase 4 - Step 6: Bootstrap Docker Engine and Compose plugin (EC2 3)"
   hosts: cicd
   become: true
+  any_errors_fatal: true
   roles:
     - docker
 
@@ -39,5 +43,6 @@
 - name: "Phase 4 - Step 7: Bootstrap baseline NGINX web server (EC2 2)"
   hosts: application
   become: true
+  any_errors_fatal: true
   roles:
     - nginx

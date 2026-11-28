@@ -15,8 +15,56 @@
     timeout: 180
     state: started
 
-- name: Validate Puppet CA service health
+- name: Validate Puppet Server HTTPS status endpoint using Puppet CA trust chain
   ansible.builtin.command:
-    cmd: "{{ puppet_bin_dir | default('/opt/puppetlabs/bin') }}/puppetserver ca status"
+    argv:
+      - python3
+      - -c
+      - |
+        import socket, ssl, sys
+
+        port = int(sys.argv[1])
+        ca_cert = sys.argv[2]
+        sni_host = sys.argv[3]
+
+        ctx = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH, cafile=ca_cert)
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+
+        with socket.create_connection(("127.0.0.1", port), timeout=15) as raw_sock:
+            with ctx.wrap_socket(raw_sock, server_hostname=sni_host) as tls_sock:
+                req = (
+                    f"GET /status/v1/simple HTTP/1.1\r\n"
+                    f"Host: {sni_host}:{port}\r\n"
+                    f"Connection: close\r\n\r\n"
+                ).encode("ascii")
+                tls_sock.sendall(req)
+                chunks = []
+                while True:
+                    data = tls_sock.recv(4096)
+                    if not data:
+                        break
+                    chunks.append(data)
+
+        resp = b"".join(chunks).decode("utf-8", errors="replace")
+        head, _, body = resp.partition("\r\n\r\n")
+        status_line = head.splitlines()[0] if head else ""
+        if " 200 " not in status_line or body.strip() != "running":
+            sys.stderr.write(
+                f"CRITICAL ERROR: Puppet Server status endpoint unhealthy: status='{status_line}', body='{body.strip()}'\n"
+            )
+            sys.exit(1)
+        print(f"Verified Puppet Server HTTPS status ({sni_host}:{port}): {body.strip()}")
+      - "{{ puppet_server_port | default(8140) }}"
+      - "{{ puppet_ca_dir | default('/etc/puppet/puppetserver/ca') }}/ca_crt.pem"
+      - "{{ puppet_certname | default('puppet-server') }}"
+  register: puppetserver_https_status
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Validate Puppet CA REST API responsiveness via puppetserver ca list
+  ansible.builtin.command:
+    cmd: "{{ puppet_bin_dir | default('/usr/bin') }}/puppetserver ca list --all --format json"
   register: puppetserver_ca_status
   changed_when: false
+  when: not ansible_check_mode
