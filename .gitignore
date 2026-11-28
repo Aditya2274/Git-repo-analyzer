@@ -30,3 +30,7 @@ ssh.cfg
 
 # Operator notes & discussions
 questions.md
+
+# Python bytecode caches
+__pycache__/
+*.pyc
